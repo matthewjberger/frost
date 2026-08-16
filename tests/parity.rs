@@ -485,6 +485,58 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "a vector of 4 f32 and a i64 do not go together",
     ),
+    // A function that hands nothing back where a value was declared. The
+    // self-hosted compiler asked nothing of a body at all, so the path with no
+    // `return` handed back whatever the register held.
+    (
+        "a_body_that_answers_on_one_path",
+        "pick :: fn(n: i64) -> i64 { if (n > 0) { return 1 } }
+         main :: fn() -> i64 { pick(3) }
+        ",
+        "this returns a 'void' and the function answers with a 'i64'",
+    ),
+    (
+        "a_body_that_answers_with_nothing",
+        "pick :: fn(n: i64) -> i64 { }
+         main :: fn() -> i64 { pick(3) }
+        ",
+        "this returns a 'void' and the function answers with a 'i64'",
+    ),
+    // A field given its value with a colon. The self-hosted compiler stepped
+    // over whatever followed the name without asking what it was.
+    (
+        "a_colon_where_a_literal_gives_a_value",
+        "Point :: struct { x: i64 }
+         main :: fn() -> i64 {
+             p := Point { x: 1 }
+             p.x
+         }
+        ",
+        "a field in a literal is given its value with '=', and this writes ':'",
+    ),
+    (
+        "a_colon_in_a_variant_literal",
+        "Shape :: enum { Circle { r: i64 } }
+         main :: fn() -> i64 {
+             s := Shape::Circle { r: 1 }
+             0
+         }
+        ",
+        "a field in a literal is given its value with '=', and this writes ':'",
+    ),
+    // `live_slots` given something that is not a container. The self-hosted
+    // compiler wrote the walk out and told the reader about the indexing it
+    // does, which is not what the program says.
+    (
+        "a_live_walk_over_something_that_is_not_a_container",
+        "main :: fn() -> i64 {
+             n := 3
+             for slot in live_slots(n) { }
+             0
+         }
+        ",
+        "`live_slots` walks a generational container, and this is not one",
+    ),
     // A constant whose arithmetic has no answer.
     //
     // The bootstrap folded neither, so what reached the program was the

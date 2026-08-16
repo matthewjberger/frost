@@ -936,6 +936,92 @@ check_types_in :: fn(
     p.frame_used = 0
     check_record_params(p, params)
     check_types_list(p, body)
+    // A body that never hands a value back where one was declared. Left
+    // unasked, `fn(n: i64) -> i64 { if (n > 0) { return 1 } }` compiled and the
+    // path with no `return` handed back whatever the register held.
+    if (ret != TY_VOID && ret != (-1) && instance == 0
+        && is_result_ty(p, ret) == false
+        && body_answers(p, body) == false) {
+        report_where(p.modules, p.src, body_ends_at(p, body, sym.off))
+        report("this returns a 'void' and the function answers with a '")
+        report_type_name(p, ret)
+        report("'")
+        frost_rt_recover_escape()
+    }
+}
+
+// Whether a type is the struct a `-> T ! E` was lowered to. Such a body hands
+// back the value it was written with and the wrapping is put on elsewhere, so
+// the last statement of one is not the answer as written.
+is_result_ty :: fn(p: Parser, ty: i64) -> bool {
+    mut index: i64 = 0
+    while (index < p.results.count) {
+        if (arena_at(p.results, index).ty == ty) {
+            return true
+        }
+        index = index + 1
+    }
+    false
+}
+
+// Whether a body hands a value back on every path out of it.
+//
+// The last statement decides: everything before it is stepped over on the way.
+// A `return` hands one back, and so does a statement the parse marked as the
+// body's own answer. A branch hands one back where every road out of it does,
+// which is what lets a body end in a `match` whose arms all answer.
+body_answers :: fn(mut p: Parser, head: i64) -> bool {
+    mut id := head
+    mut last: i64 = -1
+    while (id != (-1)) {
+        last = id
+        id = arena_at(p.arena, id).next
+    }
+    if (last < 0) {
+        return false
+    }
+    node := arena_at(p.arena, last)
+    // An expression written as the last statement is the value the body hands
+    // back. Asked of the mark the parse puts on one instead, a body the parse
+    // did not mark - an `extern` written with one is such a body - read as
+    // handing nothing back.
+    if (node.kind == NodeKind::Return || node.kind == NodeKind::ExprStmt) {
+        return true
+    }
+    if (node.kind == NodeKind::If) {
+        if (node.val == (-1)) {
+            return false
+        }
+        return body_answers(p, node.b) && body_answers(p, node.val)
+    }
+    if (node.kind == NodeKind::Match) {
+        mut cid := node.b
+        mut every: bool = cid != (-1)
+        while (cid != (-1)) {
+            cnode := arena_at(p.arena, cid)
+            if (body_answers(p, cnode.a) == false) {
+                every = false
+            }
+            cid = cnode.next
+        }
+        return every
+    }
+    false
+}
+
+// Where a body that answers with nothing is reported: at its last statement,
+// or at the function's name where it has none.
+body_ends_at :: fn(mut p: Parser, head: i64, fallback: i64) -> i64 {
+    mut id := head
+    mut last: i64 = -1
+    while (id != (-1)) {
+        last = id
+        id = arena_at(p.arena, id).next
+    }
+    if (last < 0) {
+        return fallback
+    }
+    arena_at(p.arena, last).pos
 }
 
 // A parameter is a local of its declared type, which is what lets the rest of

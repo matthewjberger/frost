@@ -1872,6 +1872,17 @@ parse_field_inits :: fn(mut p: Parser, struct_ty: i64) -> i64 {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
+        // A field is given its value with `=`. Stepped over without asking,
+        // `Point { x: 1 }` read the colon as the token before the value and
+        // took a literal the language does not have.
+        if (cur(p) != TokenKind::Assign) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("a field in a literal is given its value with '=', and ")
+            report("this writes '")
+            report_src(p.src, cur_off(p), cur_len(p))
+            report("'")
+            frost_rt_recover_escape()
+        }
         advance(p)
         // A field's value is parsed with the field's own type expected, so a
         // nested generic literal like the inner `Pair { ... }` in a
@@ -6259,6 +6270,10 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (held_answer >= 0) {
             return parse_expansion_if(p, held_answer)
         }
+        // Where the `if` is written. Read off the cursor once the branches are
+        // parsed, the node named the brace that closes the last of them, so a
+        // report about the statement landed at its end.
+        if_at := cur_off(p)
         advance(p)
         advance(p)
         condition := parse_expr(p)
@@ -6273,7 +6288,14 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
                 else_head = parse_block(p)
             }
         }
-        return new_node(p, NodeKind::If, condition, then_head, else_head)
+        return new_node_at(
+            p,
+            NodeKind::If,
+            condition,
+            then_head,
+            else_head,
+            if_at
+        )
     }
     // `for item in items { ... }` over a slice, an array or a `str`, and
     // `for index, item in items` when the position is wanted too.
@@ -6508,6 +6530,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         return new_node(p, NodeKind::Continue, 0, 0, 0)
     }
     if (kind == TokenKind::KwWhile) {
+        // Where the `while` is written, the way an `if`'s is: read off the
+        // cursor once the body is parsed, the node named the brace closing it.
+        while_at := cur_off(p)
         advance(p)
         advance(p)
         // Anything the condition needs set up, a `?` or a match used as a
@@ -6520,7 +6545,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         p.loop_depth = p.loop_depth + 1
         body := parse_block(p)
         p.loop_depth = p.loop_depth - 1
-        loop := new_node(p, NodeKind::While, condition, body, 0)
+        loop := new_node_at(p, NodeKind::While, condition, body, 0, while_at)
         set_while_preamble(p, loop, preamble)
         return loop
     }
@@ -8498,6 +8523,15 @@ parse_variant_body :: fn(
             field_off := cur_off(p)
             field_len := cur_len(p)
             advance(p)
+            // A field is given its value with `=`, the same as a struct's.
+            if (cur(p) != TokenKind::Assign) {
+                report_where(p.modules, p.src, cur_off(p))
+                report("a field in a literal is given its value with '=', and ")
+                report("this writes '")
+                report_src(p.src, cur_off(p), cur_len(p))
+                report("'")
+                frost_rt_recover_escape()
+            }
             advance(p)
             // An enum's fields are laid out under the name of the variant they
             // came from, so that is the name the field's type is looked up by,

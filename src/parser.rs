@@ -3243,10 +3243,11 @@ impl<'a> Parser<'a> {
                                 let field_name = self.read_field_name(
                                     "a field name in an enum variant literal",
                                 )?;
+                                let written = self.peek_nth(0).to_string();
                                 if !matches!(self.read_token(), Token::Assign) {
-                                    bail!(
-                                        "Expected '=' after field name in enum variant init"
-                                    );
+                                    return Err(self.at_consumed(format!(
+                                        "a field in a literal is given its value with '=', and this writes '{written}'"
+                                    )));
                                 }
                                 let value =
                                     self.parse_expression(Precedence::Lowest)?;
@@ -3588,8 +3589,11 @@ impl<'a> Parser<'a> {
             let at = self.current_position().unwrap_or_default();
             let field_name =
                 self.read_field_name("a field name in a struct literal")?;
+            let written = self.peek_nth(0).to_string();
             if !matches!(self.read_token(), Token::Assign) {
-                bail!("Expected '=' after field name in struct init");
+                return Err(self.at_consumed(format!(
+                    "a field in a literal is given its value with '=', and this writes '{written}'"
+                )));
             }
             let value = self.parse_expression(Precedence::Lowest)?;
             let name = self.ast.intern(&field_name);
