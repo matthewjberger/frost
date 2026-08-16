@@ -3828,6 +3828,26 @@ instantiate :: fn(
     field_token := template.field_token
     is_enum := template.is_enum
 
+    // As many arguments as the declaration binds. One short, the bindings are
+    // read past their end and the compiler died on the arena rather than on the
+    // program.
+    if (xparam_count != xarg_count) {
+        report("frost: generic ")
+        if (is_enum == 1) {
+            report("enum '")
+        } else {
+            report("struct '")
+        }
+        report_src(p.src, name_off, name_len)
+        report("' expects ")
+        report_int(xparam_count + 1)
+        report(" type argument(s) but ")
+        report_int(xarg_count + 1)
+        report(" were given")
+        report("\n")
+        frost_rt_die()
+    }
+
     saved_ti := p.ti
     saved_param_off := p.type_param_off
     saved_param_len := p.type_param_len

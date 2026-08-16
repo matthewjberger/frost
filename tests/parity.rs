@@ -57,6 +57,35 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A generic named with fewer type arguments than it binds.
+    //
+    // The self-hosted compiler read the bindings past their end and died on the
+    // arena rather than on the program.
+    (
+        "a_generic_named_with_too_few_type_arguments",
+        "Pair :: struct($A: Type, $B: Type) { a: A, b: B }
+         main :: fn() -> i64 {
+             p: Pair<i64> = Pair { a = 1, b = 2 }
+             p.a
+         }
+        ",
+        "expects 2 type argument(s) but 1 were given",
+    ),
+    // A `where` bound weighed against a call already refused.
+    //
+    // `keep($i64, 3)` was told that `T` is settled by the value and may not be
+    // written at the call, and then that the bound does not hold for the `T` it
+    // was told not to write.
+    (
+        "a_where_bound_is_not_weighed_against_a_call_already_refused",
+        "Session :: linear struct { id: i64 }
+         keep :: fn($T: Type, v: T) -> i64 where is_linear(T) { 1 }
+         main :: fn() -> i64 {
+             keep($i64, 3)
+         }
+        ",
+        "is settled by the type of 'v', so it is not written at the call",
+    ),
     // A `defer` that leaves the function.
     //
     // A `defer` runs where the function leaves, so one that leaves the function

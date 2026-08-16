@@ -534,6 +534,14 @@ check_bound_at_call :: fn(
     if (holds) {
         return
     }
+    // A call the run has already refused is one whose arguments are not the
+    // ones the reader meant, so what a bound says about them is the second
+    // thing to say: `keep($i64, 3)` was told that `T` is settled by the value
+    // and then that the bound does not hold for the `T` it was told not to
+    // write.
+    if (frost_rt_recover_failures() > 0) {
+        return
+    }
     sym := arena_at(p.fns, fn_index)
     report_where(p.modules, p.src, at)
     report("'")
