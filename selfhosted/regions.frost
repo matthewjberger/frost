@@ -8764,7 +8764,10 @@ check_calls :: fn(mut p: Parser) {
                     report("call to undefined function '")
                     report_src(p.src, name_off, name_len)
                     report("'")
-                    report_nearest_name(p, name_off, name_len)
+                    if (report_declared_elsewhere(p, name_off, name_len)
+                        == false) {
+                        report_nearest_name(p, name_off, name_len)
+                    }
                     frost_rt_recover_note()
                 }
                 // Nothing declares the callee, so nothing says how many

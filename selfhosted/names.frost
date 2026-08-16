@@ -19,6 +19,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     type_value_index, names_values, record_type_value,
     report_type_name, report_distinct_note, written_number,
     fn_names_matching,
+    report_declared_elsewhere,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     name_visible,
     is_borrow, is_pointer, is_proc, vector_of, is_raw_pointer, is_slab_ty, is_slice_ty,
@@ -186,6 +187,31 @@ bytes_equal :: fn(src: str, first: i64, second: i64, length: i64) -> bool {
         k = k + 1
     }
     true
+}
+
+// A name the program declares and the file naming it cannot reach.
+//
+// Saying such a name is not there is false, and a reader who believes it writes
+// the declaration a second time instead of adding one word to an export line.
+// Answered before the nearest name, since the nearest name to a name that
+// exists is itself.
+report_declared_elsewhere :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut i: i64 = 0
+    while (i < p.declared.count) {
+        entry := arena_at(p.declared, i)
+        if (entry.len == len && bytes_equal(p.src, entry.off, off, len)) {
+            held := arena_at(p.modules, entry.module)
+            // By file name. What a module is called otherwise depends on where
+            // the build was started from, and this sentence is compared word
+            // for word.
+            report(" (declared in ")
+            report_cstr(file_name(held.name))
+            report("; add it to the export line there)")
+            return true
+        }
+        i = i + 1
+    }
+    false
 }
 
 // One number for the bytes of a name.
@@ -2159,6 +2185,7 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         report("'")
         report_src(p.src, offset, length)
         report("' is not a type this program declares")
+        report_declared_elsewhere(p, offset, length)
         frost_rt_recover_note()
     }
     TY_I64

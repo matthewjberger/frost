@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -406,16 +407,63 @@ fn suggest_names(
             _ => {}
         }
     }
+    let declares = declared_files(program, roots);
     let known: Vec<&str> = held.iter().map(String::as_str).collect();
     for report in collected.iter_mut() {
         let Some(wanted) = names_a_missing_name(&report.message) else {
             continue;
         };
+        // A name the program declares and this file cannot reach. Saying it is
+        // not there is false, and the reader who believes it writes the
+        // declaration a second time instead of adding one word to an export
+        // line. Answered before the nearest name, since the nearest name to a
+        // name that exists is itself.
+        if let Some(file) = declares.get(&wanted) {
+            report.message = format!(
+                "{} (declared in {file}; add it to the export line there)",
+                report.message
+            );
+            continue;
+        }
         let Some(near) = frost::nearest(&wanted, &known) else {
             continue;
         };
         report.message = format!("{} (did you mean '{near}'?)", report.message);
     }
+}
+
+/// The file each declared name is written in, by the name a reader writes.
+///
+/// A module's names are mangled as they are spliced, exported ones as well as
+/// private ones, so the tag says nothing about whether a name is offered. What
+/// says it is the report: a name the program declares, that a file was still
+/// refused for naming, is one that file cannot reach.
+fn declared_files(
+    program: &Module,
+    roots: &[frost::StmtId],
+) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for statement in roots {
+        let name = match program.ast.stmt(*statement) {
+            Statement::Constant(name, _)
+            | Statement::Struct(name, ..)
+            | Statement::Enum(name, ..)
+            | Statement::Flags(name, ..)
+            | Statement::TypeAlias(name, _)
+            | Statement::Extern { name, .. }
+            | Statement::Declared { name, .. } => *name,
+            _ => continue,
+        };
+        let plain = frost::demangle_private_names(program.ast.name(name));
+        // By file name. What a module is called otherwise depends on where the
+        // build was started from, and this sentence is compared word for word.
+        let position = program.ast.stmt_position(*statement);
+        let Some(file) = position.file_name() else {
+            continue;
+        };
+        out.entry(plain).or_insert(file);
+    }
+    out
 }
 
 /// The name a report says is not there, out of the reports that say so.

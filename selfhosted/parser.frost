@@ -1436,6 +1436,7 @@ refuse_unknown_lit_type :: fn(
     report("'")
     report_src(p.src, offset, length)
     report("' is not a type this program declares")
+    report_declared_elsewhere(p, offset, length)
     // Past the literal's own braces before the escape, because recovery reads
     // forward to the brace that ends the statement list and the next brace here
     // is the literal's. Left where it is, one undeclared name ended the function
@@ -6591,7 +6592,7 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
             report_where(p.modules, p.src, cur_off(p))
             report("a line cannot open with '")
             report_src(p.src, cur_off(p), cur_len(p))
-            report("': a line break ends a statement, so there is nothing above for it to join to. An expression that runs over lines goes inside brackets, where a line break says nothing")
+            report("': a line break ends a statement, so there is nothing above for it to join to. Put the operator at the end of the line above, or the whole expression inside brackets, where a line break says nothing")
             frost_rt_recover_note()
             synchronize_statement(p, terminator)
             continue
@@ -6615,7 +6616,7 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
             && column_at(p.src, stmt_at) > block_column
             && in_lifted(p, stmt_at) == false) {
             report_where(p.modules, p.src, stmt_at)
-            report("this line is indented past the statement above it, so it reads as continuing that line, and it begins a statement of its own. An expression broken over lines carries the operator that joins them onto the second, or is written inside brackets")
+            report("this line is indented past the statement above it, so it reads as continuing that line, and it begins a statement of its own. An expression broken over lines carries the operator that joins them at the end of the first, or is written inside brackets")
             frost_rt_recover_note()
         }
         // A statement sharing the line the block opens on is not indented

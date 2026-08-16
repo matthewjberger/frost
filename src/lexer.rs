@@ -261,6 +261,19 @@ impl Position {
             None => format!("line {}, column {}", self.line, self.column),
         }
     }
+
+    // The file this place is in, by name alone. What a module is called
+    // otherwise depends on where the build was started from, and a sentence
+    // naming a file is compared word for word against the other compiler's.
+    pub fn file_name(&self) -> Option<String> {
+        let held = crate::source_map::name_of(self.file)?;
+        Some(
+            held.rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(held.as_str())
+                .to_string(),
+        )
+    }
 }
 
 pub struct Lexer<'a> {
