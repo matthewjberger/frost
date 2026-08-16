@@ -853,7 +853,9 @@ impl Checker<'_> {
                 let nested = self.audit && self.depth > 0;
                 if nested {
                     self.diagnostics.push(Diagnostic {
-                        position: at,
+                        // At the block, the way every other report this pass
+                        // makes names the thing it is about.
+                        position: ast.expr_position(value),
                         message: "this `unsafe` block is inside another one, which already vouches for what is in it".to_string(),
                         related: Vec::new(),
                     });
@@ -870,7 +872,7 @@ impl Checker<'_> {
                     && !nested
                 {
                     self.diagnostics.push(Diagnostic {
-                        position: at,
+                        position: ast.expr_position(value),
                         message: "this `unsafe` block holds no unchecked operation, so it vouches for nothing".to_string(),
                         related: Vec::new(),
                     });

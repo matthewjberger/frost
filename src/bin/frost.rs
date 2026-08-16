@@ -568,7 +568,14 @@ fn lowered_and_checked(
     let mut faults = collected.to_vec();
     faults.extend(lowering.iter().cloned());
 
-    if lowering.is_empty() {
+    // A type nothing declares leaves every local written with it carrying a
+    // type the program does not have, so the IR check reports the value
+    // assigned into one rather than the name that is not there. The same reason
+    // the checks wait on a clean lowering: what they say is the consequence.
+    let types_are_known = !collected.iter().any(|held| {
+        held.message.contains("is not a type this program declares")
+    });
+    if lowering.is_empty() && types_are_known {
         faults.extend(frost::check_module_recovering(&module));
         faults.extend(frost::check_linearity_recovering(
             &module,

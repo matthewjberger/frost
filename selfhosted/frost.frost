@@ -1215,17 +1215,22 @@ main :: fn() -> i64 {
     // the emitters do, and the passes before it read whatever local table the
     // parse left behind.
     check_types(parser, program)
-    // Every fault the walks above reported, refused here before the unsafety
-    // gate reads annotations a faulted function never finished writing, and
-    // before any backend writes a word.
-    if (frost_rt_recover_failures() > 0) {
-        frost_rt_die()
-    }
     // After the types, because whether an index or a field read goes through a
     // raw pointer is a question about a local's type, and check_types is where
     // the locals are known. It writes the answer onto the node and this reads
     // it.
+    //
+    // Run even where the walks above faulted, so a program holding a wrong type
+    // and an ungated operation is told about both rather than about the first
+    // of them. A declaration that faulted may carry fewer of those answers than
+    // it would have, so what this can miss is a second report on a declaration
+    // already being refused.
     check_unsafety(parser)
+    // Every fault reported so far, refused here, before any backend writes a
+    // word.
+    if (frost_rt_recover_failures() > 0) {
+        frost_rt_die()
+    }
 
     // `frost lint <file>` says what is worth a look and refuses nothing, so it
     // runs after the checks and before anything is emitted.

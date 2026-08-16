@@ -8361,7 +8361,13 @@ check_unsafety :: fn(mut p: Parser) {
         }
         i = i + 1
     }
-    report_idle_unsafe(p)
+    // A refused build says what it refused and nothing else, so a block that
+    // vouches for nothing is only worth saying where there is nothing else to
+    // say. This gate ran ahead of the refusal so it could add to it, which is
+    // what puts the question here.
+    if (frost_rt_recover_failures() == 0) {
+        report_idle_unsafe(p)
+    }
 }
 
 // Mark the innermost `unsafe` holding this position as having earned itself.
