@@ -2365,7 +2365,20 @@ parse_unary :: fn(mut p: Parser) -> i64 {
             return made
         }
         operand := parse_unary(p)
-        zero := new_node_at(p, NodeKind::Num, 0, 0, 0, start)
+        // `-a` is written as a subtraction from nothing, and the nothing has to
+        // be a number of the kind the other side holds: over a vector of floats
+        // a whole number is not one a lane can take, and the reader who wrote a
+        // minus was told a vector and an `i64` do not go together.
+        mut zero := new_node_at(p, NodeKind::Num, 0, 0, 0, start)
+        held := parse_time_type(p, operand)
+        if (is_vector_ty(p, held)
+            && is_float(array_element(p, vector_of(p, held)))) {
+            written := p.synth_next
+            synth_bytes(p, "0.0")
+            p.src[p.synth_next] = 0
+            p.synth_next = p.synth_next + 1
+            zero = new_named_node_at(p, NodeKind::Float, 0, written, 3, start)
+        }
         return new_arith(p, zero, operand, OP_SUB, start)
     }
     if (kind == TokenKind::Bang) {
@@ -2542,6 +2555,40 @@ report_operand :: fn(mut p: Parser, ty: i64) {
 // does: a float rounds as one number does, and a whole number aborts on
 // overflow and says where. The lanes are written out as an array literal bound
 // to a name, so every backend carries this with the code it already has.
+// The type a report names an operand by. A literal carries none of its own,
+// since it takes the one the context wants, and named by that it read as `a
+// value` where the reader wrote a number.
+written_type :: fn(mut p: Parser, id: i64, held: i64) -> i64 {
+    if (untyped_literal(p, id) == false) {
+        return held
+    }
+    node := arena_at(p.arena, constant_node(p, id))
+    if (node.kind == NodeKind::Float) {
+        return TY_F64
+    }
+    if (node.kind == NodeKind::Num) {
+        return TY_I64
+    }
+    held
+}
+
+// A number written beside a vector that the element's type can take.
+//
+// A literal takes the type the context wants, so `v * 2.0` beside a vector of
+// `f32` is a float in every lane. A whole number is not one: what a lane holds
+// is written as `2.0` where the lanes are floats, and asking only whether a
+// literal was written let `v + 1` through as though it had been.
+lane_literal :: fn(mut p: Parser, id: i64, element: i64) -> bool {
+    if (untyped_literal(p, id) == false) {
+        return false
+    }
+    node := arena_at(p.arena, constant_node(p, id))
+    if (is_float(element)) {
+        return node.kind == NodeKind::Float
+    }
+    node.kind == NodeKind::Num
+}
+
 new_arith :: fn(
     mut p: Parser,
     left: i64,
@@ -2567,12 +2614,12 @@ new_arith :: fn(
         report_mismatch(p, start, vector, vector_of(p, right_ty))
     }
     if (left_vector == false && left_ty != element
-        && untyped_literal(p, left) == false) {
-        report_mismatch(p, start, vector, left_ty)
+        && lane_literal(p, left, element) == false) {
+        report_mismatch(p, start, vector, written_type(p, left, left_ty))
     }
     if (right_vector == false && right_ty != element
-        && untyped_literal(p, right) == false) {
-        report_mismatch(p, start, vector, right_ty)
+        && lane_literal(p, right, element) == false) {
+        report_mismatch(p, start, vector, written_type(p, right, right_ty))
     }
     if (count <= 0 || (count & (count - 1)) != 0) {
         report_where(p.modules, p.src, start)
@@ -8472,7 +8519,10 @@ parse_variant_body :: fn(
         }
         advance(p)
     }
-    lit := new_struct_lit(p, enum_ty, head, cur_off(p))
+    // At the enum the literal names, which is where a reader looks. Read off
+    // the cursor it named the token past the whole literal, so a report about
+    // one written on its own line landed on the line after it.
+    lit := new_struct_lit(p, enum_ty, head, enum_off)
     // An unresolved dot carries the variant it named, so the fixup pass can
     // look it up in the enum the callee's parameter turns out to be.
     if (enum_ty == (-1)) {

@@ -3173,6 +3173,13 @@ fn expand_compile_time(
     expansion.block(ast, body)
 }
 
+/// The variant a literal names, and where it is written.
+struct Variant<'a> {
+    enum_name: &'a str,
+    variant_name: &'a str,
+    at: crate::lexer::Position,
+}
+
 // Whether an expression is written as a call to `fields`, whatever it names.
 fn names_a_field_walk(ast: &Ast, expression: ExprId) -> bool {
     let Expression::Call(callee, arguments) = ast.expr(expression) else {
@@ -6176,8 +6183,11 @@ impl<'a> FunctionLowering<'a> {
                     let local = self.fresh_local(ty, Some(name.clone()));
                     self.init_enum(
                         local,
-                        &layout_name,
-                        &variant_name,
+                        Variant {
+                            enum_name: &layout_name,
+                            variant_name: &variant_name,
+                            at: self.ast.expr_position(value),
+                        },
                         field_inits,
                     )?;
                     self.define_variable(&name, local);
@@ -9834,7 +9844,15 @@ impl<'a> FunctionLowering<'a> {
                         self.at_expression(expression),
                     );
                 }
-                self.init_enum(local, &layout_name, &variant, fields)
+                self.init_enum(
+                    local,
+                    Variant {
+                        enum_name: &layout_name,
+                        variant_name: &variant,
+                        at: self.ast.expr_position(expression),
+                    },
+                    fields,
+                )
             }
             Expression::Literal(Literal::Array(elements)) => {
                 let Type::Array(element, _) = self.type_of_local(local) else {
@@ -11888,19 +11906,21 @@ impl<'a> FunctionLowering<'a> {
                             .to_string(),
                 });
             }
-            bail!(
-                "struct '{struct_name}' is missing {} {}; a field left out would be read uninitialized",
-                if missing.len() == 1 {
-                    "field"
-                } else {
-                    "fields"
-                },
-                missing
-                    .iter()
-                    .map(|name| format!("'{name}'"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
+            // At the literal, which is the one the sentence names. Said with
+            // no place, the walk that lowers the statement claimed it, and a
+            // literal written inside another was reported at the outer one.
+            bail!(crate::diagnostic::LocatedError {
+                position: at,
+                message: format!(
+                    "struct '{struct_name}' is missing {} {}; a field left out would be read uninitialized",
+                    if missing.len() == 1 { "field" } else { "fields" },
+                    missing
+                        .iter()
+                        .map(|name| format!("'{name}'"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            });
         }
 
         for given in &field_inits {
@@ -12004,10 +12024,14 @@ impl<'a> FunctionLowering<'a> {
     fn init_enum(
         &mut self,
         local: LocalId,
-        enum_name: &str,
-        variant_name: &str,
+        named: Variant<'_>,
         field_inits: Range32,
     ) -> Result<()> {
+        let Variant {
+            enum_name,
+            variant_name,
+            at,
+        } = named;
         self.mark_owned(local);
         let field_inits: Vec<NamedExpr> =
             self.ast.named_in(field_inits).to_vec();
@@ -12059,19 +12083,19 @@ impl<'a> FunctionLowering<'a> {
             })
             .collect();
         if !missing.is_empty() {
-            bail!(
-                "variant '{variant_name}' is missing {} {}; a field left out would be read uninitialized",
-                if missing.len() == 1 {
-                    "field"
-                } else {
-                    "fields"
-                },
-                missing
-                    .iter()
-                    .map(|name| format!("'{name}'"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
+            // At the literal, the way a struct's is. Refer to `init_struct`.
+            bail!(crate::diagnostic::LocatedError {
+                position: at,
+                message: format!(
+                    "variant '{variant_name}' is missing {} {}; a field left out would be read uninitialized",
+                    if missing.len() == 1 { "field" } else { "fields" },
+                    missing
+                        .iter()
+                        .map(|name| format!("'{name}'"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            });
         }
 
         for given in &field_inits {

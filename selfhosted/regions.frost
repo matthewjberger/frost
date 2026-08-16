@@ -1601,6 +1601,103 @@ check_capability_as_argument :: fn(mut p: Parser, index: i64, at: i64) {
     frost_rt_recover_escape()
 }
 
+// The tag a literal writes, which says which variant it names, or -1 where it
+// writes none and so names no variant.
+literal_tag :: fn(p: Parser, head: i64) -> i64 {
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        if (node.c == 3 && bytes_equal(p.src, node.val, p.name_tag, 3)) {
+            return arena_at(p.arena, node.a).val
+        }
+        id = node.next
+    }
+    -1
+}
+
+// The name of the variant an enum gives this tag, or -1.
+variant_named_by :: fn(p: Parser, enum_ty: i64, tag: i64) -> i64 {
+    mut i: i64 = 0
+    while (i < p.variants.count) {
+        held := arena_at(p.variants, i)
+        if (held.enum_ty == enum_ty && held.tag == tag) {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// The fields the variant a literal names carries, against what it writes.
+//
+// A field of one variant sits at the same offset as a field of another, since
+// no two are ever live at once, and which ones share is what the tag on each
+// field says. So the fields to ask about are the ones marked with the tag the
+// literal wrote, and no others.
+check_variant_complete :: fn(mut p: Parser, id: i64, struct_ty: i64) {
+    def := arena_at(p.structs, struct_index_of(struct_ty))
+    // A template names a variant of an instance that does not exist yet, and
+    // stands a placeholder tag in until one does. That parse is thrown away and
+    // done again per instance, where the tag is the variant's own.
+    if (def.is_generic == 1) {
+        return
+    }
+    node := arena_at(p.arena, id)
+    tag := literal_tag(p, node.a)
+    if (tag < 0) {
+        return
+    }
+    which := variant_named_by(p, struct_ty, tag)
+    if (which < 0) {
+        return
+    }
+    mut absent: i64 = 0
+    mut fid := def.field_head
+    while (fid != (-1)) {
+        field := arena_at(p.fields, fid)
+        if (field.variant == tag
+            && field_is_given(p, node.a, field.name_off, field.name_len)
+            == false) {
+            absent = absent + 1
+        }
+        fid = field.next
+    }
+    if (absent == 0) {
+        return
+    }
+    named := arena_at(p.variants, which)
+    report_where(p.modules, p.src, node.pos)
+    report("variant '")
+    report_src(p.src, named.name_off, named.name_len)
+    report("' is missing field")
+    if (absent > 1) {
+        report("s")
+    }
+    mut shown: i64 = 0
+    fid = def.field_head
+    while (fid != (-1)) {
+        field := arena_at(p.fields, fid)
+        if (field.variant == tag
+            && field_is_given(p, node.a, field.name_off, field.name_len)
+            == false) {
+            if (shown > 0) {
+                report(",")
+            }
+            report(" '")
+            // The name as the reader wrote it. A payload field is stored under
+            // the variant it came from, `Circle_n` for the `n` of `Circle`,
+            // since two variants may each carry a field of one name.
+            bare := named.name_len + 1
+            report_src(p.src, field.name_off + bare, field.name_len - bare)
+            report("'")
+            shown = shown + 1
+        }
+        fid = field.next
+    }
+    report("; a field left out would be read uninitialized")
+    frost_rt_recover_escape()
+}
+
 // Whether a struct literal writes the named field. The list is walked per
 // field rather than gathered once because a literal names few fields and the
 // answer is wanted twice: to count what is missing, and to say which.
@@ -1747,6 +1844,14 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
                 report("; a field left out would be read uninitialized")
                 frost_rt_recover_escape()
             }
+        }
+        // The same question of a variant, whose fields the walk above cannot
+        // ask: an enum is laid out as a struct carrying the tag beside every
+        // variant's fields, so all of them together is not what any one literal
+        // writes. Asked of neither, `Shape::Circle { r = 1 }` left `n`
+        // unwritten and reading it read whatever was on the stack.
+        if (is_struct_ty(struct_ty)) {
+            check_variant_complete(p, id, struct_ty)
         }
         return
     }

@@ -443,6 +443,48 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "an array holds a number of elements that cannot be negative",
     ),
+    // A variant literal that leaves a field out.
+    //
+    // An enum is laid out as a struct carrying the tag beside every variant's
+    // fields, so the walk that asks a struct literal for all of them is not
+    // this question, and the self-hosted compiler asked neither: the field was
+    // storage nothing wrote, and reading it read whatever was on the stack.
+    (
+        "a_variant_literal_missing_a_field",
+        "Shape :: enum { Circle { r: i64, n: i64 } }
+         main :: fn() -> i64 {
+             s := Shape::Circle { r = 1 }
+             0
+         }
+        ",
+        "variant 'Circle' is missing field 'n'; a field left out would be read uninitialized",
+    ),
+    // The same, written inside another literal. Both said it at the outer one,
+    // because a report with no place is placed by whatever walk carried it out.
+    (
+        "a_nested_literal_missing_a_field",
+        "Inner :: struct { a: i64, b: i64 }
+         Outer :: struct { held: Inner }
+         main :: fn() -> i64 {
+             o := Outer { held = Inner { a = 1 } }
+             o.held.a
+         }
+        ",
+        "struct 'Inner' is missing field 'b'; a field left out would be read uninitialized",
+    ),
+    // A whole number written beside a vector of floats. A literal takes the
+    // type the context wants, and asked only whether one was written the
+    // self-hosted compiler took `v + 1` as though `1.0` had been.
+    (
+        "a_whole_number_beside_a_vector_of_floats",
+        "main :: fn() -> i64 {
+             v: [4]f32 = [1.0, 2.0, 3.0, 4.0]
+             w := v + 1
+             cast($i64, w[0])
+         }
+        ",
+        "a vector of 4 f32 and a i64 do not go together",
+    ),
     // A constant whose arithmetic has no answer.
     //
     // The bootstrap folded neither, so what reached the program was the
