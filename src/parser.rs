@@ -356,13 +356,14 @@ pub struct Parser<'a> {
     // Top-level `N :: 8` constants, read off the token stream before the parse
     // so that an array size may name one wherever it appears, including above
     // the line that declares it.
-    integer_constants: HashMap<String, usize>,
-    /// The names whose constant value is a whole number below zero.
+    /// Every constant whose value is a whole number, held as one.
     ///
-    /// `integer_constants` holds counts, so a negative one is not in it and the
-    /// name read as one nothing declares: `N :: 0 - 4` written as an array
-    /// length was reported as not being a constant, which it is.
-    negative_constants: std::collections::HashSet<String>,
+    /// Held as a count, a negative was not in it at all and the name read as
+    /// one nothing declares: `N :: 0 - 4` written as an array length was
+    /// reported as not being a constant, which it is. Every place that asks
+    /// what a length is asks this, so there is one answer rather than one per
+    /// site.
+    integer_constants: HashMap<String, i64>,
     // The same constants with what each one worked out to, and the machinery
     // that works a call out. A length may call a function the file declares,
     // and the answer has to be in hand where the length is read.
@@ -577,7 +578,6 @@ fn bare_parser(tokens: &[Token]) -> Parser<'_> {
         internal_types: false,
         no_struct_literal: false,
         integer_constants: HashMap::new(),
-        negative_constants: std::collections::HashSet::new(),
         constant_values: HashMap::new(),
         folder: crate::const_eval::Folder::new(
             &[],
@@ -840,15 +840,23 @@ fn constant_faults(
         .collect()
 }
 
+/// A length that works out below zero. There is no array of that many elements,
+/// and every place that reads a length says so in the same words.
+fn negative_length(position: crate::lexer::Position) -> anyhow::Error {
+    crate::diagnostic::LocatedError {
+        position,
+        message: "an array holds a number of elements that cannot be negative"
+            .to_string(),
+    }
+    .into()
+}
+
 fn integers_among(
     values: &HashMap<String, crate::const_eval::Value>,
-) -> HashMap<String, usize> {
+) -> HashMap<String, i64> {
     values
         .iter()
-        .filter_map(|(name, value)| {
-            let held = value.integer()?;
-            usize::try_from(held).ok().map(|held| (name.clone(), held))
-        })
+        .filter_map(|(name, value)| Some((name.clone(), value.integer()?)))
         .collect()
 }
 
@@ -869,7 +877,6 @@ impl<'a> Parser<'a> {
             internal_types: false,
             no_struct_literal: false,
             integer_constants: HashMap::new(),
-            negative_constants: std::collections::HashSet::new(),
             constant_values: HashMap::new(),
             folder: crate::const_eval::Folder::new(
                 &[],
@@ -899,11 +906,6 @@ impl<'a> Parser<'a> {
         let (values, folder, faults) =
             scan_constants(self.all_tokens, imported);
         self.integer_constants = integers_among(&values);
-        self.negative_constants = values
-            .iter()
-            .filter(|(_, value)| value.integer().is_some_and(|held| held < 0))
-            .map(|(name, _)| name.clone())
-            .collect();
         self.constant_values = values;
         self.folder = folder;
         let mut held = constant_faults(&faults, self.positions);
@@ -944,7 +946,6 @@ impl<'a> Parser<'a> {
             internal_types: false,
             no_struct_literal: false,
             integer_constants: HashMap::new(),
-            negative_constants: std::collections::HashSet::new(),
             constant_values: HashMap::new(),
             folder: crate::const_eval::Folder::new(
                 &[],
@@ -3395,22 +3396,14 @@ impl<'a> Parser<'a> {
                 Token::Identifier(name)
                     if self.integer_constants.contains_key(name) =>
                 {
-                    self.integer_constants[name]
-                }
-                // A constant below zero. There is no array of that many
-                // elements, and read as a name nothing declares the reader was
-                // told the name is not a constant, which it is.
-                Token::Identifier(name)
-                    if self.negative_constants.contains(name) =>
-                {
-                    return Err(crate::diagnostic::LocatedError {
-                        position: self
-                            .position_at(self.mark() - 1)
-                            .unwrap_or_default(),
-                        message: "an array holds a number of elements that cannot be negative"
-                            .to_string(),
-                    }
-                    .into());
+                    let held = self.integer_constants[name];
+                    let Ok(held) = usize::try_from(held) else {
+                        return Err(negative_length(
+                            self.position_at(self.mark() - 1)
+                                .unwrap_or_default(),
+                        ));
+                    };
+                    held
                 }
                 // A name that is not a constant is a generic's value
                 // parameter, whose number arrives with the instantiation. The
@@ -4949,6 +4942,9 @@ impl<'a> Parser<'a> {
             }
             Token::LeftBracket => {
                 self.read_token();
+                // Where the length is written, for a report about what it works
+                // out to.
+                let at = self.current_position().unwrap_or_default();
                 // A length is a compile-time value like a constant's, and a
                 // layout is worked out later than either. Named here rather
                 // than left to the size parser, which read the word as the
@@ -4976,14 +4972,16 @@ impl<'a> Parser<'a> {
                         bail!("Expected ']' after array size");
                     }
                     let constants = &self.integer_constants;
-                    let known = size
-                        .evaluate(&|name| {
-                            constants
-                                .get(name)
-                                .and_then(|held| i64::try_from(*held).ok())
-                        })
-                        .and_then(|value| usize::try_from(value).ok());
-                    match known {
+                    let known =
+                        size.evaluate(&|name| constants.get(name).copied());
+                    // A length that works out below zero, told apart from one
+                    // that works out to nothing. Read as a count the two were
+                    // one answer, and a negative was carried on as a length
+                    // some later instantiation would supply.
+                    if known.is_some_and(|value| value < 0) {
+                        return Err(negative_length(at));
+                    }
+                    match known.and_then(|value| usize::try_from(value).ok()) {
                         Some(known) => {
                             Type::Array(Box::new(self.parse_type()?), known)
                         }

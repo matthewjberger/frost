@@ -339,6 +339,16 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "type parameter 'T' of 'make' requires a type argument like '$T'",
     ),
+    // A generic taking two compile-time parameters, handed one. Asked only
+    // whether some type argument was written, a call writing one of two went
+    // through with a slot nothing was written for.
+    (
+        "a_generic_handed_fewer_type_arguments_than_it_takes",
+        "pair :: fn($T: Type, $U: Type) -> i64 { sizeof(T) + sizeof(U) }
+         main :: fn() -> i64 { pair($i64) }
+        ",
+        "generic function 'pair' expects 2 argument(s) but 1 were given",
+    ),
     // A value left unconsumed beside an operation that belongs in an `unsafe`
     // block. The gate says nothing about what the program does with its values,
     // so both are the reader's to hear about: holding the complaint back for
@@ -412,6 +422,26 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          }
         ",
         "an index names one element, and this is a range; `slice_range` takes part of a run",
+    ),
+    // The same length, written as a type rather than as a repeat count. Held
+    // as a count, a negative was absent from the table both sites read, so the
+    // repeat answered for it and the type carried it on as a length some later
+    // instantiation would supply.
+    (
+        "a_negative_length_written_as_a_type",
+        "N :: 0 - 4
+         Box :: struct { xs: [N]i64 }
+         main :: fn() -> i64 { 0 }
+        ",
+        "an array holds a number of elements that cannot be negative",
+    ),
+    (
+        "a_negative_length_on_a_parameter",
+        "N :: 0 - 4
+         hold :: fn(xs: [N]i64) -> i64 { xs[0] }
+         main :: fn() -> i64 { 0 }
+        ",
+        "an array holds a number of elements that cannot be negative",
     ),
     // A constant whose arithmetic has no answer.
     //

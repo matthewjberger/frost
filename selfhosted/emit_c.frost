@@ -508,10 +508,10 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         // that field names, with nothing loaded and nothing dispatched.
         direct := bundle_field_fn(p, node.a)
         if (direct >= 0) {
-            base := emit_call_pins(p, node.b, direct)
+            base := emit_call_pins(p, node.b, direct, node.pos)
             emit_fn_stem(p, direct)
             emit_text("(")
-            emit_args(p, node.b, direct, base)
+            emit_args(p, node.b, direct, base, node.pos)
             emit_text(")")
             emit_call_close(base)
             return
@@ -529,9 +529,6 @@ emit_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NodeKind::Call) {
         fn_index := node.val
         args := node.a
-        // Where this call is written, for a report made while it is written
-        // out. Refer to `call_at`.
-        p.call_at = node.pos
         // A call whose name is a local of function-pointer type is indirect: the
         // value is cast back to the signature and called through.
         csym := arena_at(p.fns, fn_index)
@@ -548,18 +545,18 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             // whatever generics it calls and leaves their tuple here instead.
             xstart := p.call_xarg_start
             xcount := p.call_xarg_count
-            base := emit_call_pins(p, args, fn_index)
+            base := emit_call_pins(p, args, fn_index, node.pos)
             emit_mono_name(p, fn_index, arg, xstart, xcount)
             emit_text("(")
-            emit_args(p, args, fn_index, base)
+            emit_args(p, args, fn_index, base, node.pos)
             emit_text(")")
             emit_call_close(base)
             return
         }
-        base := emit_call_pins(p, args, fn_index)
+        base := emit_call_pins(p, args, fn_index, node.pos)
         emit_fn_symbol(p, fn_index)
         emit_text("(")
-        emit_args(p, args, fn_index, base)
+        emit_args(p, args, fn_index, base, node.pos)
         emit_text(")")
         emit_call_close(base)
         return
@@ -1552,7 +1549,8 @@ emit_arg_walk :: fn(
     head: i64,
     fn_index: i64,
     base: i64,
-    pass: i64
+    pass: i64,
+    at: i64
 ) {
     mut id := head
     mut first: bool = true
@@ -1631,7 +1629,7 @@ emit_arg_walk :: fn(
         if (first == false || cap > 0) {
             emit_text(", ")
         }
-        emit_capability_argument(p, fn_index, cap)
+        emit_capability_argument(p, fn_index, cap, at)
         cap = cap + 1
     }
 }
@@ -1642,14 +1640,14 @@ emit_arg_walk :: fn(
 // something is written as an assignment into a slot before the call rather than
 // inside its argument list. Answers where the slots start, or -1 where this
 // call needed none, which the caller hands back to `emit_args`.
-emit_call_pins :: fn(mut p: Parser, head: i64, fn_index: i64) -> i64 {
+emit_call_pins :: fn(mut p: Parser, head: i64, fn_index: i64, at: i64) -> i64 {
     last := last_calling_arg(p, head)
     if (last < 0) {
         return -1
     }
     base := next_slot(p, last + 1)
     emit_text("(")
-    emit_arg_walk(p, head, fn_index, base, 0)
+    emit_arg_walk(p, head, fn_index, base, 0, at)
     base
 }
 
@@ -1659,8 +1657,8 @@ emit_call_close :: fn(base: i64) {
     }
 }
 
-emit_args :: fn(mut p: Parser, head: i64, fn_index: i64, base: i64) {
-    emit_arg_walk(p, head, fn_index, base, 1)
+emit_args :: fn(mut p: Parser, head: i64, fn_index: i64, base: i64, at: i64) {
+    emit_arg_walk(p, head, fn_index, base, 1, at)
 }
 
 // The name a match compares its value out of. A node id is unique, so two
@@ -1915,10 +1913,15 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
 // One capability a call to `fn_index` is handed, emitted as an argument. A
 // forwarded one is already a pointer and passes straight through. A region
 // supplies the arena by address, the way any borrow is passed.
-emit_capability_argument :: fn(mut p: Parser, fn_index: i64, index: i64) {
+emit_capability_argument :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    index: i64,
+    at: i64
+) {
     found := provider_for(p, fn_index, index)
     if (found < 0) {
-        report_missing_capability(p, fn_index, index)
+        report_missing_capability(p, fn_index, index, at)
     }
     held := arena_at(p.providers, found)
     if (held.borrow == 1) {

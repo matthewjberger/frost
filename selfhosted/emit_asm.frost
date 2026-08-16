@@ -2297,10 +2297,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::Call) {
-        // Where this call is written, for a report made while it is written
-        // out. Refer to `call_at`.
-        p.call_at = node.pos
-        emit_asm_call(p, node.a, node.val)
+        emit_asm_call(p, node.a, node.val, node.pos)
         return
     }
     if (kind == NodeKind::CallPtr) {
@@ -2308,7 +2305,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         // that field names, with nothing loaded and nothing dispatched.
         direct := bundle_field_fn(p, node.a)
         if (direct >= 0) {
-            emit_asm_call(p, node.b, direct)
+            emit_asm_call(p, node.b, direct, node.pos)
             return
         }
         emit_asm_call_through(p, node.a, node.b)
@@ -2500,10 +2497,10 @@ emit_asm_struct_lit :: fn(mut p: Parser, id: i64) {
 // aligned.
 // One capability a call is handed, left in %rax ready to be pushed. A forwarded
 // one is already a pointer. A region supplies the arena by address.
-emit_asm_capability :: fn(mut p: Parser, fn_index: i64, index: i64) {
+emit_asm_capability :: fn(mut p: Parser, fn_index: i64, index: i64, at: i64) {
     found := provider_for(p, fn_index, index)
     if (found < 0) {
-        report_missing_capability(p, fn_index, index)
+        report_missing_capability(p, fn_index, index, at)
     }
     held := arena_at(p.providers, found)
     slot := local_slot(p, held.off, held.len)
@@ -2653,7 +2650,7 @@ emit_asm_arg_from :: fn(direct: i64, offset: i64) {
     }
 }
 
-emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
+emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64, at: i64) {
     callee := arena_at(p.fns, fn_index)
     // The instance this call names, when the callee is generic, since the
     // symbol's list belongs to whichever instance was parsed last.
@@ -2736,7 +2733,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     mut cap: i64 = capability
     while (cap > 0) {
         cap = cap - 1
-        emit_asm_capability(p, fn_index, cap)
+        emit_asm_capability(p, fn_index, cap, at)
         emit_asm_push()
     }
     generic := generic_fn_of(p, fn_index) >= 0

@@ -917,6 +917,7 @@ main :: fn() -> i64 {
         caps = arena_make($Cap, 4096),
         providers = arena_make($Provider, 4096),
         said_unknown = arena_make($Cap, 256),
+        size_known = 1,
         result_fn = -1,
         deferred_unconsumed = arena_make($Cap, 256),
         aliases = arena_make($Alias, 64),
@@ -997,7 +998,6 @@ main :: fn() -> i64 {
         last_return_type = 0,
         no_struct_lit = false,
         stmt_at = 0,
-        call_at = 0,
         last_type_was_generic = 0,
         last_type_was_param = 0,
         unsafe_spans = arena_make($UnsafeSpan, 4096),
@@ -1239,14 +1239,19 @@ main :: fn() -> i64 {
     // it would have, so what this can miss is a second report on a declaration
     // already being refused.
     // What the unsafety gate finds, counted apart: an operation that belongs in
-    // an `unsafe` block is not a reason to hold back what a value is left over
-    // for. Refer to `flush_unconsumed`.
+    // an `unsafe` block says nothing about what a program does with its values,
+    // so it is not a reason to hold back what a value is left over for. Every
+    // other fault is, which is what is worked out here rather than inside the
+    // flush: the two marks are a line apart, so a check put between them is a
+    // check whose faults are counted.
     before_gate := frost_rt_recover_failures()
     check_unsafety(parser)
     gated := frost_rt_recover_failures() - before_gate
     report_bad_derefs(parser)
+    held := parser.deferred_unconsumed.count + gated
+    others := frost_rt_recover_failures() - held
     // Last, so every check that reads what the program says has said it.
-    flush_unconsumed(parser, gated)
+    flush_unconsumed(parser, others)
     // Every fault reported so far, refused here, before any backend writes a
     // word.
     if (frost_rt_recover_failures() > 0) {

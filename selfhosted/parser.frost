@@ -3070,8 +3070,20 @@ parse_type :: fn(mut p: Parser) -> i64 {
         // the bracket instead of about the word before it.
         refuse_layout_answer(p)
         mut length: i64 = -1
+        length_at := cur_off(p)
         if (cur(p) != TokenKind::Rbracket) {
+            p.size_known = 1
             length = parse_size_expr(p)
+            // A length that works out below zero, and was worked out at all: a
+            // slice writes none, and a generic's own parse reads its value
+            // parameter as no number yet, and both of those read as -1 here.
+            if (p.size_known == 1 && length < 0) {
+                report_where(p.modules, p.src, length_at)
+                report(
+                    "an array holds a number of elements that cannot be negative"
+                )
+                frost_rt_recover_escape()
+            }
         }
         advance(p)
         element := parse_type(p)
@@ -5362,6 +5374,13 @@ parse_size_atom :: fn(mut p: Parser) -> i64 {
     if (bound >= 0) {
         advance(p)
         return bound
+    }
+    // A name that stands for no number leaves the length unknown rather than
+    // negative: inside a generic's own parse the value parameter is not bound
+    // to anything yet, and every `[N]u8` in the standard library reads that way
+    // until an instance supplies one.
+    if (is_const(p, cur_off(p), cur_len(p)) == false) {
+        p.size_known = 0
     }
     held := const_value(p, cur_off(p), cur_len(p))
     advance(p)

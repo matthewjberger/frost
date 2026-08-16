@@ -126,13 +126,20 @@ provider_for :: fn(mut p: Parser, fn_index: i64, index: i64) -> i64 {
 }
 
 // The diagnostic for a call with nothing to draw from.
-report_missing_capability :: fn(mut p: Parser, fn_index: i64, index: i64) {
+// `at` is where the call is written, which is where the reader acts: the `with`
+// block goes around the call and the `uses` goes on the function holding it.
+// Passed rather than left on the parser, so a call emitted through a path that
+// forgot to record one is a build error here instead of a report pointing at
+// whatever call was written out last.
+report_missing_capability :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    index: i64,
+    at: i64
+) {
     sym := arena_at(p.fns, fn_index)
     wanted := cap_at(p, fn_index, index)
-    // At the call rather than at the function it goes to, since that is where
-    // the reader acts: the `with` block goes around the call and the `uses`
-    // goes on the function holding it.
-    report_where(p.modules, p.src, p.call_at)
+    report_where(p.modules, p.src, at)
     report("calling '")
     report_src(p.src, sym.off, sym.len)
     report("'")

@@ -1793,6 +1793,11 @@ Parser :: struct {
     // function, and the ones in scope where a call is being emitted.
     caps: Arena<Cap>,
     providers: Arena<Provider>,
+    // Whether every name in the length just read stood for a number. A name
+    // that stands for nothing reads as -1, which is what an unbound value
+    // parameter of a generic reads as too, so the number alone cannot say
+    // whether a length is negative or simply not known yet.
+    size_known: i64,
     // The function whose answer `result_ty` belongs to, so a report about a `?`
     // written in one that declares no failure set can name it.
     result_fn: i64,
@@ -1973,12 +1978,6 @@ Parser :: struct {
     // the middle of one, and what a report about the instance names is the
     // statement that wanted it rather than the type position inside it.
     stmt_at: i64,
-    // Where the call being emitted is written. A capability a call cannot
-    // draw is found while the call is written out, by which point what is
-    // in hand is the callee's symbol rather than the line the reader has to
-    // act on: the `with` block goes around the call and the `uses` goes on
-    // the function holding it.
-    call_at: i64,
     last_type_was_generic: i64,
     // Whether the type just read was the template's own compile-time parameter,
     // written bare. A parameter node records whichever instantiation was made
