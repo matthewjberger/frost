@@ -1793,6 +1793,11 @@ Parser :: struct {
     // function, and the ones in scope where a call is being emitted.
     caps: Arena<Cap>,
     providers: Arena<Provider>,
+    // Where the statement being weighed for its types is written. `stmt_at` is
+    // the parse's own, and by the time the types are read it names whatever
+    // declaration the parse ended on: a report about an operator in one file
+    // was placed in another.
+    checking_at: i64,
     // Whether every name in the length just read stood for a number. A name
     // that stands for nothing reads as -1, which is what an unbound value
     // parameter of a generic reads as too, so the number alone cannot say

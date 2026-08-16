@@ -5489,6 +5489,19 @@ parse_for_live :: fn(
         report("is worked out; bind it first and walk the name")
         frost_rt_recover_escape()
     }
+    // What it was given. Left unasked, the walk was written out against a name
+    // holding a number and the reader was told about the indexing that walk
+    // does, which is not what the program says.
+    walked := parse_time_type(p, container)
+    if (is_slab_ty(p, walked) == false && is_columns_ty(p, walked) == false) {
+        // At the `for`, which is what the sentence is about: the walk is the
+        // thing that cannot be written, rather than the name it was given.
+        report_where(p.modules, p.src, p.stmt_at)
+        report("`live_slots` walks a generational container, and this is not ")
+        report("one; write `live_slots(c)` where `c` is a `columns<T, N>` or ")
+        report("a `Slab<T, N>`")
+        frost_rt_recover_escape()
+    }
     unique := p.arena.count
 
     word_off := synth_numbered(p, "__live_w", unique)

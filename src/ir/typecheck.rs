@@ -176,7 +176,7 @@ fn check_statement(
     match statement {
         IrStatement::Assign(local, rvalue) => {
             check_local(function, *local)?;
-            check_rvalue(function, rvalue, signatures)?;
+            check_rvalue(function, rvalue, signatures, Some(*local))?;
             if let Some(produced) = rvalue_type(function, rvalue, signatures) {
                 let wanted = function.local_type(*local);
                 if !fits(&produced, wanted) {
@@ -220,10 +220,14 @@ fn check_statement(
     Ok(())
 }
 
+/// `held` is the local the value is being put into, whose place is where the
+/// operation is written. An operand's own place is where the name it reads was
+/// bound, so a report about an operator landed on a binding several lines up.
 fn check_rvalue(
     function: &IrFunction,
     rvalue: &IrRvalue,
     signatures: &HashMap<&str, Signature>,
+    held: Option<usize>,
 ) -> Result<()> {
     match rvalue {
         IrRvalue::Use(operand) => check_operand(function, operand)?,
@@ -235,12 +239,15 @@ fn check_rvalue(
                 require_numeric(function, right)?;
             }
             {
-                let held = operand_type(function, left);
+                let left_type = operand_type(function, left);
                 let other = operand_type(function, right);
-                if !fits(&held, &other) && !fits(&other, &held) {
+                if !fits(&left_type, &other) && !fits(&other, &left_type) {
+                    let where_written = held
+                        .map(|held| at(function, &IrOperand::Local(held)))
+                        .filter(|text| !text.is_empty())
+                        .unwrap_or_else(|| at(function, left));
                     bail!(
-                        "{}an operator has a {held} on one side and a {other} on the other",
-                        at(function, left)
+                        "{where_written}an operator has a {left_type} on one side and a {other} on the other"
                     );
                 }
             }

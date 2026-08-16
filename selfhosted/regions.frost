@@ -1024,6 +1024,8 @@ mark_single :: fn(mut p: Parser, id: i64) {
 check_types_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
+    // Where this statement is written, for a report made while it is weighed.
+    p.checking_at = node.pos
     if (kind == NodeKind::Let) {
         value := node.a
         annotation := node.b
@@ -1719,6 +1721,98 @@ field_is_given :: fn(
     return false
 }
 
+// A literal beside a type that can hold a number but not this one. `bool` is
+// one byte holding a truth value, so a whole number read at one loses what it
+// held, and that is the complaint rather than the one about two sides.
+report_literal_at :: fn(mut p: Parser, op: i64, at: i64, from: i64, to: i64) {
+    // A `bool` is one byte holding a truth value rather than a number, so the
+    // walk that compares widths says nothing about it. A whole number read at
+    // one keeps a bit and loses the rest, which is the same loss by another
+    // name.
+    if (is_narrowing(from, to) == false && distinct_repr(to) != TY_BOOL) {
+        return
+    }
+    // At the whole operation, which is what the other side belongs to.
+    report_where(p.modules, p.src, at)
+    report("this is a '")
+    report_type_name(p, from)
+    report("' and a '")
+    report_type_name(p, to)
+    report("' is wanted, which cannot hold all of one; write cast($")
+    report_type_name(p, to)
+    report(", ...) to say the loss is meant")
+    frost_rt_recover_escape()
+}
+
+// The type a literal is named by where nothing else gives it one.
+literal_kind :: fn(mut p: Parser, id: i64) -> i64 {
+    if (arena_at(p.arena, constant_node(p, id)).kind == NodeKind::Float) {
+        return TY_F64
+    }
+    TY_I64
+}
+
+// The two sides of an operator, against each other.
+//
+// Nothing asked, so `"abc" == 3` compiled, and what it compared was a view's
+// address against a number. A literal is not one of the two: it takes the type
+// the other side has, which is what lets `n + 1` be written whatever width `n`
+// holds.
+check_operand_types :: fn(
+    mut p: Parser,
+    op: i64,
+    left: i64,
+    right: i64,
+    at: i64
+) {
+    if (left < 0 || right < 0) {
+        return
+    }
+    // `&&` and `||` join two truth values rather than two of one type, and a
+    // constant standing for one is written out as the number it holds, so the
+    // two sides of a join are not two the reader wrote as types.
+    if (op == OP_AND || op == OP_OR) {
+        return
+    }
+    // A borrow is read through wherever a value is wanted, so what it points
+    // at is the side, not the borrow: `truth(t, 0) == false` over a `ref bool`
+    // reads the truth value it borrows.
+    mut held := through_borrow_ty(p, type_of(p, left))
+    mut other := through_borrow_ty(p, type_of(p, right))
+    left_written := untyped_literal(p, left)
+    right_written := untyped_literal(p, right)
+    if (left_written && right_written) {
+        return
+    }
+    // A literal takes the type the other side has, but only a type it could
+    // be: a number is not a `str`. Excused whatever the other side was,
+    // `"abc" < 3` went through and compared a view's address with a number.
+    if (left_written) {
+        if (is_integer(other) || is_float(other)) {
+            return
+        }
+        held = literal_kind(p, left)
+        report_literal_at(p, op, at, held, other)
+    }
+    if (right_written) {
+        if (is_integer(held) || is_float(held)) {
+            return
+        }
+        other = literal_kind(p, right)
+        report_literal_at(p, op, at, other, held)
+    }
+    if (types_compatible(p, held, other) || types_compatible(p, other, held)) {
+        return
+    }
+    report_where(p.modules, p.src, p.checking_at)
+    report_fmt(
+        "an operator has a {} on one side and a {} on the other",
+        type_text(p, held),
+        type_text(p, other)
+    )
+    frost_rt_recover_escape()
+}
+
 check_types_expr :: fn(mut p: Parser, id: i64) {
     if (id < 0) {
         return
@@ -1930,6 +2024,12 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         if (kind == NodeKind::Bin) {
             check_flags_operator(p, node.val, node.a, node.b, node.pos)
             check_distinct_comparison(p, node.val, node.a, node.b, node.pos)
+            // A negation is written out as a comparison with a zero the
+            // reader did not write, so the two sides are not two the reader
+            // put there. What `!` takes is asked of it below.
+            if (node.c != 1) {
+                check_operand_types(p, node.val, node.a, node.b, node.pos)
+            }
         }
         check_types_expr(p, node.a)
         check_types_expr(p, node.b)
