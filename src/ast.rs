@@ -510,6 +510,12 @@ pub enum Statement {
     Let {
         name: Symbol,
         type_annotation: Option<crate::types::Type>,
+        // Where the written type is, so a report about it says where the type
+        // is rather than where the binding holding it starts, the way a
+        // parameter already does. Defaulted on the way in, because an interface
+        // written before this carried no such thing.
+        #[serde(default)]
+        type_at: crate::lexer::Position,
         value: ExprId,
         mutable: bool,
     },
@@ -1123,9 +1129,11 @@ impl<'a> Splicer<'a> {
             Statement::Let {
                 name,
                 type_annotation,
+                type_at,
                 value,
                 mutable,
             } => Statement::Let {
+                type_at,
                 name: self.symbol(dest, name, rename),
                 type_annotation,
                 value: self.expression(dest, value, rename),

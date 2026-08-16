@@ -73,6 +73,7 @@ pub fn display_stmt(ast: &Ast, statement: StmtId) -> String {
         Statement::Let {
             name,
             type_annotation,
+            type_at: _,
             value,
             mutable,
         } => {

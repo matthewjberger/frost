@@ -1843,6 +1843,7 @@ impl<'a> Parser<'a> {
             Statement::Let {
                 name,
                 type_annotation: None,
+                type_at: crate::lexer::Position::default(),
                 value,
                 mutable: false,
             },
@@ -2103,6 +2104,7 @@ impl<'a> Parser<'a> {
             Statement::Let {
                 name,
                 type_annotation: None,
+                type_at: crate::lexer::Position::default(),
                 value,
                 mutable,
             },
@@ -2138,6 +2140,7 @@ impl<'a> Parser<'a> {
             Statement::Let {
                 name,
                 type_annotation: None,
+                type_at: crate::lexer::Position::default(),
                 value,
                 mutable: false,
             },
@@ -2157,6 +2160,8 @@ impl<'a> Parser<'a> {
             bail!("Expected ':'");
         }
 
+        // Where the type is written, which is where a report about it points.
+        let type_at = self.current_position().unwrap_or_default();
         let type_annotation = Some(self.parse_type()?);
 
         if !matches!(self.read_token(), Token::Assign) {
@@ -2174,6 +2179,7 @@ impl<'a> Parser<'a> {
             Statement::Let {
                 name,
                 type_annotation,
+                type_at,
                 value,
                 mutable,
             },
@@ -5562,6 +5568,7 @@ mod tests {
             Statement::Let {
                 name,
                 type_annotation: None,
+                type_at: crate::lexer::Position::default(),
                 value,
                 mutable: false,
             },
@@ -6435,6 +6442,7 @@ mod tests {
                 type_annotation,
                 value,
                 mutable,
+                ..
             } => {
                 assert_eq!(module.ast.name(*name), "x");
                 assert_eq!(type_annotation, &None);
@@ -6456,6 +6464,7 @@ mod tests {
                 type_annotation,
                 value,
                 mutable,
+                ..
             } => {
                 assert_eq!(module.ast.name(*name), "x");
                 assert_eq!(type_annotation, &Some(Type::I64));
@@ -6498,6 +6507,7 @@ mod tests {
                 type_annotation,
                 value,
                 mutable,
+                ..
             } => {
                 assert_eq!(module.ast.name(*name), "x");
                 assert_eq!(type_annotation, &None);
@@ -6519,6 +6529,7 @@ mod tests {
                 type_annotation,
                 value,
                 mutable,
+                ..
             } => {
                 assert_eq!(module.ast.name(*name), "x");
                 assert_eq!(type_annotation, &Some(Type::I64));
@@ -6555,6 +6566,7 @@ mod tests {
             Statement::Let {
                 name,
                 type_annotation: None,
+                type_at: crate::lexer::Position::default(),
                 value,
                 mutable: true,
             },
@@ -6577,6 +6589,7 @@ mod tests {
             Statement::Let {
                 name,
                 type_annotation: Some(Type::I64),
+                type_at: crate::lexer::Position::default(),
                 value,
                 mutable: true,
             },

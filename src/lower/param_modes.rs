@@ -177,6 +177,7 @@ fn read_through_statement(
             name,
             value,
             type_annotation: _,
+            type_at: _,
             mutable: _,
         } => {
             read_through_expression(ast, value, through, bound);

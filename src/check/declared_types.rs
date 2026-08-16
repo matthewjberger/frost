@@ -20,11 +20,17 @@ pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
         let position = ast.stmt_position(*statement);
         match ast.stmt(*statement) {
             Statement::Constant(_, value) => {
-                let (Expression::Function(params, signature, _)
-                | Expression::Proc(params, signature, _)) = ast.expr(*value)
+                let (Expression::Function(params, signature, body)
+                | Expression::Proc(params, signature, body)) = ast.expr(*value)
                 else {
                     continue;
                 };
+                // A binding writes a type the same way a parameter does, so a
+                // name nothing declares is the same fault wherever it is
+                // written. Left out, `held: Widget = 3` read as a binding of a
+                // type the program had, and what the reader was told was that
+                // an `i64` is not a `Widget`.
+                report_unknown_in_block(ast, *body, &known, &mut found);
                 for parameter in ast.params_in(*params) {
                     if let Some(ty) = &parameter.type_annotation {
                         // At the type, which is what the report names. The
@@ -123,6 +129,98 @@ fn bound<'a>(ty: &'a Type, held: &mut HashSet<&'a str>) {
                 bound(parameter, held);
             }
             bound(answer, held);
+        }
+        _ => {}
+    }
+}
+
+/// Every binding written inside a body, and inside the bodies inside it.
+///
+/// A block is reached through whatever holds it, so each statement that holds
+/// one names it here. A `defer` holds a single statement rather than a block,
+/// which is why it is followed the same way and not with the others.
+fn report_unknown_in_block(
+    ast: &Ast,
+    block: crate::ast::Range32,
+    known: &HashSet<&str>,
+    found: &mut Vec<Diagnostic>,
+) {
+    for statement in ast.stmts_in(block) {
+        report_unknown_in_statement(ast, *statement, known, found);
+    }
+}
+
+/// One statement: the type it writes, and whatever it holds.
+fn report_unknown_in_statement(
+    ast: &Ast,
+    statement: StmtId,
+    known: &HashSet<&str>,
+    found: &mut Vec<Diagnostic>,
+) {
+    match ast.stmt(statement) {
+        Statement::Let {
+            type_annotation,
+            type_at,
+            value,
+            ..
+        } => {
+            if let Some(ty) = type_annotation {
+                // At the type, which is what the report names, the way a
+                // parameter's already is.
+                report_unknown(ty, known, *type_at, found);
+            }
+            report_unknown_in_expression(ast, *value, known, found);
+        }
+        Statement::While(condition, body) => {
+            report_unknown_in_expression(ast, *condition, known, found);
+            report_unknown_in_block(ast, *body, known, found);
+        }
+        Statement::For(_, _, over, body) => {
+            report_unknown_in_expression(ast, *over, known, found);
+            report_unknown_in_block(ast, *body, known, found);
+        }
+        Statement::With(_, body) => {
+            report_unknown_in_block(ast, *body, known, found);
+        }
+        // A `defer` holds one statement rather than a block.
+        Statement::Defer(held) | Statement::ErrDefer(held) => {
+            report_unknown_in_statement(ast, *held, known, found);
+        }
+        Statement::Expression(value) | Statement::Return(value) => {
+            report_unknown_in_expression(ast, *value, known, found);
+        }
+        Statement::Assignment(place, value) => {
+            report_unknown_in_expression(ast, *place, known, found);
+            report_unknown_in_expression(ast, *value, known, found);
+        }
+        _ => {}
+    }
+}
+
+/// The blocks an expression holds. Only the shapes that hold one are followed:
+/// the rest have no statements under them and nothing to declare.
+fn report_unknown_in_expression(
+    ast: &Ast,
+    value: crate::ast::ExprId,
+    known: &HashSet<&str>,
+    found: &mut Vec<Diagnostic>,
+) {
+    match ast.expr(value) {
+        Expression::If(condition, then, otherwise) => {
+            report_unknown_in_expression(ast, *condition, known, found);
+            report_unknown_in_block(ast, *then, known, found);
+            if let Some(held) = otherwise {
+                report_unknown_in_block(ast, *held, known, found);
+            }
+        }
+        Expression::Unsafe(held) => {
+            report_unknown_in_block(ast, *held, known, found);
+        }
+        Expression::Switch(subject, cases) => {
+            report_unknown_in_expression(ast, *subject, known, found);
+            for case in ast.cases_in(*cases) {
+                report_unknown_in_block(ast, case.body, known, found);
+            }
         }
         _ => {}
     }

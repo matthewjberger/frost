@@ -373,6 +373,7 @@ impl Lowering {
             Statement::Let {
                 name: temporary,
                 type_annotation: None,
+                type_at: crate::lexer::Position::default(),
                 value,
                 mutable: false,
             },
@@ -413,6 +414,7 @@ impl Lowering {
                 Statement::Let {
                     name,
                     type_annotation: None,
+                    type_at: crate::lexer::Position::default(),
                     value: access,
                     mutable: binding.mutable,
                 },
