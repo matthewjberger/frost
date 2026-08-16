@@ -7825,6 +7825,66 @@ fn a_minus_that_opens_a_line_starts_a_statement() {
     assert_eq!(output, MINUS_RESULTS);
 }
 
+// The advice a line-continuation refusal gives has to be advice that works.
+//
+// No line may open with a binary operator, and both ways out of that are legal:
+// the operator at the end of the line above, or the whole expression inside
+// brackets. The refusal named only the brackets, and the report about an
+// indented line said the operator goes onto the second line, which is the one
+// thing that is refused. A reader following either sentence has to be able to
+// stop reading there, so this compiles what they say.
+#[test]
+fn the_way_out_of_a_line_continuation_refusal_is_one_that_compiles() {
+    let leading = "main :: fn() -> i64 {\n\
+         \x20   a := 1\n\
+         \x20   held := a\n\
+         \x20       + 2\n\
+         \x20   held\n}\n";
+    let said = compile_error("leadingplus", leading);
+    assert!(
+        said.contains(
+            "Put the operator at the end of the line above, or the whole \
+             expression inside brackets"
+        ),
+        "the refusal did not say what to write instead:\n{said}"
+    );
+    let Some(hosted) = self_hosted_rejects("leadingplus", leading) else {
+        return;
+    };
+    assert!(
+        hosted.contains(
+            "Put the operator at the end of the line above, or the whole \
+             expression inside brackets"
+        ),
+        "the self-hosted refusal did not say what to write instead:\n{hosted}"
+    );
+
+    // Both ways out, run exactly as worded. A refusal that names a way out and
+    // is wrong about it costs more than one that names none.
+    let trailing = "main :: fn() -> i64 {\n\
+         \x20   a := 1\n\
+         \x20   held := a +\n\
+         \x20       2\n\
+         \x20   if (held == 3) { return 0 }\n\
+         \x20   1\n}\n";
+    assert_eq!(
+        compile_and_run_unaudited(&unique("trailingplus"), trailing),
+        Some(String::new()),
+        "the operator at the end of the line above was refused"
+    );
+    let bracketed = "main :: fn() -> i64 {\n\
+         \x20   a := 1\n\
+         \x20   held := (a\n\
+         \x20       + 2)\n\
+         \x20   if (held == 3) { return 0 }\n\
+         \x20   1\n}\n";
+    assert_eq!(
+        compile_and_run_unaudited(&unique("bracketedplus"), bracketed),
+        Some(String::new()),
+        "the whole expression inside brackets was refused"
+    );
+}
+
 // The hazard the rule above leaves, refused by both compilers. `parse_add`
 // carries an expression across a line break for `+` and not for `-`, so a long
 // expression broken before a minus keeps half its terms: a matrix inverse
@@ -8480,6 +8540,69 @@ fn both_compilers_refuse_a_name_an_import_already_offers() {
         !hosted.status.success()
             && said.contains("also arrives from an import"),
         "the self-hosted compiler took it:\n{said}"
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+// A name a module declares and does not offer.
+//
+// Saying it is not there is false, and it is the report a reader gets four
+// times in an afternoon: the fix is one word on an export line, and a reader
+// who believes the report writes the declaration a second time instead. Both
+// compilers name the file that declares it, by file name, since what a module
+// is called otherwise depends on where the build was started from.
+#[test]
+fn both_compilers_name_the_module_that_declares_an_unoffered_name() {
+    let directory = std::env::temp_dir().join(unique("frost_unoffered"));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("lib.frost"),
+        "export only_this\n\n\
+         only_this :: fn() -> i64 { 1 }\n\n\
+         instance_hash :: fn(value: i64) -> i64 { value * 31 }\n",
+    )
+    .unwrap();
+    let main = directory.join("main.frost");
+    std::fs::write(
+        &main,
+        "import \"lib.frost\"\n\n\
+         main :: fn() -> i64 {\n\
+         \x20   instance_hash(3)\n}\n",
+    )
+    .unwrap();
+    let wanted = "call to undefined function 'instance_hash' \
+         (declared in lib.frost; add it to the export line there)";
+
+    let bootstrap = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("-o")
+        .arg(directory.join("m.o"))
+        .arg(&main)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&bootstrap.stderr);
+    assert!(
+        !bootstrap.status.success() && said.contains(wanted),
+        "the bootstrap did not name the module:\n{said}"
+    );
+
+    let Some(compiler) = build_self_hosted_compiler("unoffered") else {
+        return;
+    };
+    let hosted = Command::new(&compiler)
+        .env("FROST_INPUT", &main)
+        .output()
+        .unwrap();
+    let mine = String::from_utf8_lossy(&hosted.stderr);
+    assert!(
+        !hosted.status.success() && mine.contains(wanted),
+        "the self-hosted compiler did not name the module:\n{mine}"
+    );
+    // The whole report, not the sentence it was asked about: what a refusal
+    // says, how many times it says it, and where it points are all compared.
+    assert_eq!(
+        said.trim(),
+        mine.trim(),
+        "the two wrote different reports about an unoffered name"
     );
     let _ = std::fs::remove_dir_all(&directory);
 }

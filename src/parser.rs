@@ -5061,7 +5061,7 @@ impl<'a> Parser<'a> {
                 self.record_error(
                     position,
                     &anyhow::anyhow!(
-                        "a line cannot open with '{written}': a line break ends a statement, so there is nothing above for it to join to. An expression that runs over lines goes inside brackets, where a line break says nothing"
+                        "a line cannot open with '{written}': a line break ends a statement, so there is nothing above for it to join to. Put the operator at the end of the line above, or the whole expression inside brackets, where a line break says nothing"
                     ),
                 );
                 self.synchronize_in_block();
@@ -5082,8 +5082,8 @@ impl<'a> Parser<'a> {
                         "this line is indented past the statement above it, so \
                          it reads as continuing that line, and it begins a \
                          statement of its own. An expression broken over lines \
-                         carries the operator that joins them onto the second, \
-                         or is written inside brackets"
+                         carries the operator that joins them at the end of \
+                         the first, or is written inside brackets"
                     ),
                 );
             }
