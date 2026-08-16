@@ -73,6 +73,20 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 { 0 }\n",
         "reading a field through a raw pointer is unchecked",
     ),
+    // An index through a raw pointer written inside a `cast`. Whether an index
+    // goes through one is written onto the node by the type walk and read back
+    // by the unsafety gate, and that walk never went into what a cast converts,
+    // so the node said nothing and no block was asked for.
+    (
+        "an_index_through_a_raw_pointer_inside_a_cast_needs_a_block",
+        "probe :: fn(text: ^i8, index: i64) -> i64 {\n\
+         \x20   bytes := unsafe { ptr_cast($u8, text) }\n\
+         \x20   cast($i64, bytes[index])\n\
+         }\n\
+         \n\
+         main :: fn() -> i64 { 0 }\n",
+        "indexing a raw pointer is unchecked",
+    ),
     // A list of exports running over several lines. The names are blanked out
     // of the source once they are read, and blanking their newlines away with
     // them named every report below the list as if it stood that many lines

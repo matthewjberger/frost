@@ -885,7 +885,12 @@ impl Checker<'_> {
                 self.depth -= 1;
             }
             Expression::Dereference(inner) => {
-                self.refuse("reading through a raw pointer", at);
+                // At the read, not at the statement holding it, the way a call
+                // is named where it is written.
+                self.refuse(
+                    "reading through a raw pointer",
+                    ast.expr_position(value),
+                );
                 self.expression(*inner, at);
             }
             // An array, a slice and a `str` each carry a length and are checked,
@@ -908,7 +913,13 @@ impl Checker<'_> {
                 );
                 match self.type_of(*base).map(without_borrow) {
                     Some(Type::Ptr(_)) => {
-                        self.refuse("indexing a raw pointer", at);
+                        // At the access, not at the statement holding it. One
+                        // statement may hold several, and which one wants a
+                        // block is the reader's whole question.
+                        self.refuse(
+                            "indexing a raw pointer",
+                            ast.expr_position(value),
+                        );
                     }
                     Some(_) => {}
                     None if missing => {}
@@ -998,7 +1009,12 @@ impl Checker<'_> {
                 if let Some(Type::Ptr(_)) =
                     self.type_of(*inner).map(without_borrow)
                 {
-                    self.refuse("reading a field through a raw pointer", at);
+                    // At the access, the way a deref and an index are named
+                    // where they are written.
+                    self.refuse(
+                        "reading a field through a raw pointer",
+                        ast.expr_position(value),
+                    );
                 }
                 self.expression(*inner, at);
             }
