@@ -556,6 +556,18 @@ fn lowered_and_checked(
     collected: &[frost::Diagnostic],
     idle: &[frost::Diagnostic],
 ) -> Result<frost::IrModule> {
+    // A type nothing declares stops the run here. Lowering asks every type for
+    // a width and a layout, so what it says about one that is not there is the
+    // same fault told a second way: `sizeof(Widget)` reported the missing name
+    // and then reported that `sizeof` has no layout for it.
+    if collected
+        .iter()
+        .any(|held| held.message.contains("is not a type this program declares"))
+    {
+        let mut faults = collected.to_vec();
+        suggest_names(program, &program.roots.clone(), &mut faults);
+        refuse(&faults)?;
+    }
     let lowered = beside(
         collected,
         frost::build_module_recovering(

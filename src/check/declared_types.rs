@@ -15,6 +15,7 @@ use crate::types::Type;
 /// declares.
 pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
     let known = declared(ast, roots);
+    let values = valued(ast, roots);
     let mut found = Vec::new();
     for statement in roots {
         let position = ast.stmt_position(*statement);
@@ -30,7 +31,7 @@ pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
                 // written. Left out, `held: Widget = 3` read as a binding of a
                 // type the program had, and what the reader was told was that
                 // an `i64` is not a `Widget`.
-                report_unknown_in_block(ast, *body, &known, &mut found);
+                report_unknown_in_block(ast, *body, &known, &values, &mut found);
                 for parameter in ast.params_in(*params) {
                     if let Some(ty) = &parameter.type_annotation {
                         // At the type, which is what the report names. The
@@ -110,6 +111,21 @@ fn declared<'a>(ast: &'a Ast, roots: &[StmtId]) -> HashSet<&'a str> {
     held
 }
 
+/// The names the program binds to values rather than to types. A compile-time
+/// argument may name one - `write($to_stdout, ..)` hands a function over the
+/// same way `sizeof(Widget)` hands a type - and the two are one shape in the
+/// tree, so what is asked about a name written as an argument is whether the
+/// program binds it at all.
+fn valued<'a>(ast: &'a Ast, roots: &[StmtId]) -> HashSet<&'a str> {
+    let mut held = HashSet::new();
+    for statement in roots {
+        if let Statement::Constant(name, _) = ast.stmt(*statement) {
+            held.insert(ast.name(*name));
+        }
+    }
+    held
+}
+
 /// Every name a `$T` annotation binds, wherever it sits inside the type.
 fn bound<'a>(ty: &'a Type, held: &mut HashSet<&'a str>) {
     match ty {
@@ -143,10 +159,11 @@ fn report_unknown_in_block(
     ast: &Ast,
     block: crate::ast::Range32,
     known: &HashSet<&str>,
+    values: &HashSet<&str>,
     found: &mut Vec<Diagnostic>,
 ) {
     for statement in ast.stmts_in(block) {
-        report_unknown_in_statement(ast, *statement, known, found);
+        report_unknown_in_statement(ast, *statement, known, values, found);
     }
 }
 
@@ -155,6 +172,7 @@ fn report_unknown_in_statement(
     ast: &Ast,
     statement: StmtId,
     known: &HashSet<&str>,
+    values: &HashSet<&str>,
     found: &mut Vec<Diagnostic>,
 ) {
     match ast.stmt(statement) {
@@ -169,29 +187,38 @@ fn report_unknown_in_statement(
                 // parameter's already is.
                 report_unknown(ty, known, *type_at, found);
             }
-            report_unknown_in_expression(ast, *value, known, found);
+            report_unknown_in_expression(ast, *value, known, values, found);
         }
         Statement::While(condition, body) => {
-            report_unknown_in_expression(ast, *condition, known, found);
-            report_unknown_in_block(ast, *body, known, found);
+            report_unknown_in_expression(ast, *condition, known, values, found);
+            report_unknown_in_block(ast, *body, known, values, found);
         }
-        Statement::For(_, _, over, body) => {
-            report_unknown_in_expression(ast, *over, known, found);
-            report_unknown_in_block(ast, *body, known, found);
+        // `for field in fields(T)` binds a name that stands for a type inside
+        // the loop, so `sizeof(field)` names it and nothing declares it. The
+        // binding is not a type the program wrote down, and asking about it is
+        // the wrong question.
+        Statement::For(binding, second, over, body) => {
+            report_unknown_in_expression(ast, *over, known, values, found);
+            let mut inner = values.clone();
+            inner.insert(ast.name(*binding));
+            if let Some(held) = second {
+                inner.insert(ast.name(*held));
+            }
+            report_unknown_in_block(ast, *body, known, &inner, found);
         }
         Statement::With(_, body) => {
-            report_unknown_in_block(ast, *body, known, found);
+            report_unknown_in_block(ast, *body, known, values, found);
         }
         // A `defer` holds one statement rather than a block.
         Statement::Defer(held) | Statement::ErrDefer(held) => {
-            report_unknown_in_statement(ast, *held, known, found);
+            report_unknown_in_statement(ast, *held, known, values, found);
         }
         Statement::Expression(value) | Statement::Return(value) => {
-            report_unknown_in_expression(ast, *value, known, found);
+            report_unknown_in_expression(ast, *value, known, values, found);
         }
         Statement::Assignment(place, value) => {
-            report_unknown_in_expression(ast, *place, known, found);
-            report_unknown_in_expression(ast, *value, known, found);
+            report_unknown_in_expression(ast, *place, known, values, found);
+            report_unknown_in_expression(ast, *value, known, values, found);
         }
         _ => {}
     }
@@ -203,24 +230,41 @@ fn report_unknown_in_expression(
     ast: &Ast,
     value: crate::ast::ExprId,
     known: &HashSet<&str>,
+    values: &HashSet<&str>,
     found: &mut Vec<Diagnostic>,
 ) {
     match ast.expr(value) {
         Expression::If(condition, then, otherwise) => {
-            report_unknown_in_expression(ast, *condition, known, found);
-            report_unknown_in_block(ast, *then, known, found);
+            report_unknown_in_expression(ast, *condition, known, values, found);
+            report_unknown_in_block(ast, *then, known, values, found);
             if let Some(held) = otherwise {
-                report_unknown_in_block(ast, *held, known, found);
+                report_unknown_in_block(ast, *held, known, values, found);
             }
         }
         Expression::Unsafe(held) => {
-            report_unknown_in_block(ast, *held, known, found);
+            report_unknown_in_block(ast, *held, known, values, found);
         }
         Expression::Switch(subject, cases) => {
-            report_unknown_in_expression(ast, *subject, known, found);
+            report_unknown_in_expression(ast, *subject, known, values, found);
             for case in ast.cases_in(*cases) {
-                report_unknown_in_block(ast, case.body, known, found);
+                report_unknown_in_block(ast, case.body, known, values, found);
             }
+        }
+        // A type written as an argument. `sizeof(Widget)` says the name where
+        // the reader wrote it, rather than leaving `sizeof` to say it has no
+        // layout for a type that is not there to have one.
+        Expression::Call(_, arguments) => {
+            for argument in ast.exprs_in(*arguments) {
+                report_unknown_in_expression(ast, *argument, known, values, found);
+            }
+        }
+        Expression::TypeValue(ty) => {
+            if let Type::Struct(name) | Type::Enum(name) = ty
+                && values.contains(name.as_str())
+            {
+                return;
+            }
+            report_unknown(ty, known, ast.expr_position(value), found);
         }
         _ => {}
     }

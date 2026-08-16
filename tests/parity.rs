@@ -57,6 +57,22 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A type nothing declares, written where a type is asked for.
+    //
+    // The bootstrap answered with what `sizeof` could not do about it - no
+    // layout, so no width - and said it at the word `sizeof` rather than at the
+    // name, and then said it twice, because lowering asks every type for a
+    // width and reported the same fault a second way.
+    (
+        "a_type_nothing_declares_written_as_an_argument",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             print(\"{}\n\", sizeof(Widget))
+             0
+         }
+        ",
+        "'Widget' is not a type this program declares",
+    ),
     // A field read out of something that is not a struct.
     //
     // The self-hosted compiler weighed none of this: `a.hp` on an `i64`

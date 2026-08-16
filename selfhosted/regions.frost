@@ -1368,16 +1368,6 @@ place_is_assignable :: fn(mut p: Parser, place: i64) -> bool {
     false
 }
 
-report_nearest_name :: fn(mut p: Parser, off: i64, len: i64) {
-    near := nearest_name(p, off, len)
-    if (near >= 0) {
-        sym := arena_at(p.declared, near)
-        report(" (did you mean '")
-        report_src(p.src, sym.off, sym.len)
-        report("'?)")
-    }
-}
-
 // What `slice_len` and `str_len` were handed. A length is read off a run, so the
 // subject has to be one. A struct is not: it has no length beside it, so reading
 // one off it takes its first word for the count and then bounds-checks every

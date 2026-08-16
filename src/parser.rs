@@ -2887,13 +2887,19 @@ impl<'a> Parser<'a> {
                 {
                     self.read_token();
                 }
+                // The type's own place, not the call's. A report about a name
+                // nothing declares says it where the reader wrote it, and this
+                // span reaching back to `sizeof` put the caret on the word that
+                // is fine.
+                let at_type = self.mark();
                 let held = self.parse_type()?;
                 if !matches!(self.read_token(), Token::RightParentheses) {
                     bail!("Expected ')' after the type in {word}");
                 }
                 let span = self.span_from(start);
-                let argument =
-                    self.ast.push_expr(Expression::TypeValue(held), span);
+                let argument = self
+                    .ast
+                    .push_expr(Expression::TypeValue(held), self.span_from(at_type));
                 let callee = self.ast.intern(&word);
                 let callee =
                     self.ast.push_expr(Expression::Identifier(callee), span);

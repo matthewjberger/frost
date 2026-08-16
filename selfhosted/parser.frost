@@ -1437,6 +1437,7 @@ refuse_unknown_lit_type :: fn(
     report_src(p.src, offset, length)
     report("' is not a type this program declares")
     report_declared_elsewhere(p, offset, length)
+    report_nearest_name(p, offset, length)
     // Past the literal's own braces before the escape, because recovery reads
     // forward to the brace that ends the statement list and the next brace here
     // is the literal's. Left where it is, one undeclared name ended the function
