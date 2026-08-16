@@ -5684,10 +5684,24 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // raw pointer. It is how an arena element is reached without ptr_to.
     if (kind == TokenKind::KwRef) {
         advance(p)
+        // What follows `ref` was taken on trust: whatever token sat where the
+        // name goes became the name, and whatever sat where `:=` goes was
+        // stepped over. `ref b a` bound `b` to `a` read as a place and was
+        // taken, and `ref 7` walked off the end of the statement.
+        if (cur(p) != TokenKind::Ident) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("a name goes after `ref`, and this is not one")
+            frost_rt_recover_escape()
+        }
         name_off := cur_off(p)
         name_len := cur_len(p)
         refuse_literal_name(p, name_off, name_len)
         advance(p)
+        if (cur(p) != TokenKind::Coloneq) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("`:=` goes after the name a `ref` binds")
+            frost_rt_recover_escape()
+        }
         advance(p)
         place := parse_expr(p)
         value := new_unary(p, NodeKind::Ref, place)

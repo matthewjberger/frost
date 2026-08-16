@@ -1276,6 +1276,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // The same place, saying something else. A caller takes the position while
+    // the token it is about is still ahead of the parser, and says what is
+    // wrong with it once it has read it.
+    fn reword(&self, held: anyhow::Error, message: &str) -> anyhow::Error {
+        let position = held
+            .downcast_ref::<crate::diagnostic::LocatedError>()
+            .map(|located| located.position)
+            .unwrap_or_default();
+        anyhow::Error::new(crate::diagnostic::LocatedError {
+            position,
+            message: message.to_string(),
+        })
+    }
+
     fn here(&self, message: String) -> anyhow::Error {
         anyhow::Error::new(crate::diagnostic::LocatedError {
             position: self.current_position().unwrap_or_default(),
@@ -2121,13 +2135,26 @@ impl<'a> Parser<'a> {
     fn parse_ref_declaration(&mut self) -> Result<StmtId> {
         let start = self.mark();
         self.read_token();
+        // At the token that is wrong, taken before it is read. Read afterwards,
+        // the position is whatever the parser reached next, which for `ref 7`
+        // was the line below the one holding it.
+        let at_name = self.here(String::new());
         let name = match self.read_token() {
             Token::Identifier(name) => name.to_string(),
-            _ => bail!("Expected identifier after 'ref'"),
+            _ => {
+                return Err(self.reword(
+                    at_name,
+                    "a name goes after `ref`, and this is not one",
+                ));
+            }
         };
         self.refuse_literal_name(&name)?;
+        let at_bind = self.here(String::new());
         if !matches!(self.read_token(), Token::ColonAssign) {
-            bail!("Expected ':=' after 'ref identifier'");
+            return Err(self.reword(
+                at_bind,
+                "`:=` goes after the name a `ref` binds",
+            ));
         }
         let place = self.parse_expression(Precedence::Lowest)?;
         if matches!(self.peek_nth(0), Token::Semicolon) {
