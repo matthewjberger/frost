@@ -57,6 +57,27 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A name whose value came from a call to a function nothing declares.
+    //
+    // The ownership rules ran ahead of lowering and their complaint went in
+    // with what stopped a function from lowering, which is what holds the
+    // checks that read the module back. Those checks are the only thing that
+    // names the missing function, so the bootstrap said 'table' was moved and
+    // never said `arena_make` is not there, while the self-hosted compiler
+    // named it. A value moved out of a call that is not there is the second
+    // sentence about one mistake.
+    (
+        "a_move_of_a_value_from_a_call_that_is_not_there_names_the_call",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             mut table: Arena<i64> = arena_make($i64, 8)
+             arena_push(table, 5)
+             arena_push(table, 6)
+             0
+         }
+        ",
+        "call to undefined function 'arena_make'",
+    ),
     // What follows `ref`, when it is not a name.
     //
     // Both compilers took the token where the name goes on trust. The

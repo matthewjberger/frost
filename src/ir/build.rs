@@ -281,9 +281,10 @@ pub fn build_module_recovering(
 }
 
 fn strict(lowered: LoweredModule) -> Result<IrModule> {
-    let (module, diagnostics) = lowered;
+    let mut diagnostics = lowered.failures;
+    diagnostics.extend(lowered.ownership);
     if diagnostics.is_empty() {
-        return Ok(module);
+        return Ok(lowered.module);
     }
     let reports: Vec<String> = diagnostics
         .iter()
@@ -567,7 +568,20 @@ fn collect_bound_functions(
     found
 }
 
-type LoweredModule = (IrModule, Vec<crate::diagnostic::Diagnostic>);
+// What lowering answers with: the module, what stopped a function from
+// lowering, and what the ownership rules said about the functions that did.
+//
+// The two are apart because they wait on different things. A function that did
+// not lower leaves a hole, and the checks that read the module report the hole
+// rather than the fault. A function the ownership rules complain about lowered
+// fine and its IR is whole, so those checks still have something to say - and
+// what they say can be the cause of the complaint, as it is when the value a
+// name holds came from a call to a function nothing declares.
+pub struct LoweredModule {
+    pub module: IrModule,
+    pub failures: Vec<crate::diagnostic::Diagnostic>,
+    pub ownership: Vec<crate::diagnostic::Diagnostic>,
+}
 
 fn build_module_inner(
     ast: &mut Ast,
@@ -728,6 +742,7 @@ fn build_module_inner(
     let mut pending: Vec<Specialization> = Vec::new();
     let mut pending_anon: Vec<AnonRequest> = Vec::new();
     let mut diagnostics: Vec<crate::diagnostic::Diagnostic> = Vec::new();
+    let mut owned: Vec<crate::diagnostic::Diagnostic> = Vec::new();
     let mut shared = BuildShared::default();
 
     for statement in roots {
@@ -786,12 +801,11 @@ fn build_module_inner(
                         crate::modules::imports::demangle_private_names(
                             &format!("at {}: {first}", position.describe()),
                         );
-                    diagnostics.push(crate::diagnostic::Diagnostic {
+                    owned.push(crate::diagnostic::Diagnostic {
                         position,
                         message,
                         related: Vec::new(),
                     });
-                    continue;
                 }
                 let lowered = match builder.lower_function(
                     ast,
@@ -1100,12 +1114,11 @@ fn build_module_inner(
                 };
                 let message =
                     crate::modules::imports::demangle_private_names(&placed);
-                diagnostics.push(crate::diagnostic::Diagnostic {
+                owned.push(crate::diagnostic::Diagnostic {
                     position: specialization.requested_at,
                     message,
                     related: Vec::new(),
                 });
-                continue;
             }
             let lowered = match locate_instantiation(
                 builder.lower_function(
@@ -1187,14 +1200,15 @@ fn build_module_inner(
     }
 
     report_module_specializations(&instantiated_by);
-    Ok((
-        IrModule {
+    Ok(LoweredModule {
+        module: IrModule {
             functions,
             externs,
             imported: declared,
         },
-        diagnostics,
-    ))
+        failures: diagnostics,
+        ownership: owned,
+    })
 }
 
 // The shape a declared function needs to have for a backend to emit a call to
@@ -13492,14 +13506,16 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let mut module = parser.parse().unwrap();
         let linear = parser.linear_types().clone();
-        let (module, faults) = build_module_recovering(
+        let lowered = build_module_recovering(
             &mut module.ast,
             &module.roots,
             &linear,
             false,
         )
         .unwrap();
-        (module, faults)
+        let mut faults = lowered.failures;
+        faults.extend(lowered.ownership);
+        (lowered.module, faults)
     }
 
     // One failed function does not mask another, and a function that lowers

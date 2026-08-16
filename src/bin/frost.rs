@@ -556,7 +556,7 @@ fn lowered_and_checked(
     collected: &[frost::Diagnostic],
     idle: &[frost::Diagnostic],
 ) -> Result<frost::IrModule> {
-    let (module, lowering) = beside(
+    let lowered = beside(
         collected,
         frost::build_module_recovering(
             &mut program.ast,
@@ -565,6 +565,8 @@ fn lowered_and_checked(
             per_module,
         ),
     )?;
+    let module = lowered.module;
+    let lowering = lowered.failures;
     let mut faults = collected.to_vec();
     faults.extend(lowering.iter().cloned());
 
@@ -577,14 +579,37 @@ fn lowered_and_checked(
     });
     if lowering.is_empty() && types_are_known {
         faults.extend(frost::check_module_recovering(&module));
-        faults.extend(frost::check_linearity_recovering(
-            &module,
-            &frost::pooled_instance_names(
-                &program.ast,
-                &program.roots,
-                linear_types,
-            ),
+        // The linearity check and the ownership rules say the same kind of
+        // thing about the same values, so a function both have something to say
+        // about is one mistake described twice: 'held' consumed more than once,
+        // and 'held' used after it was moved. The ownership rules say it at the
+        // use, which is the line to change.
+        if lowered.ownership.is_empty() {
+            faults.extend(frost::check_linearity_recovering(
+                &module,
+                &frost::pooled_instance_names(
+                    &program.ast,
+                    &program.roots,
+                    linear_types,
+                ),
+            ));
+        }
+    }
+    // What the ownership rules said, once the checks that read the module have
+    // spoken. A name whose value came from a call to a function nothing
+    // declares is moved out of a call that is not there, so the missing name is
+    // the fault to report and the move is what follows from it. The same reason
+    // an undeclared type holds those checks back.
+    let calls_are_known = !faults
+        .iter()
+        .any(|held| held.message.contains("call to undefined function"));
+    if calls_are_known {
+        faults.extend(frost::check_ownership_recovering(
+            &program.ast,
+            &program.roots,
+            linear_types,
         ));
+        faults.extend(lowered.ownership);
     }
     suggest_names(program, &program.roots.clone(), &mut faults);
     refuse(&faults)?;
@@ -1429,11 +1454,6 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         }
         let mut augmented = program.clone();
         push_test_harness(&mut augmented, &tests);
-        faults.extend(frost::check_ownership_recovering(
-            &augmented.ast,
-            &augmented.roots,
-            &linear_types,
-        ));
         let module = lowered_and_checked(
             &mut augmented,
             &linear_types,
@@ -1491,11 +1511,6 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         std::process::exit(1);
     }
 
-    faults.extend(frost::check_ownership_recovering(
-        &program.ast,
-        &program.roots,
-        &linear_types,
-    ));
 
     if cli.run_ir {
         let module = lowered_and_checked(
