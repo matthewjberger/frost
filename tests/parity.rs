@@ -57,6 +57,36 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A binding written with a type nothing declares.
+    //
+    // The bootstrap did not weigh a binding's written type at all: it checked
+    // parameters, answers and fields and walked past the bodies, so `held:
+    // Widget = 3` read as a binding of a type the program had and the reader
+    // was told an `i64` is not a `Widget`, about a `Widget` that is not there.
+    // Two more reports followed from the same hole, one from the IR check about
+    // the value assigned into a local of a type nothing declares.
+    (
+        "a_binding_written_with_a_type_nothing_declares_is_refused",
+        "main :: fn() -> i64 {\n\
+         \x20   held: Widget = 3\n\
+         \x20   0\n\
+         }\n",
+        "'Widget' is not a type this program declares",
+    ),
+    // An unchecked operation written beside a wrong type.
+    //
+    // The two are independent, so one run should name both, and this compiler
+    // refused after the type walk and never ran the unsafety gate. The reader
+    // fixed the cast and was then told about the `ptr_cast`.
+    (
+        "a_type_fault_does_not_hide_an_ungated_operation",
+        "probe :: fn(text: ^i8) -> i64 {\n\
+         \x20   cast($i64, ptr_cast($u8, text))\n\
+         }\n\
+         \n\
+         main :: fn() -> i64 { 0 }\n",
+        "ptr_cast is unchecked, so it belongs in an `unsafe` block",
+    ),
     // A field reached through a raw pointer, which dereferences it. The two
     // compilers were exactly inverted here: the bootstrap read the access as
     // checked and so refused a block around it as vouching for nothing, and the
@@ -4872,6 +4902,42 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // Writing through a call that answers `ref T`.
+    //
+    // Reading one worked, and writing one of its fields worked, and writing the
+    // whole thing did not: the bootstrap called it a place that cannot be
+    // assigned, and this one took the scalar and refused the aggregate. So a
+    // borrow that can be handed back could be read but not written, which is a
+    // hole in the feature rather than a rule.
+    //
+    // The aggregate is what the widths catch: read as the borrow rather than as
+    // what it names, the assignment stored the eight bytes of the address in
+    // place of the value and the program compiled.
+    (
+        "a_call_answering_a_ref_is_a_place_that_can_be_written",
+        "import \"io.frost\"
+         Pair :: struct { a: i64, b: i64 }
+         at_number :: fn(run: []i64, at: i64) -> ref i64 {
+             ref out := run[at]
+             out
+         }
+         at_pair :: fn(run: []Pair, at: i64) -> ref Pair {
+             ref out := run[at]
+             out
+         }
+         main :: fn() -> i64 {
+             mut numbers: [4]i64 = [1, 2, 3, 4]
+             at_number(numbers, 0) = 7
+             print(\"{} {}\\n\", numbers[0], numbers[1])
+             mut pairs: [2]Pair = [Pair { a = 1, b = 2 }, Pair { a = 3, b = 4 }]
+             at_pair(pairs, 0) = Pair { a = 7, b = 9 }
+             at_pair(pairs, 1).a = 5
+             print(\"{} {} {} {}\\n\", pairs[0].a, pairs[0].b, pairs[1].a, pairs[1].b)
+             0
+         }
+        ",
+        "7 2\n7 9 5 4\n",
+    ),
     // A `?` written inside a run. The walk that finds one and the walk that
     // rewrites it both listed the forms they descend into and then caught a
     // run under the wildcard, so the `?` was never seen and never rewritten.

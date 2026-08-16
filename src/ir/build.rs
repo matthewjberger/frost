@@ -1809,6 +1809,20 @@ impl IrBuilder {
         self.enums.get(name)
     }
 
+    // Whether a written type names something this program declares. Only a
+    // plain name is asked about: a generic instance carries its arguments in
+    // the name it is spelled with, and everything else is built in.
+    fn type_is_declared(&self, ty: &Type) -> bool {
+        let (Type::Struct(name) | Type::Enum(name)) = ty else {
+            return true;
+        };
+        if name.contains('<') || name.is_empty() {
+            return true;
+        }
+        self.structs.contains_key(name.as_str())
+            || self.enums.contains_key(name.as_str())
+    }
+
     // Whether a type names this value under itself. Asked at `Type::Name`
     // before the reading that makes one a variant, so a type carrying both
     // answers for each name with the thing it declared under it.
@@ -3413,9 +3427,11 @@ impl Expansion<'_> {
             Statement::Let {
                 name,
                 type_annotation,
+                type_at,
                 value,
                 mutable,
             } => Statement::Let {
+                type_at,
                 name,
                 type_annotation,
                 value: self.expression(ast, value)?,
@@ -3773,9 +3789,11 @@ fn rename_statement(
         Statement::Let {
             name,
             type_annotation,
+            type_at,
             value,
             mutable,
         } => Statement::Let {
+            type_at,
             name,
             type_annotation,
             value: rename_expression(ast, value, subst),
@@ -4964,9 +4982,11 @@ fn substitute_statement(
         Statement::Let {
             name,
             type_annotation,
+            type_at,
             value,
             mutable,
         } => Statement::Let {
+            type_at,
             name,
             type_annotation: type_annotation
                 .as_ref()
@@ -6084,7 +6104,16 @@ impl<'a> FunctionLowering<'a> {
                 }
                 let (operand, value_type) =
                     self.lower_expression(value, type_annotation.as_ref())?;
+                // A binding written with a type nothing declares has been
+                // refused for that already. Weighing the value against it as
+                // well says an `i64` is not a `Widget` where there is no
+                // `Widget`, which is one mistake read as two and sends the
+                // reader after the value rather than after the type.
+                let annotation_exists = type_annotation
+                    .as_ref()
+                    .is_none_or(|held| self.builder.type_is_declared(held));
                 if let Some(annotated) = &type_annotation
+                    && annotation_exists
                     && distinct_mismatch(
                         self.ast,
                         value,
@@ -6112,6 +6141,7 @@ impl<'a> FunctionLowering<'a> {
                 // and the complaint lands naming the lowered local rather than
                 // the binding.
                 if let Some(annotated) = &type_annotation
+                    && annotation_exists
                     && !value_stands_for(&value_type, annotated)
                 {
                     bail!(
@@ -10756,6 +10786,25 @@ impl<'a> FunctionLowering<'a> {
                     bail!("cannot take the address of this value");
                 };
                 Ok((self.address_of_local(local, &ty), ty))
+            }
+            // A call answering `ref T` hands back a place, so writing through
+            // it writes to the storage the borrow names. What the call answers
+            // with is that storage's address, which is what a place is here.
+            // `pick(run, at).field = v` already worked, through the same
+            // address, and a feature whose answer can be read and whose field
+            // can be written but which cannot itself be written is a hole
+            // rather than a rule.
+            Expression::Call(..) => {
+                let (operand, ty) = self.lower_expression(place, None)?;
+                match ty {
+                    Type::Ref(inner) | Type::RefMut(inner) => {
+                        Ok((operand, *inner))
+                    }
+                    _ => bail!(
+                        "expression is not an assignable place: {}",
+                        display_expr(self.ast, place)
+                    ),
+                }
             }
             _ => {
                 bail!(

@@ -293,17 +293,32 @@ binding_type :: fn(mut p: Parser, value: i64) -> i64 {
     ty
 }
 
-// What an assignment's place denotes. A `mut` parameter of aggregate type
-// travels as an address, and the name stands for the aggregate rather than for
-// the address, which is how `binding_type` reads one on the other side of the
-// `=`. A field or an element off such a name is reached through the address
-// like any other, so only the whole value asks this.
+// What an assignment's place denotes. A borrow of an aggregate travels as an
+// address, and the place stands for the aggregate rather than for the address,
+// which is how `binding_type` reads one on the other side of the `=`. A field
+// or an element off such a place is reached through the address like any other,
+// so only the whole value asks this.
+//
+// Asked of any place, not only of a name. A `mut` parameter is the borrow this
+// was written for, and a call answering `ref T` is the same thing arriving from
+// somewhere else: `pick(run, at) = value` writes where the borrow points, and
+// reading the place as the borrow rather than as what it names stored the
+// address in place of the value.
 place_type :: fn(mut p: Parser, place: i64) -> i64 {
     ty := type_of(p, place)
-    if (arena_at(p.arena, place).kind != NodeKind::Var) {
+    if (is_borrow(ty) == false) {
         return ty
     }
-    if (is_borrow(ty) && is_aggregate(pointee(p, ty))) {
+    // A place that is not a name answers with the address it names, so what is
+    // written there is what the borrow is a borrow of, whatever its width. A
+    // call answering `ref T` is the one that arrives this way.
+    if (arena_at(p.arena, place).kind != NodeKind::Var) {
+        return pointee(p, ty)
+    }
+    // A name keeps its type unless it is an aggregate. A `mut` scalar parameter
+    // is read and written through machinery of its own, and unwrapping it here
+    // would have the assignment reach through the address a second time.
+    if (is_aggregate(pointee(p, ty))) {
         return pointee(p, ty)
     }
     ty
