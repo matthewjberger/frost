@@ -1536,6 +1536,13 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::Cast) {
         check_cast_converts_numbers(p, node.a, node.val, node.pos)
+        // What is being converted is an expression like any other, and the
+        // walk owes it whatever it owes one written anywhere else. Left
+        // unwalked, an index through a raw pointer inside a cast never had the
+        // node written that says so, and the unsafety gate reads that node, so
+        // `cast($i64, bytes[index])` went through with no block asked for.
+        check_types_expr(p, node.a)
+        return
     }
     if (kind == NodeKind::Bin || kind == NodeKind::Index
         || kind == NodeKind::SliceFrom) {
