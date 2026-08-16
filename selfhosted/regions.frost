@@ -1386,6 +1386,13 @@ check_indexable :: fn(mut p: Parser, base: i64, ty: i64) {
         && name_is_known(p, node.val, node.c) == false) {
         return
     }
+    // A base the run has already refused is one whose type is not the one the
+    // reader meant, so what indexing reads out of it is the second thing to
+    // say: `live(n)` over a name nothing declares was written out as a walk,
+    // and the reader was told about the indexing that walk does.
+    if (frost_rt_recover_failures() - p.deferred_unconsumed.count > 0) {
+        return
+    }
     report_where(p.modules, p.src, node.pos)
     report("indexing reads an element out of a run, and this is a ")
     report_type_name(p, ty)
@@ -1632,6 +1639,13 @@ check_length_subject :: fn(mut p: Parser, inner: i64, written: i64, at: i64) {
         if (written == 1 || written == 3 || array_element(p, ty) == TY_U8) {
             return
         }
+    }
+    // A subject the run has already refused is one whose type is not the one
+    // the reader meant: `for slot in live(n)` over a name nothing declares was
+    // told what a `for` walks, which is the second thing to say about a call
+    // that goes nowhere.
+    if (frost_rt_recover_failures() - p.deferred_unconsumed.count > 0) {
+        return
     }
     report_where(p.modules, p.src, at)
     if (written == 3) {
@@ -9171,7 +9185,11 @@ refuse_indirect_calls :: fn(mut p: Parser) {
             }
         } else if (kind == NodeKind::Call) {
             sym := arena_at(p.fns, node.val)
-            if (sym.defined == 0
+            // A name already refused for what it was bound to is one whose type
+            // is not the one the reader meant, so what a call through it goes
+            // to is the second thing to say.
+            if (frost_rt_recover_failures() - p.deferred_unconsumed.count == 0
+                && sym.defined == 0
                 && proc_param_named(p, sym.off, sym.len) >= 0
                 && indirect_first_report(p, node.pos)) {
                 report_where(p.modules, p.src, node.pos)

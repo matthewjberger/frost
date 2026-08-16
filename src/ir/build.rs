@@ -9553,6 +9553,20 @@ impl<'a> FunctionLowering<'a> {
 
     fn refuse_indirect_call(&self, callee: ExprId) -> anyhow::Error {
         match self.ast.expr(callee) {
+            // A name bound to something that is not a function at all. Told it
+            // holds one, the reader was told a thing that is not so: `n(1)`
+            // over an `n` holding a number holds no function to name.
+            Expression::Identifier(name)
+                if !self
+                    .resolve_variable(self.ast.name(*name))
+                    .map(|local| self.type_of_local(local))
+                    .is_some_and(|ty| matches!(ty, Type::Proc(..))) =>
+            {
+                anyhow::anyhow!(
+                    "{UNDEFINED_CALL} '{}'",
+                    self.ast.name(*name)
+                )
+            }
             Expression::Identifier(name) => anyhow::anyhow!(
                 "a call names the function it goes to, and '{}' holds a function rather than being one. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one",
                 self.ast.name(*name)

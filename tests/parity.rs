@@ -537,6 +537,18 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "`live_slots` walks a generational container, and this is not one",
     ),
+    // A call through a name holding a number. The bootstrap told the reader the
+    // name holds a function, which it does not: there is nothing there to name
+    // at the call.
+    (
+        "a_call_through_a_name_holding_a_number",
+        "main :: fn() -> i64 {
+             n := 3
+             n(1)
+         }
+        ",
+        "call to undefined function 'n'",
+    ),
     // A constant whose arithmetic has no answer.
     //
     // The bootstrap folded neither, so what reached the program was the
