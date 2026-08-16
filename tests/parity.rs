@@ -5248,6 +5248,26 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A compile-time parameter settled by an untyped literal.
+    //
+    // `fn($T: Type, v: T)` borrows `v` to read like every unmarked parameter,
+    // so what the call binds `T` from is a `ref T` - and the bare name reads as
+    // an ordinary type, which the binding did not recognise. `hold(3)` was told
+    // an `i64` is not a `T`, two lines after being told that `T` is settled by
+    // the value and may not be written at the call. A named value worked, so
+    // only the literal was ever wrong.
+    (
+        "a_compile_time_parameter_settled_by_a_literal",
+        "import \"io.frost\"
+         hold :: fn($T: Type, v: T) -> i64 { 7 }
+         main :: fn() -> i64 {
+             x: i64 = 4
+             print(\"{} {}\\n\", hold(3), hold(x))
+             0
+         }
+        ",
+        "7 7\n",
+    ),
     // A borrow of a borrow, named where a value is wanted.
     //
     // The bootstrap made the second an address of an address, so printing it

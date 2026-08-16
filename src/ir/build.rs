@@ -2043,6 +2043,17 @@ fn function_type_params(ast: &Ast, parameters: Range32) -> Vec<String> {
     names
 }
 
+/// Whether a type is one of the names a generic binds, however it is written.
+/// A bare `T` reads as an ordinary type name, because nothing else in `v: T`
+/// says what it is; `$T` written straight through is a `TypeParam`.
+fn names_a_type_parameter(ty: &Type, type_params: &[String]) -> bool {
+    match ty {
+        Type::TypeParam(name) => type_params.contains(name),
+        Type::Struct(name) | Type::Enum(name) => type_params.contains(name),
+        _ => false,
+    }
+}
+
 fn function_is_generic(ast: &Ast, parameters: Range32) -> bool {
     !function_type_params(ast, parameters).is_empty()
         || ast
@@ -8684,11 +8695,19 @@ impl<'a> FunctionLowering<'a> {
             // the concrete function would hold the value, which is a type error
             // the moment it is stored anywhere.
             let param_ty = match parameter_type(parameter) {
+                // A parameter declared as one of the function's own
+                // compile-time names, borrowed to read the way every unmarked
+                // parameter is. The name reads as an ordinary type here, since
+                // nothing else in `v: T` says what it is, so this asked only
+                // about a `TypeParam` and `fn($T: Type, v: T)` never bound `T`
+                // from its argument: `hold(3)` was told an `i64` is not a `T`,
+                // two lines after being told `T` is settled by the value and
+                // may not be written at the call. `Vec<T>` was always found,
+                // because an instance's arguments are read out of the name.
                 Type::Ref(inner)
-                    if matches!(
+                    if names_a_type_parameter(
                         inner.as_ref(),
-                        Type::TypeParam(param)
-                            if generic.type_params.contains(param)
+                        &generic.type_params,
                     ) && argument_is_copy_value(
                         self.probe_type(*argument).as_ref(),
                         self.ast,
