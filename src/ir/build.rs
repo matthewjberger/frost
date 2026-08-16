@@ -8947,18 +8947,25 @@ impl<'a> FunctionLowering<'a> {
                 // reference, the body that unrolls it was handed an address
                 // where its number belongs, and a format string was told to
                 // write out a `&mut i64`.
-                let (operand, value_type) = match borrowed_value(&value_type) {
-                    Some(inner) if !needs_memory(inner) => {
-                        let held = inner.clone();
-                        let read = self.coerce(operand, &value_type, &held)?;
-                        (read, held)
+                // Read through for as long as there is a borrow to read
+                // through. `ref c := b` where `b` is itself a borrow is two of
+                // them, and one step left the element a `ref i64` - which the
+                // format check then refused, about a name that reads as a
+                // number everywhere else.
+                let mut operand = operand;
+                let mut value_type = value_type;
+                while let Some(inner) = borrowed_value(&value_type) {
+                    let held = inner.clone();
+                    if needs_memory(&held) {
+                        // An aggregate travels by address either way, so a
+                        // borrow of one is already what a value of it would be
+                        // here and only the name it goes under changes.
+                        value_type = held;
+                        break;
                     }
-                    // An aggregate travels by address either way, so a borrow
-                    // of one is already what a value of it would be here and
-                    // only the name it goes under changes.
-                    Some(inner) => (operand, inner.clone()),
-                    None => (operand, value_type),
-                };
+                    operand = self.coerce(operand, &value_type, &held)?;
+                    value_type = held;
+                }
                 pack_elements.push(PackElement::Value(
                     pack_element_name(pack_name, index),
                     value_type.clone(),
@@ -10789,8 +10796,21 @@ impl<'a> FunctionLowering<'a> {
                         self.at_expression(place),
                     );
                 };
-                self.mark_in_memory(local);
                 let pointee = self.type_of_local(local);
+                // A borrow names the place it points at, so the address of one
+                // is the address it holds rather than the address of the
+                // holding. `ref c := b` over a borrow `b` took the second, so
+                // `c` was an address of an address and printing it wrote out a
+                // number nothing in the program put there.
+                //
+                // An aggregate travels by address either way, so a borrow of
+                // one already is what the address would be.
+                if let Some(inner) = borrowed_value(&pointee)
+                    && !needs_memory(inner)
+                {
+                    return Ok((IrOperand::Local(local), inner.clone()));
+                }
+                self.mark_in_memory(local);
                 let result = self
                     .fresh_local(Type::Ptr(Box::new(pointee.clone())), None);
                 self.emit(IrStatement::Assign(

@@ -86,6 +86,35 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "is settled by the type of 'v', so it is not written at the call",
     ),
+    // A generic named with fewer type arguments than it binds.
+    //
+    // The self-hosted compiler read the bindings past their end and died on the
+    // arena rather than on the program.
+    (
+        "a_generic_named_with_too_few_type_arguments",
+        "Pair :: struct($A: Type, $B: Type) { a: A, b: B }
+         main :: fn() -> i64 {
+             p: Pair<i64> = Pair { a = 1, b = 2 }
+             p.a
+         }
+        ",
+        "expects 2 type argument(s) but 1 were given",
+    ),
+    // A `where` bound weighed against a call already refused.
+    //
+    // `keep($i64, 3)` was told that `T` is settled by the value and may not be
+    // written at the call, and then that the bound does not hold for the `T` it
+    // was told not to write.
+    (
+        "a_where_bound_is_not_weighed_against_a_call_already_refused",
+        "Session :: linear struct { id: i64 }
+         keep :: fn($T: Type, v: T) -> i64 where is_linear(T) { 1 }
+         main :: fn() -> i64 {
+             keep($i64, 3)
+         }
+        ",
+        "is settled by the type of 'v', so it is not written at the call",
+    ),
     // A `defer` that leaves the function.
     //
     // A `defer` runs where the function leaves, so one that leaves the function
@@ -5202,6 +5231,24 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A borrow of a borrow, written where a value is wanted.
+    //
+    // The bootstrap read it as the pointer it is and told the reader a format
+    // string cannot write a `ref i64`, while the same name in arithmetic beside
+    // it was read through.
+    (
+        "a_borrow_of_a_borrow_is_read_through",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             mut a: i64 = 41
+             ref b := a
+             ref c := b
+             print(\"{} {}\\n\", c, c + 1)
+             0
+         }
+        ",
+        "41 42\n",
+    ),
     // `errdefer` before a `return` that hands back the failure.
     //
     // The self-hosted compiler passed a written-out `return` as an ordinary
