@@ -9187,11 +9187,49 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
         left := fold_const(p, node.a)
         right := fold_const(p, node.b)
         op := node.val
-        if (op == OP_ADD) { return left + right }
-        if (op == OP_SUB) { return left - right }
-        if (op == OP_MUL) { return left * right }
-        if (op == OP_DIV) { return left / right }
-        if (op == OP_MOD) { return left % right }
+        // Worked out with the checks written out, because the compiler's own
+        // arithmetic traps: a constant that overflows killed the compiler where
+        // it stood, with a fault and a stack address instead of a report about
+        // the program.
+        if (op == OP_ADD) {
+            sum := wrap_add(left, right)
+            if ((left > 0 && right > 0 && sum < 0)
+                || (left < 0 && right < 0 && sum >= 0)) {
+                const_overflows_at(p, node.pos)
+            }
+            return sum
+        }
+        if (op == OP_SUB) {
+            held := wrap_sub(left, right)
+            if ((left >= 0 && right < 0 && held < 0)
+                || (left < 0 && right > 0 && held >= 0)) {
+                const_overflows_at(p, node.pos)
+            }
+            return held
+        }
+        if (op == OP_MUL) {
+            held := wrap_mul(left, right)
+            if (left != 0 && (held / left != right)) {
+                const_overflows_at(p, node.pos)
+            }
+            return held
+        }
+        if (op == OP_DIV) {
+            if (right == 0) {
+                report_where(p.modules, p.src, node.pos)
+                report("this divides by zero")
+                frost_rt_recover_escape()
+            }
+            return left / right
+        }
+        if (op == OP_MOD) {
+            if (right == 0) {
+                report_where(p.modules, p.src, node.pos)
+                report("this divides by zero")
+                frost_rt_recover_escape()
+            }
+            return left % right
+        }
         if (op == OP_SHL) { return left << right }
         if (op == OP_SHR) { return left >> right }
         if (op == OP_BITAND) { return left & right }
@@ -11304,4 +11342,12 @@ struct_has_field :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> bool {
         fid = field.next
     }
     false
+}
+
+// What a constant that cannot be worked out says. The wording is the one the
+// compile-time evaluator uses for the same fault reached the other way.
+const_overflows_at :: fn(mut p: Parser, at: i64) {
+    report_where(p.modules, p.src, at)
+    report("this overflows an i64")
+    frost_rt_recover_escape()
 }

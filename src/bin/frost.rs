@@ -1382,6 +1382,10 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         &program.ast,
         &program.roots,
     ));
+    faults.extend(frost::check_constant_arithmetic(
+        &program.ast,
+        &program.roots,
+    ));
     faults.extend(frost::check_declared_types(&program.ast, &program.roots));
     faults.extend(frost::check_nested_functions(
         &program.ast,

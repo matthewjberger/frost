@@ -57,6 +57,28 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A constant whose arithmetic has no answer.
+    //
+    // The bootstrap folded neither, so what reached the program was the
+    // arithmetic itself and the trap came when the program ran, if it ever
+    // reached that line. The self-hosted compiler worked it out with its own
+    // arithmetic, which traps, so an overflowing constant killed the compiler
+    // where it stood - a fault and a stack address rather than a report about
+    // the program.
+    (
+        "a_constant_whose_arithmetic_overflows",
+        "BIG :: 9223372036854775807 + 1
+         main :: fn() -> i64 { BIG }
+        ",
+        "this overflows an i64",
+    ),
+    (
+        "a_constant_that_divides_by_zero",
+        "BAD :: 8 / 0
+         main :: fn() -> i64 { BAD }
+        ",
+        "this divides by zero",
+    ),
     // A `for` over something that is not a run.
     //
     // The self-hosted compiler indexed the number, got a slice of itself back,

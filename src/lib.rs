@@ -3,6 +3,7 @@ mod ast_display;
 mod c_abi;
 mod const_eval;
 mod diagnostic;
+pub use check::constant_arithmetic::check_constant_arithmetic;
 pub use check::declared_types::check_declared_types;
 pub use check::nested_functions::check_nested_functions;
 pub use check::entry::check_entry_point;
