@@ -10801,15 +10801,13 @@ impl<'a> FunctionLowering<'a> {
                         Ok((operand, *inner))
                     }
                     _ => bail!(
-                        "expression is not an assignable place: {}",
-                        display_expr(self.ast, place)
+                        "this expression is not an assignable place; a value is written to a name, a field, an element, or through a call answering a `ref`"
                     ),
                 }
             }
             _ => {
                 bail!(
-                    "expression is not an assignable place: {}",
-                    display_expr(self.ast, place)
+                    "this expression is not an assignable place; a value is written to a name, a field, an element, or through a call answering a `ref`"
                 )
             }
         }

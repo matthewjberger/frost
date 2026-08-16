@@ -957,6 +957,18 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
                 return
             }
         }
+        // Whether what is on the left names storage at all. Without this, a
+        // write to a literal, to an arithmetic expression, or to a call that
+        // answers a value rather than a borrow was taken: the emitters put the
+        // answer in a slot of their own and wrote there, so the program
+        // compiled and the write went nowhere.
+        if (place_is_assignable(p, place) == false) {
+            report_where(p.modules, p.src, node.pos)
+            report(
+                "this expression is not an assignable place; a value is written to a name, a field, an element, or through a call answering a `ref`"
+            )
+            frost_rt_recover_escape()
+        }
         place_ty := place_type(p, place)
         want_single(p, value, place_ty)
         value_ty := type_of(p, value)
@@ -1327,6 +1339,35 @@ unnameable :: fn(ty: i64) -> bool {
 
 // The declared name a misspelling was probably meant to be, where one name is
 // near enough and no other is as near.
+// Whether an expression names storage a value can be written to.
+//
+// A name, a field of one, an element of one and a dereference all name storage
+// that is already somewhere. A literal that is written out has storage of its
+// own, which a caller may take the address of. A call names storage only where
+// it answers a borrow: what it answers with is then the address of a value that
+// is somewhere else, and everything else a call answers with is a value this
+// frame holds and writing to it goes nowhere.
+place_is_assignable :: fn(mut p: Parser, place: i64) -> bool {
+    kind := arena_at(p.arena, place).kind
+    if (kind == NodeKind::Var || kind == NodeKind::Field
+        || kind == NodeKind::Index || kind == NodeKind::Deref
+        || kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
+        return true
+    }
+    if (kind == NodeKind::Call || kind == NodeKind::CallPtr) {
+        // A call to a name nothing declares has no answer to read, so asking
+        // whether that answer is a borrow says a second thing about one
+        // mistake. The call itself is already refused.
+        held := arena_at(p.arena, place).val
+        if (held >= 0 && held < p.fns.count
+            && arena_at(p.fns, held).defined == 0) {
+            return true
+        }
+        return is_borrow(type_of(p, place))
+    }
+    false
+}
+
 report_nearest_name :: fn(mut p: Parser, off: i64, len: i64) {
     near := nearest_name(p, off, len)
     if (near >= 0) {

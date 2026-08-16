@@ -57,6 +57,21 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A write to something that names no storage.
+    //
+    // The self-hosted compiler had no such rule: a write to a literal, to an
+    // arithmetic expression, or to a call answering a value rather than a
+    // borrow was taken, and the emitters put the answer in a slot of their own
+    // and wrote there, so the program compiled and the write went nowhere.
+    (
+        "a_write_to_an_expression_that_names_no_storage_is_refused",
+        "main :: fn() -> i64 {\n\
+         \x20   mut a := 1\n\
+         \x20   a + 1 = 8\n\
+         \x20   0\n\
+         }\n",
+        "this expression is not an assignable place",
+    ),
     // A binding written with a type nothing declares.
     //
     // The bootstrap did not weigh a binding's written type at all: it checked
