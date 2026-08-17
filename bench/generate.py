@@ -21,10 +21,10 @@ def fan_out(calls, name="main"):
     out = []
     groups = [calls[at : at + FAN] for at in range(0, len(calls), FAN)]
     for index, group in enumerate(groups):
-        out += [f"group{index} :: fn() -> i64 {{", "    mut total : i64 = 0"]
+        out += [f"group{index} :: fn() -> i64 {{", "    mut total: i64 = 0"]
         out += [f"    total = total + {call}" for call in group]
         out += ["    total", "}", ""]
-    out += [f"{name} :: fn() -> i64 {{", "    mut total : i64 = 0"]
+    out += [f"{name} :: fn() -> i64 {{", "    mut total: i64 = 0"]
     out += [f"    total = total + group{index}()" for index in range(len(groups))]
     # Calling a C function is unchecked, so the call sits in an `unsafe` block.
     # Without it every generated program is refused and the table below times
@@ -39,9 +39,9 @@ def straight_line(count):
         out += [
             f"S{index} :: struct {{ a: i64, b: i64 }}",
             f"work{index} :: fn(x: i64, y: i64) -> i64 {{",
-            "    mut acc : i64 = x",
-            "    mut j : i64 = 0",
-            "    while (j < 4) { acc = acc + y * j  j = j + 1 }",
+            "    mut acc: i64 = x",
+            "    mut j: i64 = 0",
+            "    while (j < 4) { acc = acc + y * j j = j + 1 }",
             f"    s := S{index} {{ a = acc, b = y }}",
             "    s.a + s.b",
             "}",
@@ -77,9 +77,9 @@ def many_modules(count, per_module, directory):
         for index in range(per_module):
             out += [
                 f"step{module}_{index} :: fn(x: i64) -> i64 {{",
-                "    mut acc : i64 = x",
-                "    mut j : i64 = 0",
-                "    while (j < 4) { acc = acc + j  j = j + 1 }",
+                "    mut acc: i64 = x",
+                "    mut j: i64 = 0",
+                "    while (j < 4) { acc = acc + j j = j + 1 }",
                 "    acc",
                 "}",
             ]
@@ -87,13 +87,13 @@ def many_modules(count, per_module, directory):
             f"step{module}_{index}({index})" for index in range(per_module)
         )
         out += [f"call{module} :: fn() -> i64 {{ {body} }}"]
-        with open(os.path.join(library, f"m{module}.frost"), "w") as handle:
+        with open(os.path.join(library, f"m{module}.frost"), "w", newline="\n") as handle:
             handle.write("\n".join(out) + "\n")
     root = ["printf :: extern fn(fmt: ^i8, value: i64) -> i32"]
     root += [f'import "modules/m{module}.frost"' for module in range(count)]
     root += fan_out([f"call{module}()" for module in range(count)])
     path = os.path.join(directory, "modules.frost")
-    with open(path, "w") as handle:
+    with open(path, "w", newline="\n") as handle:
         handle.write("\n".join(root) + "\n")
     return path
 
@@ -102,12 +102,12 @@ directory = sys.argv[1] if len(sys.argv) > 1 else "bench/generated"
 os.makedirs(directory, exist_ok=True)
 for count in (100, 400, 1600, 6400):
     path = os.path.join(directory, f"lines_{count}.frost")
-    with open(path, "w") as handle:
+    with open(path, "w", newline="\n") as handle:
         handle.write(straight_line(count))
     print(path)
 for types, generics in ((40, 16), (80, 32), (160, 64)):
     path = os.path.join(directory, f"mono_{types * generics}.frost")
-    with open(path, "w") as handle:
+    with open(path, "w", newline="\n") as handle:
         handle.write(specializations(types, generics))
     print(path)
 print(many_modules(64, 24, directory))

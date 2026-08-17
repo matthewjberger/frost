@@ -30,6 +30,15 @@ pub struct ModuleInterface {
     pub exports: Vec<String>,
     pub declarations: Module,
     pub linear_types: Vec<String>,
+    // The names this module declares and does not carry. A caller that names
+    // one of them is refused, and the report that helps says which file to add
+    // the export line to; built from an interface, the declaration is not there
+    // to say it, so the names come along on their own.
+    //
+    // Defaulted on the way in, because an interface written before this carried
+    // no such thing.
+    #[serde(default)]
+    pub withheld: Vec<String>,
 }
 
 // Everything an exported name's declaration can refer to has to come with it,
@@ -101,11 +110,22 @@ impl ModuleInterface {
         }
         let mut linear: Vec<String> = linear_types.iter().cloned().collect();
         linear.sort();
+        let mut withheld: Vec<String> = roots
+            .iter()
+            .filter_map(|statement| declared_name(ast, *statement))
+            .filter(|name| {
+                !exported.contains(*name) && !carried.contains(*name)
+            })
+            .map(str::to_string)
+            .collect();
+        withheld.sort();
+        withheld.dedup();
         Self {
             module: module.to_string(),
             exports: exports.to_vec(),
             declarations,
             linear_types: linear,
+            withheld,
         }
     }
 

@@ -386,6 +386,7 @@ const QUOTE: char = 0x27 as char;
 fn suggest_names(
     program: &Module,
     roots: &[frost::StmtId],
+    withheld: &HashMap<String, String>,
     collected: &mut [frost::Diagnostic],
 ) {
     // An imported name is carried under a private tag, so the names compared
@@ -407,7 +408,13 @@ fn suggest_names(
             _ => {}
         }
     }
-    let declares = declared_files(program, roots);
+    let mut declares = declared_files(program, roots);
+    // A module built from its interface contributes what the interface carries,
+    // so a name it declares and does not offer is in no statement here. The
+    // interface names them, and this is the one report that needs them.
+    for (name, file) in withheld {
+        declares.entry(name.clone()).or_insert_with(|| file.clone());
+    }
     let known: Vec<&str> = held.iter().map(String::as_str).collect();
     for report in collected.iter_mut() {
         let Some(wanted) = names_a_missing_name(&report.message) else {
@@ -549,13 +556,26 @@ fn beside<T>(collected: &[frost::Diagnostic], outcome: Result<T>) -> Result<T> {
 /// rather than what is wrong. Whatever they do find joins the collected
 /// reports, since a region escape in one function and a type error in another
 /// are two faults and one run should name both.
+/// What the run already knows when lowering starts: what the checks before it
+/// found, the blocks they had nothing to say about, and the names an imported
+/// module declares and does not offer.
+struct Held<'a> {
+    collected: &'a [frost::Diagnostic],
+    idle: &'a [frost::Diagnostic],
+    withheld: &'a HashMap<String, String>,
+}
+
 fn lowered_and_checked(
     program: &mut Module,
     linear_types: &std::collections::HashSet<String>,
     per_module: bool,
-    collected: &[frost::Diagnostic],
-    idle: &[frost::Diagnostic],
+    held: Held<'_>,
 ) -> Result<frost::IrModule> {
+    let Held {
+        collected,
+        idle,
+        withheld,
+    } = held;
     // A type nothing declares stops the run here. Lowering asks every type for
     // a width and a layout, so what it says about one that is not there is the
     // same fault told a second way: `sizeof(Widget)` reported the missing name
@@ -576,7 +596,7 @@ fn lowered_and_checked(
             || held.message.contains(frost::RECURSIVE_STRUCT)
     }) {
         let mut faults = collected.to_vec();
-        suggest_names(program, &program.roots.clone(), &mut faults);
+        suggest_names(program, &program.roots.clone(), withheld, &mut faults);
         refuse(&faults)?;
     }
     let lowered = beside(
@@ -627,7 +647,7 @@ fn lowered_and_checked(
         ));
         faults.extend(lowered.ownership);
     }
-    suggest_names(program, &program.roots.clone(), &mut faults);
+    suggest_names(program, &program.roots.clone(), withheld, &mut faults);
     refuse(&faults)?;
     // A build that is refused says what it refused and nothing else, so this is
     // past the last of them. A warning is a report too, and a caller reading
@@ -1363,6 +1383,25 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
     let mut linear_types = resolved.linear_types;
     let tests = resolved.tests;
     let mut modules = resolved.modules;
+    // The names each imported module declares and does not offer, by the file
+    // that declares them. Built from an interface, those declarations are not
+    // in the program, and the report that names the file to edit is the one
+    // thing that needs them.
+    let withheld: HashMap<String, String> = resolved
+        .interfaces
+        .iter()
+        .flat_map(|interface| {
+            let file = Path::new(&interface.module)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            interface
+                .withheld
+                .iter()
+                .map(move |name| (name.clone(), file.clone()))
+        })
+        .collect();
     if !cli.test {
         let ast = &program.ast;
         program.roots.retain(|statement| {
@@ -1481,8 +1520,11 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
             &mut augmented,
             &linear_types,
             false,
-            &faults,
-            &idle,
+            Held {
+                collected: &faults,
+                idle: &idle,
+                withheld: &withheld,
+            },
         )?;
         let stem = Path::new(&cli.file)
             .file_stem()
@@ -1539,8 +1581,11 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
             &mut program,
             &linear_types,
             false,
-            &faults,
-            &idle,
+            Held {
+                collected: &faults,
+                idle: &idle,
+                withheld: &withheld,
+            },
         )?;
         match run_module(&module) {
             RunOutcome::Output(output) => {
@@ -1559,8 +1604,11 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
             &mut program,
             &linear_types,
             false,
-            &faults,
-            &idle,
+            Held {
+                collected: &faults,
+                idle: &idle,
+                withheld: &withheld,
+            },
         )?;
         let c_source = emit_c(&module).context("C emission error")?;
 
@@ -1607,8 +1655,11 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
             &mut program,
             &linear_types,
             cli.link,
-            &faults,
-            &idle,
+            Held {
+                collected: &faults,
+                idle: &idle,
+                withheld: &withheld,
+            },
         )?;
         let input_path = Path::new(&cli.file);
         let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
@@ -1727,8 +1778,11 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
             &mut program,
             &linear_types,
             false,
-            &faults,
-            &idle,
+            Held {
+                collected: &faults,
+                idle: &idle,
+                withheld: &withheld,
+            },
         )?;
         let object_bytes = compile_ir_to_object(&module)
             .context("Native compilation error")?;
