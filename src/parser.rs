@@ -2951,7 +2951,11 @@ impl<'a> Parser<'a> {
             Token::Identifier(word)
                 if matches!(
                     word.as_str(),
-                    "sizeof" | "alignof" | "typename" | "type_id"
+                    "sizeof"
+                        | "alignof"
+                        | "typename"
+                        | "type_id"
+                        | "field_count"
                 ) && matches!(self.peek_nth(1), Token::LeftParentheses) =>
             {
                 let word = word.clone();

@@ -4956,6 +4956,52 @@ Holder :: struct { a: i64, b: i64 }
         "a measurement in a bound is weighed against a number, so what follows \
          it compares",
     ),
+    // An enum is laid out as a struct carrying the tag beside every variant's
+    // fields, so asking whether it is one is not the question a reader asks:
+    // what a walk over it would hand back is the compiler's own layout.
+    (
+        "a_field_walk_over_an_enum",
+        "K :: enum { A, B }
+         main :: fn() -> i64 {
+             for field in fields(K) { sizeof(field) }
+             0
+         }
+",
+        "a `for` over `fields(T)` walks a struct, and this is not one",
+    ),
+    // The same question asked of a count rather than of a walk. Left
+    // unanswered it read as a call to a function nothing declares, and there
+    // is one.
+    (
+        "a_field_count_of_something_with_no_fields",
+        "main :: fn() -> i64 { field_count(i64) }
+",
+        "`field_count` counts the fields of a struct, and 'i64' is not one",
+    ),
+    // A `when` chooses on what the build is for, and the vocabulary is the
+    // three the compiler declares. A name a program declares is not one of
+    // them however it reads at runtime.
+    (
+        "a_when_written_over_something_that_is_not_a_target",
+        "FLAG :: true
+         when (FLAG) { N :: 1 } else { N :: 2 }
+         main :: fn() -> i64 { N }
+",
+        "'FLAG' is not one of the targets a `when` chooses on, which are \
+         TARGET_WINDOWS, TARGET_LINUX and TARGET_MACOS",
+    ),
+    // A bound written under a name is read where it is asked, so one that
+    // names itself is read again forever. Counted rather than found, and the
+    // report names the function and lands on the body that reaches it.
+    (
+        "a_bound_that_names_itself",
+        "loops :: fn($T: Type) -> bool { loops(T) }
+         use :: fn($T: Type, v: $T) -> i64 where loops(T) { 1 }
+         main :: fn() -> i64 { use(3) }
+",
+        "'loops' reaches itself, and a bound is answered by reading it, which \
+         never ends",
+    ),
 ];
 
 // One arena, one carve, and the three ways the pointer leaves the block. Held

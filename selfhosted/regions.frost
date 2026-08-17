@@ -403,7 +403,9 @@ bound_through :: fn(
 ) -> bool {
     if (p.bound_depth >= 32) {
         report_where(p.modules, p.src, pred_off)
-        report("a bound reaches itself, and one is answered by reading it, which never ends")
+        report("'")
+        report_src(p.src, pred_off, pred_len)
+        report("' reaches itself, and a bound is answered by reading it, which never ends")
         frost_rt_recover_escape()
     }
     held_ti := p.ti

@@ -740,6 +740,24 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             ty := parse_type(p)
             advance(p)
+            // A type with no fields has no count. An enum is laid out as a
+            // struct carrying the tag beside every variant's fields, so asking
+            // whether it is one is not the question: what would come back is
+            // the compiler's own layout. A template's parameter is a
+            // placeholder until an instance binds it, and that parse is thrown
+            // away and done again there.
+            mut counts := is_struct_ty(ty)
+            if (counts) {
+                def := arena_at(p.structs, struct_index_of(ty))
+                counts = def.is_enum == 0
+            }
+            if (counts == false && ty != TY_PARAM) {
+                report_where(p.modules, p.src, offset)
+                report("`field_count` counts the fields of a struct, and '")
+                report_type_name(p, ty)
+                report("' is not one")
+                frost_rt_recover_escape()
+            }
             return new_node(p, NodeKind::Num, 0, 0, struct_field_count(p, ty))
         }
         // A type predicate asked of a field is answered here, wherever it is
@@ -7128,7 +7146,16 @@ unroll_fields :: fn(
     walked: i64,
     walk_at: i64
 ) -> i64 {
-    if (is_struct_ty(walked) == false) {
+    // An enum is laid out as a struct carrying the tag beside every variant's
+    // fields, so asking whether it is one is not the question a reader is
+    // asking: a walk over it hands back the compiler's own layout rather than
+    // anything the reader wrote.
+    mut walks_a_struct := is_struct_ty(walked)
+    if (walks_a_struct) {
+        def := arena_at(p.structs, struct_index_of(walked))
+        walks_a_struct = def.is_enum == 0
+    }
+    if (walks_a_struct == false) {
         // A template is read once with nothing bound, so the type parameter is
         // still a placeholder there and there is nothing to walk yet. That
         // parse is thrown away and done again per instance, where it is a real

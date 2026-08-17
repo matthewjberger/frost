@@ -355,6 +355,7 @@ pub fn resolve_when(
         );
         let holds = when_condition(
             &held_tokens[at + 2..after_condition - 1],
+            &held_positions[at + 2..after_condition - 1],
             &held_positions[at],
         )?;
         let after_block = past_match(
@@ -414,10 +415,11 @@ pub fn resolve_when(
 // settle is not one a compile-time conditional can be written over.
 fn when_condition(
     tokens: &[Token],
+    places: &[crate::lexer::Position],
     position: &crate::lexer::Position,
 ) -> Result<bool> {
     let mut at = 0usize;
-    let held = when_or(tokens, &mut at, position)?;
+    let held = when_or(tokens, places, &mut at, position)?;
     if at != tokens.len() {
         return Err(crate::diagnostic::LocatedError {
             position: *position,
@@ -430,43 +432,46 @@ fn when_condition(
 
 fn when_or(
     tokens: &[Token],
+    places: &[crate::lexer::Position],
     at: &mut usize,
     position: &crate::lexer::Position,
 ) -> Result<bool> {
-    let mut held = when_and(tokens, at, position)?;
+    let mut held = when_and(tokens, places, at, position)?;
     while matches!(tokens.get(*at), Some(Token::Or)) {
         *at += 1;
-        held = when_and(tokens, at, position)? || held;
+        held = when_and(tokens, places, at, position)? || held;
     }
     Ok(held)
 }
 
 fn when_and(
     tokens: &[Token],
+    places: &[crate::lexer::Position],
     at: &mut usize,
     position: &crate::lexer::Position,
 ) -> Result<bool> {
-    let mut held = when_term(tokens, at, position)?;
+    let mut held = when_term(tokens, places, at, position)?;
     while matches!(tokens.get(*at), Some(Token::And)) {
         *at += 1;
-        held = when_term(tokens, at, position)? && held;
+        held = when_term(tokens, places, at, position)? && held;
     }
     Ok(held)
 }
 
 fn when_term(
     tokens: &[Token],
+    places: &[crate::lexer::Position],
     at: &mut usize,
     position: &crate::lexer::Position,
 ) -> Result<bool> {
     match tokens.get(*at) {
         Some(Token::Bang) => {
             *at += 1;
-            Ok(!when_term(tokens, at, position)?)
+            Ok(!when_term(tokens, places, at, position)?)
         }
         Some(Token::LeftParentheses) => {
             *at += 1;
-            let held = when_or(tokens, at, position)?;
+            let held = when_or(tokens, places, at, position)?;
             if matches!(tokens.get(*at), Some(Token::RightParentheses)) {
                 *at += 1;
             }
@@ -474,11 +479,14 @@ fn when_term(
         }
         Some(Token::Identifier(name)) => {
             let named = name.clone();
+            // The name that is not a target is what the reader has to change,
+            // so the report lands on it rather than on the `when` that read it.
+            let written = places.get(*at).copied().unwrap_or(*position);
             *at += 1;
             match target_constant(&named) {
                 Some(held) => Ok(held),
                 None => Err(crate::diagnostic::LocatedError {
-                    position: *position,
+                    position: written,
                     message: format!(
                         "'{named}' is not one of the targets a `when` chooses on, which are TARGET_WINDOWS, TARGET_LINUX and TARGET_MACOS"
                     ),

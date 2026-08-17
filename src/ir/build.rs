@@ -3082,9 +3082,15 @@ fn evaluate_bound(
             // recursion is held to.
             if let Some((parameter, body)) = context.bounds.get(predicate) {
                 if depth >= BOUND_DEPTH {
-                    bail!(
-                        "'{predicate}' reaches itself, and a bound is answered by reading it, which never ends"
-                    )
+                    // The body that reaches itself is what the reader has to
+                    // change, so the report lands there rather than on the
+                    // call that asked the question.
+                    return locate(
+                        Err(anyhow::anyhow!(
+                            "'{predicate}' reaches itself, and a bound is answered by reading it, which never ends"
+                        )),
+                        ast.position_of(ast.expr_span(*body)),
+                    );
                 }
                 let mut held: HashMap<String, Type> = HashMap::new();
                 held.insert(parameter.clone(), ty.clone());
@@ -8260,7 +8266,10 @@ impl<'a> FunctionLowering<'a> {
             return Ok(None);
         };
         let name = self.ast.name(*name);
-        if !matches!(name, "sizeof" | "alignof" | "typename" | "type_id") {
+        if !matches!(
+            name,
+            "sizeof" | "alignof" | "typename" | "type_id" | "field_count"
+        ) {
             return Ok(None);
         }
         let name = name.to_string();
@@ -8271,6 +8280,37 @@ impl<'a> FunctionLowering<'a> {
         let Expression::TypeValue(ty) = self.ast.expr(arguments[0]) else {
             return Ok(None);
         };
+        // `field_count` of something with no fields. The struct case is folded
+        // before this by the layout pass, so what reaches here is a type that
+        // has no answer, and left alone it read as a call to a function nothing
+        // declares: there is one, and a number has no fields to count.
+        if name == "field_count" {
+            let held = match ty {
+                Type::TypeParam(named) | Type::ConstValue(named)
+                    if self.builder.struct_layout(named).is_some() =>
+                {
+                    Type::Struct(named.clone())
+                }
+                other => other.clone(),
+            };
+            let Type::Struct(named) = &held else {
+                bail!(
+                    "`field_count` counts the fields of a struct, and '{}' is not one",
+                    spelled(&held)
+                );
+            };
+            let Some(layout) = self.builder.struct_layout(named) else {
+                bail!(
+                    "`field_count` counts the fields of a struct, and '{}' is not one",
+                    spelled(&held)
+                );
+            };
+            let count = layout.fields.len() as i64;
+            return Ok(Some((
+                IrOperand::Constant(IrConstant::Integer(count, Type::I64)),
+                Type::I64,
+            )));
+        }
         // `$P` on a concrete type reads as a constant named at a call, since
         // that is what a `$` argument is everywhere else. Where the name is a
         // type the program declared, it is that type: `sizeof($P)` measured
