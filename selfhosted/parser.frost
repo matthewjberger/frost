@@ -3625,6 +3625,23 @@ parse_struct_fields :: fn(mut p: Parser, packed: i64) -> i64 {
     head
 }
 
+// Read a generic's body once where it is declared, for what its fields say
+// about the names inside them. The body is skipped where it is written and read
+// again per instance, so a generic nothing instantiates was read nowhere at
+// all: a field naming a type this program does not declare, or a length
+// calling something over the value parameter, went through every pass without a
+// word. The fields are thrown away; each instance parses its own.
+read_template_fields :: fn(mut p: Parser, field_token: i64, packed: i64) {
+    saved_ti := p.ti
+    saved_fields := p.fields.count
+    saved_known := p.size_known
+    p.ti = field_token
+    parse_struct_fields(p, packed)
+    p.fields.count = saved_fields
+    p.size_known = saved_known
+    p.ti = saved_ti
+}
+
 // Get or create the concrete struct for a generic instantiation. The template's
 // fields are re-parsed with the type parameter bound to `arg`, producing a new
 // struct whose emitted name is `<generic>_<index>`.
@@ -8128,6 +8145,7 @@ parse_struct :: fn(mut p: Parser) {
             }
         )
         refuse_generic_values_block(p, name_offset, name_length)
+        read_template_fields(p, field_token, packed_flag)
     } else {
         refuse_field_sigils(p)
         head := parse_struct_fields(p, packed_flag)
@@ -8306,6 +8324,22 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
     tag_field
 }
 
+// The same reading a generic struct's fields get, for a generic enum's
+// variants. The variants and their fields are thrown away; each instance
+// records its own against its own index.
+read_template_variants :: fn(mut p: Parser, field_token: i64) {
+    saved_ti := p.ti
+    saved_fields := p.fields.count
+    saved_variants := p.variants.count
+    saved_known := p.size_known
+    p.ti = field_token
+    parse_enum_body(p, -1)
+    p.fields.count = saved_fields
+    p.variants.count = saved_variants
+    p.size_known = saved_known
+    p.ti = saved_ti
+}
+
 parse_enum :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
@@ -8388,6 +8422,7 @@ parse_enum :: fn(mut p: Parser) {
             }
         )
         refuse_generic_values_block(p, name_offset, name_length)
+        read_template_variants(p, field_token)
         return
     }
     // The enum's own index is known before its body is, since a variant has to

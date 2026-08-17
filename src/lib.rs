@@ -9,6 +9,7 @@ pub use check::entry::check_entry_point;
 pub use check::linear_instances::pooled_instance_names;
 pub use check::nested_functions::{NESTED_FUNCTION, check_nested_functions};
 pub use check::recursive_structs::{RECURSIVE_STRUCT, check_recursive_structs};
+pub use check::template_calls::check_template_calls;
 pub use diagnostic::{
     Diagnostic, LocatedError, Place, Replacement, Report,
     as_json as diagnostics_as_json, as_report, grouped as grouped_diagnostics,

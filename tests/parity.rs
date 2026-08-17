@@ -57,6 +57,52 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A generic nothing instantiates. Its body is skipped where it is written
+    // and read again per instance, so nothing read it at all: a field naming a
+    // type the program does not declare, a length calling something over the
+    // value parameter, and a call to a name nothing declares each went through
+    // every pass without a word.
+    (
+        "a_type_nothing_declares_inside_a_generic_nothing_uses",
+        "Grid :: struct($N: usize) { cells: [N]Nope }
+         main :: fn() -> i64 { 0 }
+        ",
+        "'Nope' is not a type this program declares",
+    ),
+    (
+        "a_length_over_the_value_parameter_of_a_generic_nothing_uses",
+        "pow2 :: fn(n: i64) -> i64 { mut h: i64 = 1  while (h < n) { h = h * 2 }  h }
+         Grid :: struct($N: usize) { cells: [pow2(N)]i64 }
+         main :: fn() -> i64 { 0 }
+        ",
+        "'N' has no value at compile time",
+    ),
+    (
+        "a_call_to_nothing_inside_a_generic_nothing_uses",
+        "bad :: fn($T: Type, v: $T) -> i64 { nosuchcall(v) }
+         main :: fn() -> i64 { 0 }
+        ",
+        "call to undefined function 'nosuchcall'",
+    ),
+    // The same, for a generic enum, whose variants are skipped the same way.
+    (
+        "a_length_over_the_value_parameter_of_a_generic_enum_nothing_uses",
+        "pow2 :: fn(n: i64) -> i64 { mut h: i64 = 1  while (h < n) { h = h * 2 }  h }
+         Held :: enum ($N: usize) { None, Some { value: [pow2(N)]i64 } }
+         main :: fn() -> i64 { 0 }
+        ",
+        "'N' has no value at compile time",
+    ),
+    // A variant's payload writes a type the same way a struct's field does,
+    // and an enum was the one declaration a name nothing declares could hide
+    // in.
+    (
+        "a_type_nothing_declares_in_a_variants_payload",
+        "Held :: enum { None, Some { value: Nope } }
+         main :: fn() -> i64 { 0 }
+        ",
+        "'Nope' is not a type this program declares",
+    ),
     // A `^` over something that is not a pointer.
     //
     // The self-hosted compiler had only the gate's word about it, which is

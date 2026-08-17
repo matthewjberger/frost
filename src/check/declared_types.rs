@@ -69,6 +69,24 @@ pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
                     );
                 }
             }
+            // A variant's payload writes a type the same way a struct's field
+            // does. Left out, an enum was the one declaration a name nothing
+            // declares could hide in.
+            Statement::Enum(_, _, variants) => {
+                for variant in ast.variants_in(*variants) {
+                    let Some(fields) = variant.fields else {
+                        continue;
+                    };
+                    for field in ast.fields_in(fields) {
+                        report_unknown(
+                            &field.field_type,
+                            &known,
+                            field.at,
+                            &mut found,
+                        );
+                    }
+                }
+            }
             Statement::Extern {
                 params,
                 return_type,

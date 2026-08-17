@@ -1388,6 +1388,7 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         &program.roots,
     ));
     faults.extend(frost::check_declared_types(&program.ast, &program.roots));
+    faults.extend(frost::check_template_calls(&program.ast, &program.roots));
     faults.extend(frost::check_recursive_structs(&program.ast, &program.roots));
     faults.extend(frost::check_nested_functions(&program.ast, &program.roots));
     faults.extend(frost::check_entry_point(&program.ast, &program.roots));

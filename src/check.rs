@@ -9,4 +9,5 @@ pub(crate) mod nested_functions;
 pub(crate) mod ownership;
 pub(crate) mod recursive_structs;
 pub(crate) mod regions;
+pub(crate) mod template_calls;
 pub(crate) mod unsafety;

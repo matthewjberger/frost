@@ -2060,7 +2060,7 @@ fn names_a_type_parameter(ty: &Type, type_params: &[String]) -> bool {
     }
 }
 
-fn function_is_generic(ast: &Ast, parameters: Range32) -> bool {
+pub(crate) fn function_is_generic(ast: &Ast, parameters: Range32) -> bool {
     !function_type_params(ast, parameters).is_empty()
         || ast
             .params_in(parameters)
