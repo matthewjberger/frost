@@ -7208,7 +7208,7 @@ impl<'a> FunctionLowering<'a> {
                 if let Expression::Identifier(name) = self.ast.expr(callee)
                     && matches!(
                         self.ast.name(*name),
-                        "columns_new" | "slab_new"
+                        "columns_zeroed" | "slab_zeroed"
                     )
                     && self.resolve_variable(self.ast.name(*name)).is_none()
                     && self.builder.signature(self.ast.name(*name)).is_none()
@@ -7218,7 +7218,7 @@ impl<'a> FunctionLowering<'a> {
                         .contains_key(self.ast.name(*name))
                 {
                     let called = self.ast.name(*name).to_string();
-                    return self.lower_columns_new(&called, expected);
+                    return self.lower_columns_zeroed(&called, expected);
                 }
                 // `live_slots(c)` reaching here is one written somewhere other than
                 // after the `in` of a `for`, where it is the subject of the
@@ -11620,16 +11620,16 @@ impl<'a> FunctionLowering<'a> {
         Ok(())
     }
 
-    // `columns_new()`: a zeroed columns container of the type the context wants.
+    // `columns_zeroed()`: a zeroed columns container of the type the context wants.
     // Zeroing sets every generation and free slot to 0. `columns_reset` lays out
     // the free list before use, the same "construct then reset" contract a slab
     // has.
-    fn lower_columns_new(
+    fn lower_columns_zeroed(
         &mut self,
         called: &str,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
-        let slab = called == "slab_new";
+        let slab = called == "slab_zeroed";
         let wanted = if slab { "Slab<T, N>" } else { "columns<T, N>" };
         let Some(Type::Struct(name)) = expected else {
             bail!(

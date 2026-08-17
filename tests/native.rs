@@ -9799,7 +9799,7 @@ release :: fn(mut s: Slab<Entity, 4>, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 4> = slab_new()
+    mut world : Slab<Entity, 4> = slab_zeroed()
     reset(world)
     hero : Handle<Entity> = insert(world, Entity{hp=100, mana=30})
     foe : Handle<Entity> = insert(world, Entity{hp=40, mana=10})
@@ -9852,7 +9852,7 @@ release :: fn(mut s: Slab<Entity, 4>, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    mut w : Slab<Entity, 4> = slab_new()
+    mut w : Slab<Entity, 4> = slab_zeroed()
     reset(w)
     old : Handle<Entity> = insert(w, Entity{hp=100})
     release(w, old)
@@ -9902,7 +9902,7 @@ const SELFHOSTED_SLAB: &str = concat!(
     "    packed\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    mut world : Slab = slab_new()\n",
+    "    mut world : Slab = slab_zeroed()\n",
     "    reset(world)\n",
     "    hero : Handle<Entity> = insert(world, Entity{hp=100, mana=30})\n",
     "    foe : Handle<Entity> = insert(world, Entity{hp=40, mana=10})\n",
@@ -9952,7 +9952,7 @@ const SELFHOSTED_SLAB_STALE: &str = concat!(
     "    s.free_count = s.free_count + 1\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    mut world : Slab = slab_new()\n",
+    "    mut world : Slab = slab_zeroed()\n",
     "    reset(world)\n",
     "    old : Handle<Entity> = insert(world, Entity{hp=100, mana=0})\n",
     "    release(world, old)\n",
@@ -10043,7 +10043,7 @@ const SELFHOSTED_GENERIC_SLAB: &str = concat!(
     "    packed\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    mut world : Slab<Entity, 4> = slab_new()\n",
+    "    mut world : Slab<Entity, 4> = slab_zeroed()\n",
     "    slab_reset(world)\n",
     "    hero := slab_insert(world, Entity{hp=100, mana=30})\n",
     "    foe := slab_insert(world, Entity{hp=40, mana=10})\n",
@@ -10296,7 +10296,7 @@ fn self_hosted_standard_library_math() {
 }
 
 // The SoA `columns<T, N>` container, compiled by the self-hosted compiler: the
-// synthesized per-field-array layout, `columns_new()` construction, the
+// synthesized per-field-array layout, `columns_zeroed()` construction, the
 // generational library (reset/insert/alive/release) imported from
 // std/columns.frost, the handle-checked place-deref `c[h].field` for read and
 // write, a column sliced into a hot loop (`c.x` is an ordinary array), and the
@@ -10314,7 +10314,7 @@ const SELFHOSTED_COLUMNS: &str = concat!(
     "    total\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    mut c : columns<Particle, 8> = columns_new()\n",
+    "    mut c : columns<Particle, 8> = columns_zeroed()\n",
     "    columns_reset(c)\n",
     "    a := columns_insert(c, Particle { x = 10, y = 1 })\n",
     "    columns_insert(c, Particle { x = 20, y = 2 })\n",
@@ -10342,7 +10342,7 @@ fn self_hosted_columns_container() {
 
 // The same SoA `columns<T, N>` container, compiled by the BOOTSTRAP compiler on
 // both of its backends. Parity with the self-hosted compiler: the container is
-// synthesized by field reflection in ir::build, `columns_new()` zero-inits it,
+// synthesized by field reflection in ir::build, `columns_zeroed()` zero-inits it,
 // `c[h].field` and `c[h] = value` lower to the generational check, and a column
 // (`c.x`) slices into a hot loop. Generic functions over `columns<T, N>` are
 // monomorphized like any other. Kept self-contained (its own `printf` extern,
@@ -10374,7 +10374,7 @@ sum_col :: fn(xs: []i64) -> i64 {
     total
 }
 main :: fn() -> i64 {
-    mut c : columns<Particle, 8> = columns_new()
+    mut c : columns<Particle, 8> = columns_zeroed()
     col_reset(c)
     a := col_insert(c, Particle { x = 10, y = 1 })
     col_insert(c, Particle { x = 20, y = 2 })
@@ -10914,7 +10914,7 @@ slab_release :: fn(mut p: Slab, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    mut world : Slab = slab_new()
+    mut world : Slab = slab_zeroed()
     slab_reset(world)
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })
     foe := slab_insert(world, Entity { hp = 40, mana = 10 })
@@ -11705,7 +11705,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", size_of($i64)) }
     unsafe { printf("%lld\n", size_of($Entity)) }
 
-    mut world : Slab<Entity, 16> = slab_new()
+    mut world : Slab<Entity, 16> = slab_zeroed()
     h := insert(world, Entity { hp = 100, mana = 30 })
     unsafe { printf("%lld\n", world[h].hp + world[h].mana) }
     0
@@ -11747,7 +11747,7 @@ main :: fn() -> i64 {
     inferred := Pair { first = 30, second = 12 }
     unsafe { printf("%lld\n", inferred.first + inferred.second) }
 
-    mut pool : Slab<Pair<i64>, 4> = slab_new()
+    mut pool : Slab<Pair<i64>, 4> = slab_zeroed()
     h := insert(pool, Pair { first = 3, second = 4 })
     unsafe { printf("%lld\n", pool[h].first + pool[h].second) }
     0
@@ -12163,7 +12163,7 @@ total :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 8> = slab_new()
+    mut world : Slab<Entity, 8> = slab_zeroed()
     reset(world)
 
     ha := insert(world, Entity { hp = 50, mana = 10 })
@@ -12817,7 +12817,7 @@ index_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw & 429496
 generation_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw >> 32 }
 
 main :: fn() -> i64 {
-    mut p : Slab<Entity, 8> = slab_new()
+    mut p : Slab<Entity, 8> = slab_zeroed()
     reset(p)
 
     ha := insert(p, Entity { hp = 100, mana = 30 })
@@ -16980,7 +16980,7 @@ zero :: fn() -> Pair<i64> { Pair { first = 0, second = 0 } }
 main :: fn() -> i64 {
     unsafe { printf("%lld\n", sum(Pair<i64> { first = 3, second = 4 })) }
 
-    mut pool : Slab<Pair<i64>, 4> = slab_new()
+    mut pool : Slab<Pair<i64>, 4> = slab_zeroed()
     h := insert(pool, Pair { first = 10, second = 20 })
     unsafe { printf("%lld\n", pool.storage[h].first + pool.storage[h].second) }
     0
@@ -17499,7 +17499,7 @@ fn both_compilers_refuse_a_pool_of_resources_nobody_releases() {
                   File :: linear struct { fd: i64 }\n\
                   Node :: struct { file: File, hp: i64 }\n\
                   main :: fn() -> i64 {\n\
-                  \x20   mut pool : Slab<Node, 2> = slab_new()\n\
+                  \x20   mut pool : Slab<Node, 2> = slab_zeroed()\n\
                   \x20   0\n}\n";
     // The self-hosted half is in REFUSED_BY_BOTH.
     let bootstrap = bootstrap_refusal("poolboot", source);

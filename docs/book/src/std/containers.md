@@ -240,7 +240,7 @@ section 10.2 of
 [handles-and-pools.md](../reference/handles-and-pools.md).
 
 ```frost,sketch
-mut world : Slab<Entity, 8> = slab_new()
+mut world : Slab<Entity, 8> = slab_zeroed()
 slab_reset(world)
 
 h := slab_insert(world, Entity { hp = 100, mana = 30 })
@@ -272,7 +272,7 @@ handle scheme is the slab's, unchanged.
 
 The type itself is synthesized: `columns<T, N>` is one `[N]field` array per
 field of `T`, plus the same `generations`, `free_list`, `free_count`,
-`live_words` and `live_count` bookkeeping a slab has. `columns_new()` builds a
+`live_words` and `live_count` bookkeeping a slab has. `columns_zeroed()` builds a
 zeroed one. The deref
 `c[handle].field` and the element scatter `c[handle] = value` are
 compiler-supplied, because both select a column before indexing and that is not
@@ -285,7 +285,7 @@ else.
 ```frost,sketch
 Particle :: struct { x: i64, y: i64 }
 
-mut world : columns<Particle, 8> = columns_new()
+mut world : columns<Particle, 8> = columns_zeroed()
 columns_reset(world)
 
 a := columns_insert(world, Particle { x = 10, y = 1 })

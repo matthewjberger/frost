@@ -28,7 +28,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     is_indirect, pointer_to, borrow_of,
     is_integer, integer_bits, one_bit, bit_ordinal, report_ordinal,
     is_columns_ty, columns_lookup, columns_made_for, record_columns,
-    is_columns_new_call, field_type_by_range,
+    is_columns_zeroed_call, field_type_by_range,
     is_columns_bookkeeping,
     is_struct_ty, proc_of, proc_ret, proc_param_count, proc_param_at,
     slab_field_id, slab_field_type,
@@ -2066,17 +2066,17 @@ is_columns_ty :: fn(mut p: Parser, struct_ty: i64) -> bool {
     is_array_ty(generations) && is_array_ty(free_list) && storage == (-1)
 }
 
-// `columns_new()` is a compiler builtin, not a real function. It stands for a
-// zeroed container of the type the context wants, recognized by name at the
+// `columns_zeroed()` is a compiler builtin, not a real function. It stands for
+// a zeroed container of the type the context wants, recognized by name at the
 // call node so neither backend emits a real call to it.
-is_columns_new_call :: fn(mut p: Parser, value: i64) -> bool {
+is_columns_zeroed_call :: fn(mut p: Parser, value: i64) -> bool {
     node := arena_at(p.arena, value)
     if (node.kind != NodeKind::Call) {
         return false
     }
     sym := arena_at(p.fns, node.val)
-    (str_range_eq(p.src, sym.off, sym.len, "columns_new")
-        || str_range_eq(p.src, sym.off, sym.len, "slab_new"))
+    (str_range_eq(p.src, sym.off, sym.len, "columns_zeroed")
+        || str_range_eq(p.src, sym.off, sym.len, "slab_zeroed"))
 }
 
 // Whether a columns field is the container's own bookkeeping rather than a

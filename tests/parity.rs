@@ -272,7 +272,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"columns.frost\"
          Session :: linear struct { id: i64 }
          main :: fn() -> i64 {
-             mut c: columns<Session, 4> = columns_new()
+             mut c: columns<Session, 4> = columns_zeroed()
              columns_reset(c)
              0
          }
@@ -2964,7 +2964,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          import \"columns.frost\"
          Cell :: struct { v: i64 }
          main :: fn() -> i64 {
-             mut c : columns<Cell, 8> = columns_new()
+             mut c : columns<Cell, 8> = columns_zeroed()
              columns_reset(c)
              held := live_slots(c)
              print(\"{}\\n\", held)
@@ -2980,7 +2980,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "import \"io.frost\"
          import \"columns.frost\"
          Cell :: struct { v: i64 }
-         made :: fn() -> columns<Cell, 8> { columns_new() }
+         made :: fn() -> columns<Cell, 8> { columns_zeroed() }
          main :: fn() -> i64 {
              for slot in live_slots(made()) { print(\"{}\\n\", slot) }
              0
@@ -3354,7 +3354,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          File :: linear struct { fd: i64 }\n\
          Node :: struct { file: File, hp: i64 }\n\
          main :: fn() -> i64 {\n\
-         \x20   mut pool : Slab<Node, 2> = slab_new()\n\
+         \x20   mut pool : Slab<Node, 2> = slab_zeroed()\n\
          \x20   0\n}\n",
         "is a pool of",
     ),
@@ -3369,7 +3369,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          File :: linear struct { fd: i64 }\n\
          Node :: struct { file: File, hp: i64 }\n\
          fresh :: fn($T: Type, $N: usize, seed: $T) -> Slab<T, N> {\n\
-         \x20   slab_new()\n}\n\
+         \x20   slab_zeroed()\n}\n\
          main :: fn() -> i64 {\n\
          \x20   pool := fresh($2, Node { file = File { fd = 1 }, hp = 0 })\n\
          \x20   0\n}\n",
@@ -7029,7 +7029,7 @@ e-2
 ",
     ),
     // A slab carries the same record of which slots are filled, so the same
-    // walk reads it. `slab_new()` is what a literal was: a slab has arrays
+    // walk reads it. `slab_zeroed()` is what a literal was: a slab has arrays
     // whose lengths are worked out from `N`, and enumerating them at every
     // construction was already the worst part of writing one.
     (
@@ -7038,7 +7038,7 @@ e-2
          import \"slab.frost\"
          Entity :: struct { hp: i64 }
          main :: fn() -> i64 {
-             mut world : Slab<Entity, 130> = slab_new()
+             mut world : Slab<Entity, 130> = slab_zeroed()
              slab_reset(world)
              mut made : [130]Handle<Entity> = [0; 130]
              mut i : i64 = 0
@@ -7088,8 +7088,8 @@ e-2
          import \"columns.frost\"
          Entity :: struct { hp: i64 }
          main :: fn() -> i64 {
-             mut active : Slab<Entity, 4> = slab_new()
-             mut pending : Slab<Entity, 4> = slab_new()
+             mut active : Slab<Entity, 4> = slab_zeroed()
+             mut pending : Slab<Entity, 4> = slab_zeroed()
              slab_reset(active)
              slab_reset(pending)
              a := slab_insert(active, Entity { hp = 11 })
@@ -7101,8 +7101,8 @@ e-2
              assert(slab_slot(active, b) == (-1))
              assert(slab_release(active, a))
              assert(slab_alive(active, a) == false)
-             mut one : columns<Entity, 4> = columns_new()
-             mut two : columns<Entity, 4> = columns_new()
+             mut one : columns<Entity, 4> = columns_zeroed()
+             mut two : columns<Entity, 4> = columns_zeroed()
              columns_reset(one)
              columns_reset(two)
              p := columns_insert(one, Entity { hp = 33 })
@@ -7129,7 +7129,7 @@ e-2
          import \"columns.frost\"
          Particle :: struct { x: i64, y: i64 }
          main :: fn() -> i64 {
-             mut c : columns<Particle, 130> = columns_new()
+             mut c : columns<Particle, 130> = columns_zeroed()
              columns_reset(c)
              mut made : [130]Handle<Particle> = [0; 130]
              mut i : i64 = 0
@@ -7177,7 +7177,7 @@ e-2
          import \"columns.frost\"
          Cell :: struct { v: i64 }
          main :: fn() -> i64 {
-             mut c : columns<Cell, 96> = columns_new()
+             mut c : columns<Cell, 96> = columns_zeroed()
              columns_reset(c)
              mut made : [96]Handle<Cell> = [0; 96]
              mut i : i64 = 0
@@ -7199,7 +7199,7 @@ e-2
                  counted = counted + 1
              }
              print(\"{}\\n\", counted)
-             mut empty : columns<Cell, 8> = columns_new()
+             mut empty : columns<Cell, 8> = columns_zeroed()
              columns_reset(empty)
              mut none : i64 = 0
              for slot in live_slots(empty) { none = none + 1 }
@@ -8724,7 +8724,7 @@ main :: fn() -> i64 {
          Particle :: struct { x: i64 }
          Buffer :: struct { bytes: [pow2(5)]u8 }
          main :: fn() -> i64 {
-             mut c : columns<Particle, pow2(5)> = columns_new()
+             mut c : columns<Particle, pow2(5)> = columns_zeroed()
              columns_reset(c)
              h := columns_insert(c, Particle { x = 7 })
              print(\"{}\\n\", c[h].x)

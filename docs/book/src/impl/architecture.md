@@ -281,7 +281,7 @@ fields in place of substituting a template: for each field it registers one
 `free_count` free list a slab carries. The deref `c[handle].field` and the
 scatter `c[handle] = value` lower to the slab's bounds-and-generation check
 (`frost_rt_slot`) reused verbatim, selecting the column before indexing it, and
-`columns_new()` zero-initializes. It is the structure-of-arrays sibling of the
+`columns_zeroed()` zero-initializes. It is the structure-of-arrays sibling of the
 slab. See [pools-and-columns.md](../design/pools-and-columns.md).
 
 Growable storage is a library. `std/vec.frost` is one heap block that doubles

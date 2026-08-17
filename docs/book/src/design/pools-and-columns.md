@@ -90,7 +90,7 @@ patterns use machinery that already exists:
   the same `frost_rt_slot` bounds-and-generation check the slab uses, so a stale
   handle aborts here exactly as it does there.
 
-Construction (`columns_new()`, a zeroed container), the deref `c[handle].field`
+Construction (`columns_zeroed()`, a zeroed container), the deref `c[handle].field`
 for read and write, and the element scatter `c[handle] = value` (a per-field
 store at the validated slot) are the compiler-supplied pieces, for the same
 reason `pool[handle]` is. They select a column before indexing, which a function

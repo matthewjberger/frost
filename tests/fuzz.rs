@@ -463,7 +463,7 @@ fn view_kind(kind: usize) -> ViewKind {
         5 => ViewKind {
             import: "columns.frost",
             held_type: "[]i64",
-            storage: "mut bag : columns<Pt, 4> = columns_new()",
+            storage: "mut bag : columns<Pt, 4> = columns_zeroed()",
             view: "bag.x",
             parameter: "mut source: columns<Pt, 4>",
             honest: "source.x",

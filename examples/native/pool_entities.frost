@@ -21,7 +21,7 @@ generation_of :: fn(handle: Handle<Entity>) -> i64 { raw: i64 = handle raw >> 32
 show :: fn(flag: bool) { if (flag) { print("{}\n", 1) } else { print("{}\n", 0) } }
 
 main :: fn() -> i64 {
-    mut p: Slab<Entity, 8> = slab_new()
+    mut p: Slab<Entity, 8> = slab_zeroed()
     slab_reset(p)
 
     hero := slab_insert(p, Entity { hp = 100, mana = 30 })

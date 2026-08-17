@@ -128,7 +128,7 @@ emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
     value = borrow_kept(p, value, want)
     // A zeroed columns container. Zero sets every generation and free slot to 0.
     // `columns_reset` lays out the free list before the container is used.
-    if (is_columns_new_call(p, value)) {
+    if (is_columns_zeroed_call(p, value)) {
         emit_text("(")
         emit_ctype(p, want)
         emit_text("){0}")

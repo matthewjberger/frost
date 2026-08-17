@@ -152,11 +152,11 @@ main :: fn() -> i64 {
     // A columns container stores each field of `Particle` in its own array, so
     // a pass over one field strides it rather than stepping over the rest.
     //
-    // `columns_new()` is the zeroed value the binding starts at. The free list
-    // and the container's own id are laid down by `columns_reset`, because that
-    // id is a number the program is handed while it runs rather than one the
+    // `columns_zeroed()` is the value the binding starts at. The free list and
+    // the container's own id are laid down by `columns_reset`, because that id
+    // is a number the program is handed while it runs rather than one the
     // compiler holds. Two calls, and the second is not a repeat of the first.
-    mut swarm: columns<Particle, 8> = columns_new()
+    mut swarm: columns<Particle, 8> = columns_zeroed()
     columns_reset(swarm)
 
     // A handle is a number: a slot and a generation packed into one word, so a
@@ -187,7 +187,7 @@ main :: fn() -> i64 {
     //
     // A handle carries which container it came from, so one from another pool
     // of the same shape is refused rather than read.
-    mut spare: columns<Particle, 8> = columns_new()
+    mut spare: columns<Particle, 8> = columns_zeroed()
     columns_reset(spare)
     print("{}\n", cast($i64, columns_alive(spare, made[0]))) // 0
 

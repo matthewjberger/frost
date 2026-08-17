@@ -16,7 +16,7 @@ Tile :: struct { height: i64 }
 show :: fn(flag: bool) { if (flag) { print("{}\n", 1) } else { print("{}\n", 0) } }
 
 main :: fn() -> i64 {
-    mut world: Slab<Entity, 8> = slab_new()
+    mut world: Slab<Entity, 8> = slab_zeroed()
     slab_reset(world)
 
     h := slab_insert(world, Entity { hp = 100, mana = 30 })
@@ -26,7 +26,7 @@ main :: fn() -> i64 {
     print("{}\n", world[h].hp) // 75
 
     // The same code at a different element type and a different capacity.
-    mut ground: Slab<Tile, 4> = slab_new()
+    mut ground: Slab<Tile, 4> = slab_zeroed()
     slab_reset(ground)
     t := slab_insert(ground, Tile { height = 12 })
     print("{}\n", ground[t].height) // 12

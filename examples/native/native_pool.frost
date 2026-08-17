@@ -73,7 +73,7 @@ slab_release :: fn(mut p: Slab, handle: i64) {
 }
 
 main :: fn() -> i64 {
-    mut world: Slab = slab_new()
+    mut world: Slab = slab_zeroed()
     slab_reset(world)
 
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })

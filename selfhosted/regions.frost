@@ -1192,9 +1192,9 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
                 frost_rt_recover_escape()
             }
             ty = binding_type(p, value)
-        } else if (is_columns_new_call(p, value)) {
-            // `columns_new()` stands for a zeroed container rather than a call,
-            // so it has no declaration to answer with a type.
+        } else if (is_columns_zeroed_call(p, value)) {
+            // `columns_zeroed()` stands for a zeroed container rather than a
+            // call, so it has no declaration to answer with a type.
             ty = annotation
         } else {
             want_single(p, value, annotation)
@@ -9531,11 +9531,11 @@ check_calls :: fn(mut p: Parser) {
             if (defined == 0) {
                 callee_proc = proc_param_named(p, name_off, name_len)
             }
-            // `columns_new` is a compiler builtin standing for a zeroed
+            // `columns_zeroed` is a compiler builtin standing for a zeroed
             // container, so it has no defined symbol. The emitter recognizes
             // it by name. Its zero arguments still satisfy the arity check.
-            is_columns_new := (str_range_eq(p.src, name_off, name_len, "columns_new")
-                || str_range_eq(p.src, name_off, name_len, "slab_new"))
+            is_columns_zeroed := (str_range_eq(p.src, name_off, name_len, "columns_zeroed")
+                || str_range_eq(p.src, name_off, name_len, "slab_zeroed"))
             // A call to a `$f` parameter inside the template it belongs to
             // names no function, since which function it is comes from the
             // call site. The instances of that template are in this arena too,
@@ -9564,7 +9564,7 @@ check_calls :: fn(mut p: Parser) {
             // One per declaration reaches the reader: what a body says after
             // its first wrong call is read against a signature that is not the
             // one it will have.
-            if (defined == 0 && callee_proc < 0 && is_columns_new == false
+            if (defined == 0 && callee_proc < 0 && is_columns_zeroed == false
                 && is_supplied == false) {
                 if (call_fault_is_a_repeat(p, node.pos) == false) {
                     report_where(p.modules, p.src, node.pos)

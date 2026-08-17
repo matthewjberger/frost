@@ -102,7 +102,7 @@ emit_asm_copy :: fn(size: i64) {
 
 // Zero `size` bytes at the address in %r10, a word at a time, the way
 // emit_asm_copy moves them. Used to build a zeroed columns container for
-// `columns_new()`.
+// `columns_zeroed()`.
 emit_asm_zero :: fn(size: i64) {
     asm("xorq %rax, %rax")
     mut cleared: i64 = 0
@@ -3039,9 +3039,9 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             emit_asm_zero(type_size(p, ty))
             return
         }
-        // `columns_new()` is a zeroed container. There is no call to make, only
-        // the local's slot to clear.
-        if (is_columns_new_call(p, value)) {
+        // `columns_zeroed()` is a zeroed container. There is no call to make,
+        // only the local's slot to clear.
+        if (is_columns_zeroed_call(p, value)) {
             record_local(p, off, len, ty)
             slot := local_slot(p, off, len)
             asm_i("leaq ", slot, "(%rbp), %r10")

@@ -39,7 +39,7 @@ Each column is named after its field, which gives two accesses.
 to a `[]t` slice for a hot loop at no cost. `c[handle].field` selects the column
 and then indexes it at the handle's slot, the mirror of a pool (which indexes
 storage and then selects the field), under the same bounds-and-generation check
-(10.3). Construction (`columns_new()`), the deref `c[handle].field`, and the
+(10.3). Construction (`columns_zeroed()`), the deref `c[handle].field`, and the
 element scatter `c[handle] = value` are compiler-supplied for the reason
 `pool[handle]` is (10.2): they select a column before indexing, which a
 second-class borrow cannot express. Everything else is a library,
@@ -47,9 +47,9 @@ second-class borrow cannot express. Everything else is a library,
 `storage`, `generations`, `free_list`, `free_count`, `live_words`, and
 `live_count`. See [pools-and-columns.md](../design/pools-and-columns.md).
 
-`slab_new()` is a zeroed `Slab<T, N>` of the type the context wants, the twin of
-`columns_new()`. A slab's array lengths follow from `N`, and the `live_words`
-array's length is `(N + 63) / 64`. Construct with `slab_new()` and then
+`slab_zeroed()` is a zeroed `Slab<T, N>` of the type the context wants, the twin of
+`columns_zeroed()`. A slab's array lengths follow from `N`, and the `live_words`
+array's length is `(N + 63) / 64`. Construct with `slab_zeroed()` and then
 `slab_reset`, the same contract a columns container has.
 
 ## 10.1b `for slot in live_slots(c)`

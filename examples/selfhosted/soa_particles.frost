@@ -22,7 +22,7 @@ sum_x :: fn(xs: []i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut world: columns<Particle, 8> = columns_new()
+    mut world: columns<Particle, 8> = columns_zeroed()
     columns_reset(world)
 
     a := columns_insert(world, Particle { x = 10, y = 1 })

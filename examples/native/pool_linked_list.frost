@@ -33,7 +33,7 @@ sum_list :: fn(mut p: Slab<Node, 16>, head: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut p: Slab<Node, 16> = slab_new()
+    mut p: Slab<Node, 16> = slab_zeroed()
     slab_reset(p)
 
     mut head: i64 = -1

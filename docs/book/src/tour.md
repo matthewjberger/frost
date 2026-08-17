@@ -309,7 +309,7 @@ import "io.frost"
 Entity :: struct { hp: i64, mana: i64 }
 
 main :: fn() -> i64 {
-    mut world: Slab<Entity, 16> = slab_new()
+    mut world: Slab<Entity, 16> = slab_zeroed()
     slab_reset(world)
 
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })
@@ -346,7 +346,7 @@ import "io.frost"
 Particle :: struct { x: i64, y: i64 }
 
 main :: fn() -> i64 {
-    mut world: columns<Particle, 8> = columns_new()
+    mut world: columns<Particle, 8> = columns_zeroed()
     columns_reset(world)
     h := columns_insert(world, Particle { x = 10, y = 1 })
 
@@ -664,7 +664,7 @@ delta :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut world: Slab<Entity, 16> = slab_new()
+    mut world: Slab<Entity, 16> = slab_zeroed()
     slab_reset(world)
 
     player := slab_insert(world, Entity { hp = 100, kind = Kind::Player })

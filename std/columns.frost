@@ -7,7 +7,7 @@
 //
 // `columns<T, N>` is a compiler-synthesized type, one `[N]field` array per
 // field of `T` plus the `generations`/`free_list`/`free_count` bookkeeping.
-// `columns_new()` builds a zeroed one. The deref `c[handle].field` and the
+// `columns_zeroed()` builds a zeroed one. The deref `c[handle].field` and the
 // element scatter `c[handle] = value` are compiler-supplied because they select
 // a column before indexing, which is not writable where a struct is one value.
 // Everything below is ordinary Frost over those, mirroring std/slab.frost, so
@@ -19,7 +19,7 @@ import "slab.frost"
 export columns_reset, columns_full, columns_insert, columns_alive,
     columns_release
 
-// Every slot free, every generation back to zero. Built with `columns_new()`
+// Every slot free, every generation back to zero. Built with `columns_zeroed()`
 // and then reset, since construction cannot run code.
 //
 // `live_words` and `live_count` are the container's record of which slots hold
