@@ -392,6 +392,11 @@ pub struct Parser<'a> {
     // Whether the file being parsed is the runtime, which is the one file that
     // may define a name in the runtime's own name space.
     runtime_names: bool,
+    // The compile-time parameters in scope, one frame per declaration being
+    // read. A length may name one, and a number arrives for it where an
+    // instance is written, so a name in here is a length that is waiting rather
+    // than a name the program binds to nothing.
+    compile_time_names: Vec<std::collections::HashSet<String>>,
 }
 
 // Where a top-level declaration's value ends: at the head of the next one, or
@@ -591,6 +596,7 @@ fn bare_parser(tokens: &[Token]) -> Parser<'_> {
         block_depth: 0,
         bracket_depth: 0,
         runtime_names: false,
+        compile_time_names: Vec::new(),
     }
 }
 
@@ -890,6 +896,7 @@ impl<'a> Parser<'a> {
             block_depth: 0,
             bracket_depth: 0,
             runtime_names: false,
+            compile_time_names: Vec::new(),
         }
     }
 
@@ -959,6 +966,7 @@ impl<'a> Parser<'a> {
             block_depth: 0,
             bracket_depth: 0,
             runtime_names: false,
+            compile_time_names: Vec::new(),
         }
     }
 
@@ -2324,6 +2332,7 @@ impl<'a> Parser<'a> {
                 self.ast.packed_structs.push(symbol);
             }
             let type_params = self.parse_generic_params()?;
+            self.open_compile_time_frame(&type_params);
             if !matches!(self.read_token(), Token::LeftBrace) {
                 bail!("Expected '{{' after struct");
             }
@@ -2358,6 +2367,7 @@ impl<'a> Parser<'a> {
             let name = self.ast.intern(&identifier);
             let type_params = self.intern_all(&type_params);
             let fields = self.ast.add_struct_fields(fields);
+            self.compile_time_names.pop();
             Ok(self.ast.push_stmt(
                 Statement::Struct(name, type_params, fields),
                 self.span_from(start),
@@ -2369,6 +2379,7 @@ impl<'a> Parser<'a> {
             // over an arbitrary element, so `Option<T>` and `Result<T, E>` would
             // have to be rewritten once per element type.
             let type_params = self.parse_generic_params()?;
+            self.open_compile_time_frame(&type_params);
             if !matches!(self.read_token(), Token::LeftBrace) {
                 bail!("Expected '{{' after enum");
             }
@@ -2437,6 +2448,7 @@ impl<'a> Parser<'a> {
             let name = self.ast.intern(&identifier);
             let type_params = self.intern_all(&type_params);
             let variants = self.ast.add_enum_variants(&variants);
+            self.compile_time_names.pop();
             Ok(self.ast.push_stmt(
                 Statement::Enum(name, type_params, variants),
                 self.span_from(start),
@@ -3423,6 +3435,9 @@ impl<'a> Parser<'a> {
                 // parameter, whose number arrives with the instantiation. The
                 // literal is carried unexpanded until then.
                 Token::Identifier(name) => {
+                    if !self.names_a_compile_time_number(name) {
+                        return Err(self.refuse_a_length_naming_nothing(name));
+                    }
                     if !matches!(self.read_token(), Token::RightBracket) {
                         bail!("Expected ']' after an array repeat count");
                     }
@@ -4405,6 +4420,18 @@ impl<'a> Parser<'a> {
     fn parse_function_literal(&mut self) -> Result<ExprId> {
         let start = self.mark();
         self.read_token();
+        // The frame this function's own compile-time parameters go into, open
+        // from the parameter list through the body, which is everywhere one of
+        // them may be written as a length.
+        self.compile_time_names
+            .push(std::collections::HashSet::new());
+        let parsed = self.parse_function_body(&start);
+        self.compile_time_names.pop();
+        parsed
+    }
+
+    fn parse_function_body(&mut self, start: &u32) -> Result<ExprId> {
+        let start = *start;
         let parameters = self.parse_function_parameters()?;
         let return_sig = self.parse_return_signature()?;
         let block = self.parse_block()?;
@@ -4688,6 +4715,39 @@ impl<'a> Parser<'a> {
     // `$T: Type` is a type parameter. `$N: usize` is a value parameter, resolved
     // to a concrete integer at instantiation. Both are recorded by name here,
     // and the argument kind decides which is which.
+    /// The compile-time parameters a declaration binds, opened as a frame the
+    /// declaration's body is read inside. A struct's fields and an enum's
+    /// variants are read where the frame is open, so `[N]T` there names the
+    /// parameter rather than nothing.
+    fn open_compile_time_frame(&mut self, names: &[String]) {
+        self.compile_time_names
+            .push(names.iter().cloned().collect());
+    }
+
+    /// Whether a name written where a compile-time number is read stands for
+    /// one: a constant, or a parameter an instance supplies a number for.
+    fn names_a_compile_time_number(&self, name: &str) -> bool {
+        self.integer_constants.contains_key(name)
+            || self.constant_values.contains_key(name)
+            || self
+                .compile_time_names
+                .iter()
+                .any(|frame| frame.contains(name))
+    }
+
+    /// A name written where a compile-time number is read that the program
+    /// binds to no number. Left to stand, `[Nope]i64` was a type carrying a
+    /// length nothing could ever give it, and what a reader was told came from
+    /// whichever pass asked its size first.
+    fn refuse_a_length_naming_nothing(&self, name: &str) -> anyhow::Error {
+        anyhow::Error::new(crate::diagnostic::LocatedError {
+            position: self.position_at(self.mark() - 1).unwrap_or_default(),
+            message: format!(
+                "'{name}' has no value at compile time, so this cannot be worked out before the program runs"
+            ),
+        })
+    }
+
     fn parse_generic_params(&mut self) -> Result<Vec<String>> {
         let mut type_params = Vec::new();
         if !matches!(self.peek_nth(0), Token::LeftParentheses) {
@@ -4746,6 +4806,9 @@ impl<'a> Parser<'a> {
             _ => bail!("Expected type parameter name after '$'"),
         };
         self.refuse_literal_name(&name)?;
+        if let Some(frame) = self.compile_time_names.last_mut() {
+            frame.insert(name.clone());
+        }
         if !matches!(self.read_token(), Token::Colon) {
             bail!("Expected ':' after type parameter name");
         }
@@ -4902,7 +4965,18 @@ impl<'a> Parser<'a> {
         }
         match self.read_token().clone() {
             Token::Integer(value) => Ok(SizeExpr::Number(value)),
-            Token::Identifier(name) => Ok(SizeExpr::Named(name)),
+            // A type read back from its own `Display` is the compiler talking
+            // to itself, and a template's length is written there as the
+            // parameter's name with no declaration around it to bind.
+            Token::Identifier(name)
+                if self.internal_types
+                    || self.names_a_compile_time_number(&name) =>
+            {
+                Ok(SizeExpr::Named(name))
+            }
+            Token::Identifier(name) => {
+                Err(self.refuse_a_length_naming_nothing(&name))
+            }
             Token::LeftParentheses => {
                 let inner = self.parse_size_expression()?;
                 if !matches!(self.read_token(), Token::RightParentheses) {

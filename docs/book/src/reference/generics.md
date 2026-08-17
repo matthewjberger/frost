@@ -235,6 +235,14 @@ Naming the list in an argument list hands over its elements. One generic passes
 its list on to another this way:
 
 ```frost
+total :: fn(values: $...) -> i64 {
+    mut sum := 0
+    for v in values {
+        sum = sum + v
+    }
+    sum
+}
+
 passed_on :: fn(values: $...) -> i64 {
     total(values)
 }

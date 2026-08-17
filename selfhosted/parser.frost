@@ -282,7 +282,10 @@ array_repeat_count :: fn(mut p: Parser) -> i64 {
     }
     if (named == false) {
         report_where(p.modules, p.src, cur_off(p))
-        report("an array repeat count has to be a literal, a constant, or a value parameter of the generic it is written in")
+        report("'")
+        report_src(p.src, cur_off(p), cur_len(p))
+        report("' has no value at compile time, so this cannot be ")
+        report("worked out before the program runs")
         frost_rt_recover_escape()
     }
     if (total < 0) {
@@ -5481,6 +5484,20 @@ const_size_here :: fn(mut p: Parser) -> i64 {
 // A number, a name standing for one, a call this program can work out, or a
 // bracketed length. A call is run here rather than left written down, which is
 // what keeps a length one thing rather than two.
+// Whether a name written as a length stands for a number an instance supplies:
+// a compile-time parameter of the generic being read, or one already bound to
+// something while its body is read again.
+length_waits_for_an_instance :: fn(
+    mut p: Parser,
+    offset: i64,
+    length: i64
+) -> bool {
+    if (binding_of(p, offset, length) >= 0) {
+        return true
+    }
+    names_gparam(p, offset, length)
+}
+
 parse_size_atom :: fn(mut p: Parser) -> i64 {
     if (cur(p) == TokenKind::Lparen) {
         advance(p)
@@ -5516,6 +5533,19 @@ parse_size_atom :: fn(mut p: Parser) -> i64 {
     // to anything yet, and every `[N]u8` in the standard library reads that way
     // until an instance supplies one.
     if (is_const(p, cur_off(p), cur_len(p)) == false) {
+        // A name the program binds to nothing at all is not a length waiting
+        // for an instance to supply one. Left unknown, `[Nope]i64` was a type
+        // carrying a length nothing could ever give it, and what a reader was
+        // told came from whichever pass asked its size first.
+        if (length_waits_for_an_instance(p, cur_off(p), cur_len(p))
+            == false) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("'")
+            report_src(p.src, cur_off(p), cur_len(p))
+            report("' has no value at compile time, so this cannot be ")
+            report("worked out before the program runs")
+            frost_rt_recover_escape()
+        }
         p.size_known = 0
     }
     held := const_value(p, cur_off(p), cur_len(p))

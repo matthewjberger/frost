@@ -4059,6 +4059,12 @@ fn the_standard_library_passes_its_own_tests() {
             unique(&format!("frost_{label}")),
             std::env::consts::EXE_SUFFIX
         ));
+        // A directory of this job's own. `fs.frost` writes a scratch file by a
+        // relative name, and four of these run the same module at once, so a
+        // shared working directory had one job removing the file another had
+        // just written.
+        let workspace = directory.join(unique("frost_std_work"));
+        std::fs::create_dir_all(&workspace).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
         if *emit_c {
             command.arg("--emit-c");
@@ -4068,6 +4074,7 @@ fn the_standard_library_passes_its_own_tests() {
             .arg("-o")
             .arg(&exe)
             .arg(root.join("std").join(module))
+            .current_dir(&workspace)
             .output()
             .unwrap();
         let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
@@ -4080,6 +4087,7 @@ fn the_standard_library_passes_its_own_tests() {
             ))
         };
         let _ = std::fs::remove_file(&exe);
+        let _ = std::fs::remove_dir_all(&workspace);
         held
     });
     let faults: Vec<String> = faults.into_iter().flatten().collect();
@@ -4129,6 +4137,8 @@ fn self_hosted_runs_the_standard_library_tests() {
             unique(&format!("frost_{label}")),
             std::env::consts::EXE_SUFFIX
         ));
+        let workspace = directory.join(unique("frost_std_work"));
+        std::fs::create_dir_all(&workspace).unwrap();
         let run = Command::new(&compiler)
             .arg(backend)
             .arg("--test")
@@ -4137,6 +4147,7 @@ fn self_hosted_runs_the_standard_library_tests() {
             .arg(root.join("std").join(module))
             .env("FROST_RUNTIME", &runtime)
             .env("FROST_RUNTIME_FROST", frost_runtime_source())
+            .current_dir(&workspace)
             .output()
             .unwrap();
         let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
@@ -4149,6 +4160,7 @@ fn self_hosted_runs_the_standard_library_tests() {
             ))
         };
         let _ = std::fs::remove_file(&exe);
+        let _ = std::fs::remove_dir_all(&workspace);
         held
     });
     let faults: Vec<String> = faults.into_iter().flatten().collect();

@@ -57,6 +57,40 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A name written where a compile-time number is read that the program binds
+    // to no number. Left to stand, `[Nope]i64` was a type carrying a length
+    // nothing could ever give it, and what a reader was told came from
+    // whichever pass asked its size first.
+    (
+        "a_length_naming_nothing_in_a_field",
+        "S :: struct { cells: [Nope]i64 }
+         main :: fn() -> i64 { 0 }
+        ",
+        "'Nope' has no value at compile time",
+    ),
+    (
+        "a_length_naming_nothing_in_a_parameter",
+        "f :: fn(v: [Nope]i64) -> i64 { v[0] }
+         main :: fn() -> i64 { 0 }
+        ",
+        "'Nope' has no value at compile time",
+    ),
+    // A local holds a number while the program runs, and a length is settled
+    // before it does.
+    (
+        "a_length_naming_a_local",
+        "main :: fn() -> i64 { n := 4  mut held: [n]i64 = [0; 4]  held[0] }
+        ",
+        "'n' has no value at compile time",
+    ),
+    // The count of a repeated element is read the same way a length is, and
+    // said with the same sentence.
+    (
+        "a_repeat_count_naming_nothing",
+        "main :: fn() -> i64 { mut held: [4]i64 = [0; Nope]  held[0] }
+        ",
+        "'Nope' has no value at compile time",
+    ),
     // A generic nothing instantiates. Its body is skipped where it is written
     // and read again per instance, so nothing read it at all: a field naming a
     // type the program does not declare, a length calling something over the
