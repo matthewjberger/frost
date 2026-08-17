@@ -1129,6 +1129,8 @@ main :: fn() -> i64 {
         type_cache = arena_make($TypeCacheEntry, 262144),
         type_cache_on = 0,
         type_check_names = 0,
+        pending_type_names = arena_make($Cap, 256),
+        name_report_at = -1,
         bracket_depth = 0,
         loop_depth = 0,
     }

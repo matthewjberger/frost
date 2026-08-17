@@ -2397,6 +2397,15 @@ Parser :: struct {
     // declarations are being read, since a name declared further down the file
     // is not yet in the table.
     type_check_names: i64,
+    // Type names read before every declaration was in the tables, so a name
+    // that resolved to nothing there may still be declared further down. Each
+    // is asked again once they are all in, which is where a name nothing
+    // declares is finally one.
+    pending_type_names: Arena<Cap>,
+    // Where a report about a type name goes, where that is not the name
+    // itself. A field is pointed at where its type starts, so `[N]Nope` names
+    // `Nope` and puts the caret on the `[`. -1 says the name is its own place.
+    name_report_at: i64,
     // How many brackets are open, so an expression knows whether a line break
     // between its parts says anything.
     bracket_depth: i64,

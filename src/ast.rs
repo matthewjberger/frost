@@ -388,6 +388,10 @@ pub struct StructField {
     // said so. A layout the program stated rather than one worked out from the
     // type, which is the only reason it is here and not in the type.
     pub align: Option<usize>,
+    // Where the type was written. A report about a type the program does not
+    // declare names the word the reader wrote, and the declaration's own place
+    // put the caret on the struct rather than on the field.
+    pub at: crate::lexer::Position,
 }
 
 // A variant's fields are a run in `struct_fields`; a unit variant records
@@ -1402,6 +1406,7 @@ impl<'a> Splicer<'a> {
                 // A stated alignment is part of the declaration, so it crosses
                 // with the field rather than being worked out again.
                 align: field.align,
+                at: field.at,
             })
             .collect();
         dest.add_struct_fields(copied)

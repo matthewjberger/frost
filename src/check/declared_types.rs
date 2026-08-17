@@ -58,10 +58,13 @@ pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
             }
             Statement::Struct(_, _, fields) => {
                 for field in ast.fields_in(*fields) {
+                    // At the type the field names. The declaration's own place
+                    // put the caret on the struct, which is not the word the
+                    // reader has to change.
                     report_unknown(
                         &field.field_type,
                         &known,
-                        position,
+                        field.at,
                         &mut found,
                     );
                 }

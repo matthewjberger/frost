@@ -3575,7 +3575,29 @@ parse_struct_fields :: fn(mut p: Parser, packed: i64) -> i64 {
         field_offset := cur_off(p)
         field_length := cur_len(p)
         advance(p)
+        // Where the field's type begins, which is the token past the colon the
+        // cursor stands on. A name inside a type that nothing declares is
+        // reported at the type rather than at the word, so `[N]Nope` is named
+        // where a reader would go looking for it.
+        type_at := peek_off(p, 1)
+        pending_mark := p.pending_type_names.count
+        // Read with the naming check off, so a name inside the type is written
+        // down rather than said where it was met. Each is then said at the
+        // type, which is what a reader is pointed at for a field: `[N]Nope` is
+        // named where the field's type starts.
+        held_check := p.type_check_names
+        p.type_check_names = 0
         field_ty := parse_type_annotation(p)
+        p.type_check_names = held_check
+        mut moved := pending_mark
+        while (moved < p.pending_type_names.count) {
+            mut held := arena_at(p.pending_type_names, moved)
+            held.ty = type_at
+            moved = moved + 1
+        }
+        if (held_check == 1) {
+            recheck_pending_type_names(p, pending_mark)
+        }
         field_align := parse_field_alignment(p, packed)
         field := arena_push(
             p.fields,
@@ -11097,6 +11119,7 @@ parse_program :: fn(mut p: Parser) -> i64 {
     // Every declaration is in the tables now, so a type name that resolves to
     // nothing is a name nothing declares.
     p.type_check_names = 1
+    recheck_pending_type_names(p, 0)
     p.ti = start
     parse_layout_constants(p)
     p.ti = start

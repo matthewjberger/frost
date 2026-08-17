@@ -5002,6 +5002,18 @@ Holder :: struct { a: i64, b: i64 }
         "'loops' reaches itself, and a bound is answered by reading it, which \
          never ends",
     ),
+    // A field naming a type nothing declares, in a struct nothing uses. The
+    // fields are read while the declarations are still being collected, so a
+    // name that resolves to nothing there may still be declared further down:
+    // the question is asked again once they are all in, rather than answered
+    // with `i64` and forgotten.
+    (
+        "a_struct_field_naming_a_type_nothing_declares",
+        "P :: struct { x: Nope }
+         main :: fn() -> i64 { 0 }
+",
+        "'Nope' is not a type this program declares",
+    ),
 ];
 
 // One arena, one carve, and the three ways the pointer leaves the block. Held

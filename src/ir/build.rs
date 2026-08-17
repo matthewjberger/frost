@@ -4954,6 +4954,7 @@ fn expand_generic_structs(
                                 name: ast.intern(field_name),
                                 field_type: field_type.clone(),
                                 align: None,
+                                at: crate::lexer::Position::default(),
                             })
                             .collect();
                         ast.add_struct_fields(entries)
@@ -5033,6 +5034,7 @@ fn expand_generic_structs(
                     name: ast.intern(field_name),
                     field_type: field_type.clone(),
                     align: None,
+                    at: crate::lexer::Position::default(),
                 })
                 .collect();
             let name = ast.intern(&instance);
@@ -5068,6 +5070,7 @@ fn expand_generic_structs(
                 name: ast.intern(field_name),
                 field_type: field_type.clone(),
                 align: None,
+                at: crate::lexer::Position::default(),
             })
             .collect();
         let name = ast.intern(&instance);

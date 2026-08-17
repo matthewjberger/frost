@@ -2335,6 +2335,7 @@ impl<'a> Parser<'a> {
                         bail!("Expected ':' after field name");
                     }
                     self.refuse_field_sigil(&field_name)?;
+                    let field_at = self.current_position().unwrap_or_default();
                     let field_type = self.parse_type()?;
                     let field_align = self.parse_field_alignment(packed)?;
                     let field_name = self.ast.intern(&field_name);
@@ -2342,6 +2343,7 @@ impl<'a> Parser<'a> {
                         name: field_name,
                         field_type,
                         align: field_align,
+                        at: field_at,
                     });
                 }
                 if matches!(self.peek_nth(0), Token::Comma) {
@@ -2389,6 +2391,8 @@ impl<'a> Parser<'a> {
                             );
                         }
                         self.refuse_field_sigil(&field_name)?;
+                        let field_at =
+                            self.current_position().unwrap_or_default();
                         let field_type = self.parse_type()?;
                         let field_name = self.ast.intern(&field_name);
                         variant_fields.push(StructField {
@@ -2397,6 +2401,7 @@ impl<'a> Parser<'a> {
                             // A variant's payload is laid out by the enum, not
                             // by a declaration, so there is nothing to state.
                             align: None,
+                            at: field_at,
                         });
                         if matches!(self.peek_nth(0), Token::Comma) {
                             self.read_token();

@@ -51,6 +51,7 @@ pub fn lower_multiple_returns(
                 name: ast.intern(&field_name),
                 field_type,
                 align: None,
+                at: crate::lexer::Position::default(),
             });
         }
         let fields = ast.add_struct_fields(fields);

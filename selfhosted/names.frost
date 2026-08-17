@@ -48,7 +48,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
     synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name, synth_bytes, type_text, place_text, instance_text,
     synth_result_name, report_base_type_name,
-    type_code_for
+    type_code_for, recheck_pending_type_names
 
 // Whether there is room for `wanted` more bytes past the source, said here
 // rather than found out by writing over whatever follows the buffer. The room
@@ -2153,6 +2153,22 @@ record_columns :: fn(mut p: Parser, element: i64, container: i64) {
 // TY_PARAM placeholder), a primitive keyword, or the named struct. A generic
 // template struct is not returned here. `Name<Arg>` instantiation is handled in
 // parse_type. An unknown name falls back to i64.
+// Every type name read before the tables were full, asked again now that they
+// are. A struct's fields are read while the declarations are still being
+// collected, so a field naming a type nothing declares said nothing at all: the
+// name answered `i64` and the program went through every pass without a word.
+recheck_pending_type_names :: fn(mut p: Parser, from: i64) {
+    mut i: i64 = from
+    while (i < p.pending_type_names.count) {
+        held := arena_at(p.pending_type_names, i)
+        p.name_report_at = held.ty
+        type_code_for(p, held.off, held.len)
+        p.name_report_at = -1
+        i = i + 1
+    }
+    p.pending_type_names.count = from
+}
+
 type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     // The predeclared names come first, so a primitive means its type
     // wherever a type is read and no binding or alias can redeclare it,
@@ -2225,12 +2241,27 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     // without a word.
     // `Type` is what a compile-time parameter is declared as, not a type a
     // program can hold, so it is read here and named nowhere.
+    // Read before the tables were full. A name declared further down the file
+    // resolves once they are, so this is written down rather than answered:
+    // the same question is asked again where every declaration is in.
+    if (p.type_check_names == 0 && p.gbindings.count == 0
+        && names_gparam(p, offset, length) == false
+        && str_range_eq(p.src, offset, length, "Type") == false) {
+        arena_push(
+            p.pending_type_names,
+            Cap { ty = -1, off = offset, len = length }
+        )
+    }
     if (p.type_check_names == 1 && p.gbindings.count == 0
         && names_gparam(p, offset, length) == false
         && str_range_eq(p.src, offset, length, "Type") == false
         && said_unknown_before(p, offset) == false) {
         arena_push(p.said_unknown, Cap { ty = 0, off = offset, len = length })
-        report_where(p.modules, p.src, offset)
+        mut said_at := offset
+        if (p.name_report_at >= 0) {
+            said_at = p.name_report_at
+        }
+        report_where(p.modules, p.src, said_at)
         report("'")
         report_src(p.src, offset, length)
         report("' is not a type this program declares")
