@@ -920,7 +920,14 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         } else {
             if (node.a != (-1)) {
                 first := arena_at(p.arena, node.a)
-                element = type_of(p, first.a)
+                // Text lowers as a `^i8` and reads as a `str`. A run of it
+                // holds the second: read as the first, `a := ["x", "y"]` gave
+                // an element nothing can be written to a format string.
+                if (arena_at(p.arena, first.a).kind == NodeKind::StrLit) {
+                    element = array_of(p, TY_U8, -1)
+                } else {
+                    element = type_of(p, first.a)
+                }
             }
         }
         return array_of(p, element, node.c)
@@ -2943,6 +2950,21 @@ argument_type :: fn(mut p: Parser, value: i64) -> i64 {
 // wrote the parameter inside brackets, so what it binds to is the argument's
 // element rather than the argument, and 2 where it wrote it inside a generic
 // struct's argument list, so what it binds to is that instance's own argument.
+// An array type this program already names, or -1. Unlike `array_of` this
+// writes nothing: a type asked about while a call is weighed is one the program
+// already has, and interning here would renumber every array declared after it.
+existing_array_of :: fn(mut p: Parser, element: i64, length: i64) -> i64 {
+    mut i: i64 = 0
+    while (i < p.arrays.count) {
+        entry := arena_at(p.arrays, i)
+        if (entry.element == element && entry.length == length) {
+            return ARRAY_BASE + i
+        }
+        i = i + 1
+    }
+    -1
+}
+
 call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64, through: i64) -> i64 {
     mut id := args
     mut seen: i64 = 0
@@ -2958,6 +2980,20 @@ call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64, through: i64) -> i64 {
             continue
         }
         if (seen == at) {
+            // A text literal lowers as a `^i8` and reads as a `str`, and what a
+            // compile-time parameter is settled to is the second. Peeled as a
+            // pointer it settled `i8`, so `is_numeric(T)` held of it and a
+            // bound written to keep text out let text through.
+            //
+            // The type is looked up rather than interned: a program that names
+            // no `str` has none to settle to, and writing one here would number
+            // every array type after it differently.
+            if (arena_at(p.arena, value).kind == NodeKind::StrLit) {
+                text := existing_array_of(p, TY_U8, -1)
+                if (text >= 0) {
+                    return read_through(p, text, through)
+                }
+            }
             mut held := argument_type(p, value)
             if (is_pointer(held)) {
                 held = pointee(p, held)

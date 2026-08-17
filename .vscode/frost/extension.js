@@ -447,8 +447,12 @@ const hoverProvider = {
 // Formatting is `frost fmt -`: the compiler reads the buffer on standard input
 // and writes its one rendering to standard output, so the editor and the build
 // agree by running the same code rather than by keeping two of it. The whole
-// document is replaced, and a compiler that is not on PATH or that fails leaves
-// the buffer alone.
+// document is replaced.
+//
+// A compiler that cannot be run leaves the buffer alone and says so. Said
+// rather than swallowed: returning nothing is what an already-formatted buffer
+// returns too, so a `frost` that is not on PATH looked exactly like a file with
+// nothing to change, and the setting to point at one is named in the message.
 const documentFormattingProvider = {
   provideDocumentFormattingEdits(document) {
     const compiler = vscode.workspace
@@ -462,6 +466,11 @@ const documentFormattingProvider = {
         maxBuffer: 64 * 1024 * 1024,
       });
     } catch (error) {
+      const reason =
+        error && error.code === "ENOENT"
+          ? `'${compiler}' was not found; set frost.compilerPath to the compiler`
+          : (error && error.stderr) || (error && error.message) || "it failed";
+      vscode.window.showErrorMessage(`frost fmt did not run: ${reason}`);
       return undefined;
     }
     if (written === document.getText()) {

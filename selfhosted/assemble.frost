@@ -2389,7 +2389,7 @@ read_double :: fn(mut unit: Assembly, at: i64) -> i64 {
             }
             step = step + 1
         }
-        bits = double_from_big(digits, - (scale + places), sticky, negative)
+        bits = double_from_big(digits, -(scale + places), sticky, negative)
     }
     mut k: i64 = 0
     while (k < 8) {

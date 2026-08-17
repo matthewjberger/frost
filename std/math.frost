@@ -333,9 +333,9 @@ mat4_ortho :: fn(
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = -2.0 / (far - near)
-    out.m[12] = - (right + left) / (right - left)
-    out.m[13] = - (top + bottom) / (top - bottom)
-    out.m[14] = - (far + near) / (far - near)
+    out.m[12] = -(right + left) / (right - left)
+    out.m[13] = -(top + bottom) / (top - bottom)
+    out.m[14] = -(far + near) / (far - near)
     out
 }
 
@@ -355,8 +355,8 @@ mat4_ortho_zo :: fn(
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = -1.0 / (far - near)
-    out.m[12] = - (right + left) / (right - left)
-    out.m[13] = - (top + bottom) / (top - bottom)
+    out.m[12] = -(right + left) / (right - left)
+    out.m[13] = -(top + bottom) / (top - bottom)
     out.m[14] = -near / (far - near)
     out
 }
@@ -377,8 +377,8 @@ mat4_ortho_reverse_z :: fn(
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = 1.0 / (far - near)
-    out.m[12] = - (right + left) / (right - left)
-    out.m[13] = - (top + bottom) / (top - bottom)
+    out.m[12] = -(right + left) / (right - left)
+    out.m[13] = -(top + bottom) / (top - bottom)
     out.m[14] = far / (far - near)
     out
 }

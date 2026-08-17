@@ -315,6 +315,13 @@ spaced :: fn(
     if (left == TokenKind::Lparen || left == TokenKind::Lbracket) {
         return right == TokenKind::Lbrace
     }
+    // A minus or a bang in front of a value signs or negates it. Asked before
+    // the brackets below, which see only that an open one follows and let a
+    // space in: `!a` was written tight and `!(a == 3)` was not.
+    if ((left == TokenKind::Minus || left == TokenKind::Bang)
+        && ends_a_value(before) == false) {
+        return false
+    }
     if (right == TokenKind::Lparen || right == TokenKind::Lbracket) {
         if (left == TokenKind::Ident || left == TokenKind::Rparen
             || left == TokenKind::Rbracket || left == TokenKind::KwFn
@@ -322,10 +329,6 @@ spaced :: fn(
             return false
         }
         return true
-    }
-    if ((left == TokenKind::Minus || left == TokenKind::Bang)
-        && ends_a_value(before) == false) {
-        return false
     }
     // A dot binds to what is either side of it, so `a.b` is written tight. A
     // value under a type carries the type, so a leading `.` is refused; the

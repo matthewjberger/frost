@@ -2586,6 +2586,19 @@ fn readable_type_name(name: &str) -> String {
 }
 
 // The struct a `{ x = 1 }` builds, taken from what the context expects.
+// Whether an expression is written as a value with no type of its own, which
+// the place it lands in gives one to. Such a value is held to what was written
+// rather than to what it would answer with on its own.
+fn takes_its_type_from_context(ast: &Ast, expression: ExprId) -> bool {
+    match ast.expr(expression) {
+        Expression::Literal(_) | Expression::Boolean(_) => true,
+        Expression::Prefix(crate::parser::Operator::Negate, inner) => {
+            takes_its_type_from_context(ast, *inner)
+        }
+        _ => false,
+    }
+}
+
 fn name_inferred_literal(
     ast: &mut Ast,
     expression: ExprId,
@@ -4322,6 +4335,22 @@ fn infer_expr_type_shallow(
         Expression::Boolean(_) | Expression::Literal(Literal::Boolean(_)) => {
             Some(Type::Bool)
         }
+        // A run of bytes, which is what `str` is, and a run written out. Both
+        // answer with a type of their own rather than taking one from the
+        // context.
+        Expression::Literal(Literal::String(_)) => Some(Type::Str),
+        Expression::Literal(Literal::Array(elements)) => {
+            let elements = ast.exprs_in(*elements);
+            let first = elements.first()?;
+            let held = infer_expr_type_shallow(ast, *first, env, discovery)?;
+            Some(Type::Array(Box::new(held), elements.len()))
+        }
+        // A number written with a minus in front is that number. Left out, the
+        // parameter it settles stayed the name it was declared under, so
+        // `typename(T)` answered with `T`.
+        Expression::Prefix(crate::parser::Operator::Negate, inner) => {
+            infer_expr_type_shallow(ast, *inner, env, discovery)
+        }
         Expression::Identifier(name) => env.get(ast.name(*name)).cloned(),
         Expression::StructInit(name, fields) => {
             let name = ast.name(*name);
@@ -5405,6 +5434,10 @@ fn array_element_type(
         Some(Expression::Literal(Literal::Float32(_))) => Type::F32,
         Some(Expression::Literal(Literal::Boolean(_)))
         | Some(Expression::Boolean(_)) => Type::Bool,
+        // Text written down is a run of bytes. Left out, a run of it fell to
+        // the whole number below and every element was refused for being text
+        // where a number goes.
+        Some(Expression::Literal(Literal::String(_))) => Type::Str,
         Some(Expression::StructInit(name, _)) => {
             Type::Struct(ast.name(*name).to_string())
         }
@@ -9423,7 +9456,14 @@ impl<'a> FunctionLowering<'a> {
                     );
                 }
             }
+            // A literal is left to the rule above, which asks what it was
+            // written as rather than what it answers with. What it answers with
+            // is what settles a compile-time parameter, and it is the type it
+            // holds where nothing else says: text reaching a `^i8` is that same
+            // text, and comparing the two here refuses every call into C that
+            // hands over a word.
             if let Some(target) = expected
+                && !takes_its_type_from_context(self.ast, *argument)
                 && let Some(given) = self.answer_type(*argument)
             {
                 let wanted = match target {
@@ -10276,6 +10316,30 @@ impl<'a> FunctionLowering<'a> {
         }
         match self.ast.expr(expression) {
             Expression::Call(..) => self.call_answer_type(expression),
+            // What a literal answers with where nothing else says. A number
+            // takes the type the context wants and this is the type it holds
+            // where the context wants nothing, which is what a `$T` settled by
+            // one asks for: a `str` is not a copy value, so it stays a
+            // borrowed parameter and this is the only thing asked what it
+            // holds.
+            Expression::Literal(Literal::Integer(_)) => Some(Type::I64),
+            Expression::Literal(Literal::Float(_)) => Some(Type::F64),
+            Expression::Literal(Literal::Float32(_)) => Some(Type::F32),
+            Expression::Boolean(_)
+            | Expression::Literal(Literal::Boolean(_)) => Some(Type::Bool),
+            Expression::Literal(Literal::String(_)) => Some(Type::Str),
+            // A run written out. Its elements all hold one type, so the first
+            // says what the run holds and the count says how long it is.
+            Expression::Literal(Literal::Array(elements)) => {
+                let elements = self.ast.exprs_in(*elements);
+                let first = elements.first()?;
+                let held = self.answer_type(*first)?;
+                Some(Type::Array(Box::new(held), elements.len()))
+            }
+            // A number written with a minus in front is that number.
+            Expression::Prefix(crate::parser::Operator::Negate, inner) => {
+                self.answer_type(*inner)
+            }
             Expression::StructInit(name, _) => {
                 Some(Type::Struct(self.ast.name(*name).to_string()))
             }

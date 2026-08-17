@@ -529,6 +529,12 @@ fn spaced(
     if matches!(left, Token::LeftParentheses | Token::LeftBracket) {
         return matches!(right, Token::LeftBrace);
     }
+    // A minus or a bang in front of a value signs or negates it. Asked before
+    // the brackets below, which see only that an open one follows and let a
+    // space in: `!a` was written tight and `!(a == 3)` was not.
+    if matches!(left, Token::Minus | Token::Bang) && !ends_a_value(before) {
+        return false;
+    }
     if matches!(right, Token::LeftParentheses | Token::LeftBracket) {
         // A name or a closing bracket in front of an open one is a call or an
         // index and takes no space; a keyword takes one, apart from the two that
@@ -541,10 +547,6 @@ fn spaced(
                 | Token::Function
                 | Token::Struct
         );
-    }
-    // A minus or a bang in front of a value signs or negates it.
-    if matches!(left, Token::Minus | Token::Bang) && !ends_a_value(before) {
-        return false;
     }
     // A dot binds to what is either side of it, so `a.b` and the `.Variant`
     // that takes its enum from the context are both written tight. After
@@ -1416,6 +1418,118 @@ main :: fn() -> i64 {
     fn a_string_literal_is_left_alone() {
         let source = "greeting :: \"a  b   c\"\n";
         assert_eq!(format(source), source);
+    }
+
+    // Every shape the surface has, run through the formatter twice. A
+    // formatter that settles on a second reading is one a reader can run
+    // without watching it, and this is the property the corpus gate rests on
+    // for the files it happens to hold rather than for the language.
+    const SHAPES: &[(&str, &str)] = &[
+        ("an assignment", "main :: fn() -> i64 {\n    mut a: i64 = 1\n    a = a + 2 * 3 - 4 / 5 % 6\n    a\n}\n"),
+        ("a comparison", "main :: fn() -> i64 {\n    a := 1\n    b := a < 2 && a > 0 || !(a == 3)\n    b\n}\n"),
+        ("a shift and a mask", "main :: fn() -> i64 {\n    a := 1\n    a & 2 | a << 1 >> 2\n}\n"),
+        ("a negation", "main :: fn() -> i64 {\n    a := -3\n    b := -a\n    b\n}\n"),
+        ("a call inside a call", "main :: fn() -> i64 {\n    x := foo(1, 2, bar(3, 4))\n    x\n}\n"),
+        ("a struct declaration", "P :: struct { x: i64, y: i64 }\n"),
+        ("a packed struct", "P :: packed struct { a: u8, b: i64 }\n"),
+        ("an enum declaration", "K :: enum { A, B, C }\n"),
+        ("a distinct type", "M :: distinct i64\n"),
+        ("a struct literal", "P :: struct { x: i64 }\nmain :: fn() -> i64 {\n    p := P { x = 1 }\n    p.x\n}\n"),
+        ("a match", "K :: enum { A, B }\nmain :: fn() -> i64 {\n    k := K::A\n    match (k) {\n        case K::A { 0 }\n        case K::B { 1 }\n    }\n}\n"),
+        ("a compile-time parameter", "hold :: fn($T: Type, v: $T) -> T { v }\n"),
+        ("an array type and a repeat", "main :: fn() -> i64 {\n    a: [4]i64 = [0; 4]\n    b := [1, 2, 3]\n    a[0] + b[1]\n}\n"),
+        ("a pointer type", "main :: fn() -> i64 {\n    n: i64 = 1\n    p: ^i64 = ptr_to(n)\n    0\n}\n"),
+        ("an if chain", "main :: fn() -> i64 {\n    if (1 > 0) { 0 } else if (2 > 1) { 1 } else { 2 }\n}\n"),
+        ("a while with a break", "main :: fn() -> i64 {\n    mut i: i64 = 0\n    while (i < 3) {\n        if (i == 1) { break }\n        i = i + 1\n    }\n    i\n}\n"),
+        ("a defer", "main :: fn() -> i64 {\n    defer {}\n    0\n}\n"),
+        ("an unsafe block", "main :: fn() -> i64 {\n    n: i64 = 1\n    p: ^i64 = ptr_to(n)\n    unsafe { p^ }\n}\n"),
+        ("a when block", "when (TARGET_WINDOWS) {\n    NAME :: \"windows\"\n} else {\n    NAME :: \"other\"\n}\n"),
+        ("an import and an export", "import \"io.frost\"\nexport a, b, c\n"),
+        ("a failure set", "K :: enum { Bad }\nf :: fn() -> i64 ! K { 1 }\n"),
+    ];
+
+    #[test]
+    fn every_shape_settles_on_a_second_reading() {
+        for (named, source) in SHAPES {
+            let once = format(source);
+            assert_eq!(
+                format(&once),
+                once,
+                "{named} reads differently the second time"
+            );
+        }
+    }
+
+    // The corpus is written the way the formatter writes it, and so are these.
+    // A shape that comes back changed is one the formatter and the tree
+    // disagree about, which is what the corpus gate cannot say about a
+    // construct no file in the tree happens to use.
+    #[test]
+    fn every_shape_is_already_what_the_formatter_writes() {
+        for (named, source) in SHAPES {
+            assert_eq!(format(source), *source, "{named} is written differently");
+        }
+    }
+
+    // A bang binds to what it negates, whatever follows it. Read after the
+    // rule for an opening bracket, `!a` came out tight and `!(a == 3)` came out
+    // with a space, so one operator was written two ways.
+    #[test]
+    fn a_bang_binds_to_what_it_negates() {
+        let source = "main :: fn() -> i64 {\n    a := 3\n    b := !(a == 3)\n    c := !b\n    d := a - (a + 1)\n    e := -(a)\n    d + e\n}\n";
+        assert_eq!(format(source), source);
+    }
+
+    // A carriage return is not what the formatter writes, so a file checked out
+    // with them comes back without them. A tree that keeps them is a tree where
+    // every file differs from its own formatting.
+    #[test]
+    fn carriage_returns_do_not_survive() {
+        let source = "main :: fn() -> i64 {\r\n    x := 1\r\n    x\r\n}\r\n";
+        let written = format(source);
+        assert!(!written.contains('\r'), "a carriage return came back");
+        assert_eq!(written, "main :: fn() -> i64 {\n    x := 1\n    x\n}\n");
+    }
+
+    // Nothing to write is nothing written. A final newline is what every other
+    // file gets, and a file with no bytes has no line to end.
+    #[test]
+    fn a_source_of_nothing_stays_nothing() {
+        assert_eq!(format(""), "");
+        assert_eq!(format("\n\n   \n"), "");
+    }
+
+    // A declaration inside a `when` is a declaration, spaced the way one at the
+    // top of a file is. The block a `when` holds is not a body, so a formatter
+    // that reads it as one writes `NAME::"windows"`.
+    #[test]
+    fn a_declaration_inside_a_when_is_spaced() {
+        let source = "when (TARGET_WINDOWS) {\n    NAME :: \"windows\"\n    width :: fn() -> i64 { 64 }\n} else {\n    NAME :: \"other\"\n    width :: fn() -> i64 { 32 }\n}\n";
+        assert_eq!(format(source), source);
+    }
+
+    // What the formatter is asked for most: a file written with no spaces at
+    // all comes back as the one rendering, and reading that again changes
+    // nothing.
+    #[test]
+    fn a_source_written_tight_comes_back_spaced() {
+        let source = "P::struct{x:i64,y:i64}\nmain::fn()->i64{\nmut  p:P=P{x=1,y=2}\nif(p.x>0){p.y=3}\np.x+p.y\n}\n";
+        let written = format(source);
+        assert_eq!(
+            written,
+            "P :: struct { x: i64, y: i64 }\nmain :: fn() -> i64 {\n    mut p: P = P { x = 1, y = 2 }\n    if (p.x > 0) { p.y = 3 }\n    p.x + p.y\n}\n"
+        );
+        assert_eq!(format(&written), written);
+    }
+
+    // `formatted` is what the corpus gate asks, and it has to answer for the
+    // same reading `format` writes.
+    #[test]
+    fn formatted_agrees_with_format() {
+        for (named, source) in SHAPES {
+            assert!(formatted(source), "{named} is not reported as formatted");
+        }
+        assert!(!formatted("main::fn()->i64{0}\n"));
     }
 
     #[test]
