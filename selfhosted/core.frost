@@ -33,7 +33,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     CONST_INT, CONST_BOOL, CONST_ARRAY, CONST_RECORD, CONST_TEXT, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, FormatCall,
-    TypeCacheEntry, UnsafeSpan,
+    TypeCacheEntry, UnsafeSpan, IndirectCall,
     Variant,
     add_root, add_layer, Layer, Generator, layer_of, path_under,
     arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
@@ -1463,6 +1463,21 @@ LocalVar :: struct {
 // The source span of one `unsafe { ... }`. The gate is a question about where a
 // node was written, and a name here is already an offset into one buffer, so a
 // span answers it without giving every node a flag of its own.
+// One call that goes to a value rather than to a name. Found by a walk over the
+// arena and said once the function holding it has been weighed, because the
+// other compiler reaches such a call while lowering a body and stops at the
+// first thing wrong with a function: a fault written above the call is said in
+// its place, and a call written above a fault is said in place of the fault.
+IndirectCall :: struct {
+    // Where the callee is written, which is where the report is placed.
+    at: i64,
+    // The function the call names, for the form that says what that name holds.
+    // -1 where the callee is an expression and the report says only that.
+    sym: i64,
+    // Whether the function holding it has been weighed and this answered.
+    decided: i64,
+}
+
 UnsafeSpan :: struct {
     start: i64,
     end: i64,
@@ -2225,6 +2240,13 @@ Parser :: struct {
     // since a warning about a call and a refusal about a frame are two things
     // and one may not silence the other.
     indirect_reported: Arena<LocalVar>,
+    // Every call that goes to a value, found before the types are weighed and
+    // said after them, so the earliest fault in a function is the one it says.
+    indirect_calls: Arena<IndirectCall>,
+    // Where the call the function being weighed is refused at is written, so
+    // the type walk stops there rather than reading statements the other
+    // compiler never reaches. -1 where the function holds no such call.
+    halt_at: i64,
     // The declared or inferred type of each parameter and local, in `ty`. The
     // frame check runs before the type pass, so it carries its own.
     walk_types: Arena<LocalVar>,

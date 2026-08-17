@@ -4856,6 +4856,60 @@ Holder :: struct { a: i64, b: i64 }
         "a call names the function it goes to, and 'held' holds a function \
          rather than being one",
     ),
+    // A binding refused for the shape of the function it takes, and a call
+    // through that binding written under it. A body is read until the first
+    // thing wrong with it and no further, so what is said is the binding and
+    // not the call: one function says one fault, and it is the one written
+    // first.
+    (
+        "a_function_pointer_bound_to_a_function_of_another_shape",
+        "double :: fn(n: i64) -> i64 { n * 2 }
+         main :: fn() -> i64 {
+             f: fn(i64, i64) -> i64 = double
+             f(1, 2)
+         }
+",
+        "this binding is a 'fn(i64, i64) -> i64' and the value is a 'fn(i64) -> i64'",
+    ),
+    // The same two faults the other way up. The call is written first, so the
+    // call is what is said and the binding under it is not.
+    (
+        "a_call_to_a_value_above_a_binding_that_is_refused",
+        "double :: fn(n: i64) -> i64 { n * 2 }
+         main :: fn() -> i64 {
+             g: fn(i64) -> i64 = double
+             held := g(1)
+             f: fn(i64, i64) -> i64 = double
+             held
+         }
+",
+        "and 'g' holds a function rather than being one",
+    ),
+    // One fault per function rather than one per program. Two functions each
+    // calling a value are two things wrong, and each is said where it is.
+    (
+        "a_call_to_a_value_in_each_of_two_functions",
+        "double :: fn(n: i64) -> i64 { n * 2 }
+         one :: fn() -> i64 { g: fn(i64) -> i64 = double  g(1) }
+         two :: fn() -> i64 { h: fn(i64) -> i64 = double  h(2) }
+         main :: fn() -> i64 { one() + two() }
+",
+        "and 'h' holds a function rather than being one",
+    ),
+    // `ptr_to` hands back the address of storage, so there has to be storage
+    // for it to be the address of. A sum has only the slot it landed in, which
+    // the statement takes with it, and reading the pointer afterwards needs an
+    // `unsafe` block nowhere.
+    (
+        "an_address_taken_of_a_value_that_names_no_storage",
+        "main :: fn() -> i64 {
+             n: i64 = 3
+             q: ^i64 = ptr_to(n + 1)
+             0
+         }
+",
+        "this expression is not an assignable place",
+    ),
 ];
 
 // One arena, one carve, and the three ways the pointer leaves the block. Held

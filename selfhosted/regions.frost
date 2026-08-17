@@ -17,7 +17,8 @@ export check_borrow_exclusivity, check_calls, check_entry_point,
     check_export_collisions,
     check_frame_escapes, check_moves, check_pooled_resources, flush_unconsumed,
     check_reference_fields, check_regions, check_types, check_types_in,
-    check_recursive_structs, check_unsafety, refuse_indirect_calls,
+    check_recursive_structs, check_unsafety, find_indirect_calls,
+    flush_indirect_calls,
     report_bad_derefs
 
 // A pool whose elements are resources.
@@ -834,7 +835,30 @@ check_types :: fn(mut p: Parser, head: i64) {
         next_id := node.next
         if (kind == NodeKind::Func) {
             sym := arena_at(p.fns, node.val)
-            check_types_one(p, node.a, node.b, node.val, sym.ret_type, 0)
+            // A function runs from its name to the byte past its body, which is
+            // where the node holding it was written. The first call in that run
+            // going to a value is where the other compiler stops reading the
+            // body, so the types are weighed up to there and no further: a
+            // fault above the call is said in its place, and a call above a
+            // fault is said in place of the fault.
+            pending := earliest_indirect_call(p, sym.off, node.pos)
+            p.halt_at = -1
+            if (pending >= 0) {
+                p.halt_at = arena_at(p.indirect_calls, pending).at
+            }
+            faulted := check_types_one(
+                p,
+                node.a,
+                node.b,
+                node.val,
+                sym.ret_type,
+                0
+            )
+            p.halt_at = -1
+            settle_indirect_calls(p, sym.off, node.pos)
+            if (pending >= 0 && faulted == 0) {
+                report_indirect_call(p, pending)
+            }
         }
         id = next_id
     }
@@ -939,7 +963,10 @@ check_types_in :: fn(
     // A body that never hands a value back where one was declared. Left
     // unasked, `fn(n: i64) -> i64 { if (n > 0) { return 1 } }` compiled and the
     // path with no `return` handed back whatever the register held.
-    if (ret != TY_VOID && ret != (-1) && instance == 0
+    // A body holding a call that goes to a value is refused at that call, which
+    // the other compiler reaches first and stops at, so what the body ends with
+    // is never asked about.
+    if (ret != TY_VOID && ret != (-1) && instance == 0 && p.halt_at < 0
         && is_result_ty(p, ret) == false
         && body_answers(p, body) == false) {
         report_where(p.modules, p.src, body_ends_at(p, body, sym.off))
@@ -1110,6 +1137,12 @@ mark_single :: fn(mut p: Parser, id: i64) {
 check_types_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
+    // Below the call this function is refused at. The other compiler reaches
+    // that call while lowering the body and stops there, so what is written
+    // under it is weighed by neither.
+    if (p.halt_at >= 0 && node.pos > p.halt_at) {
+        return
+    }
     // Where this statement is written, for a report made while it is weighed.
     p.checking_at = node.pos
     if (kind == NodeKind::Let) {
@@ -1913,6 +1946,28 @@ check_operand_types :: fn(
     frost_rt_recover_escape()
 }
 
+// Whether an expression names storage rather than standing for a value. Storage
+// is what an address may be taken of: a name, a field or an element of one, what
+// a pointer reads, and a literal written out in full, whose storage is the
+// function's own and lasts as long as the function does. A call names storage
+// where it answers with a borrow and stands for a value otherwise.
+names_a_place :: fn(mut p: Parser, id: i64) -> bool {
+    if (id < 0) {
+        return false
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Var || kind == NodeKind::Field
+        || kind == NodeKind::Index || kind == NodeKind::Deref
+        || kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
+        return true
+    }
+    if (kind == NodeKind::Call) {
+        return is_borrow(arena_at(p.fns, node.val).ret_type)
+    }
+    false
+}
+
 check_types_expr :: fn(mut p: Parser, id: i64) {
     if (id < 0) {
         return
@@ -1939,6 +1994,20 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NodeKind::CallPtr) {
         check_types_expr(p, node.a)
         check_argument_expressions(p, node.b)
+        return
+    }
+    // `ptr_to(x)` hands back the address of storage, so there has to be storage
+    // for it to be the address of. A value that names none has only the slot the
+    // expression landed in, which the statement holding it takes with it: the
+    // pointer would be read after what it points at is gone, and nothing about
+    // that needs an `unsafe` block anywhere.
+    if (kind == NodeKind::AddrOf) {
+        if (names_a_place(p, node.a) == false) {
+            report_where(p.modules, p.src, node.pos)
+            report("this expression is not an assignable place; a value is written to a name, a field, an element, or through a call answering a `ref`")
+            frost_rt_recover_escape()
+        }
+        check_types_expr(p, node.a)
         return
     }
     if (kind == NodeKind::StructLit) {
@@ -9152,15 +9221,84 @@ callee_is_compile_time :: fn(mut p: Parser, callee: i64) -> bool {
     names_cfn_param(p, base.val, base.c)
 }
 
+// The report one held call makes, said where the callee is written.
+report_indirect_call :: fn(mut p: Parser, index: i64) {
+    held := arena_at(p.indirect_calls, index)
+    report_where(p.modules, p.src, held.at)
+    if (held.sym < 0) {
+        report("a call names the function it goes to, and this one goes to a value. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one")
+    } else {
+        sym := arena_at(p.fns, held.sym)
+        report("a call names the function it goes to, and '")
+        report_src(p.src, sym.off, sym.len)
+        report("' holds a function rather than being one. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one")
+    }
+    frost_rt_recover_note()
+}
+
+// The first call going to a value written in a run of source, which is the one
+// the other compiler stops its reading of a body at. A function's own run is
+// its name through the byte past its body.
+earliest_indirect_call :: fn(mut p: Parser, start: i64, end: i64) -> i64 {
+    mut found: i64 = -1
+    mut i: i64 = 0
+    while (i < p.indirect_calls.count) {
+        held := arena_at(p.indirect_calls, i)
+        if (held.decided == 0 && held.at >= start && held.at < end) {
+            if (found < 0 || held.at < arena_at(p.indirect_calls, found).at) {
+                found = i
+            }
+        }
+        i = i + 1
+    }
+    found
+}
+
+// Every call written in a run marked as answered. One function says one of
+// them: a body is read until the first call going to a value and no further,
+// so the ones below it are written under a call already refused.
+settle_indirect_calls :: fn(mut p: Parser, start: i64, end: i64) {
+    mut i: i64 = 0
+    while (i < p.indirect_calls.count) {
+        mut held := arena_at(p.indirect_calls, i)
+        if (held.at >= start && held.at < end) {
+            held.decided = 1
+        }
+        i = i + 1
+    }
+}
+
+// The calls left over once every function has been weighed. Every function a
+// reader wrote is settled by then, so what is left is written in a generic's own
+// body, which is read through an instance rather than on its own. An instance
+// exists because a call asked for it, so a program with something else wrong
+// with it has none to read and nothing here to say: this is the gate the
+// instance walk itself carries, asked again for the calls found inside one.
+flush_indirect_calls :: fn(mut p: Parser) {
+    if (frost_rt_recover_failures() > 0) {
+        return
+    }
+    mut i: i64 = 0
+    while (i < p.indirect_calls.count) {
+        mut held := arena_at(p.indirect_calls, i)
+        if (held.decided == 0) {
+            held.decided = 1
+            report_indirect_call(p, i)
+        }
+        i = i + 1
+    }
+}
+
 // A call names the function it goes to. Every one that goes to a value instead
-// is refused here, so what a program does is read off the call rather than off
-// whatever the value held when the line ran.
+// is found here and held, and the function holding it says one of them once its
+// types have been weighed, so what a program does is read off the call rather
+// than off whatever the value held when the line ran.
 //
 // A call through a constant bundle's field is not one. `ops.less(a, b)`, where
 // `ops` is a compile-time argument, folds to a call to the function that field
 // names, so nothing is loaded and nothing is dispatched. What is left is a call
 // whose callee is decided while the program runs.
-refuse_indirect_calls :: fn(mut p: Parser) {
+find_indirect_calls :: fn(mut p: Parser) {
     mut i: i64 = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
@@ -9179,24 +9317,20 @@ refuse_indirect_calls :: fn(mut p: Parser) {
             if (bundle_field_fn(p, node.a) < 0
                 && callee_is_compile_time(p, node.a) == false
                 && indirect_first_report(p, at)) {
-                report_where(p.modules, p.src, at)
-                report("a call names the function it goes to, and this one goes to a value. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one")
-                frost_rt_recover_note()
+                arena_push(
+                    p.indirect_calls,
+                    IndirectCall { at = at, sym = -1, decided = 0 }
+                )
             }
         } else if (kind == NodeKind::Call) {
             sym := arena_at(p.fns, node.val)
-            // A name already refused for what it was bound to is one whose type
-            // is not the one the reader meant, so what a call through it goes
-            // to is the second thing to say.
-            if (frost_rt_recover_failures() - p.deferred_unconsumed.count == 0
-                && sym.defined == 0
+            if (sym.defined == 0
                 && proc_param_named(p, sym.off, sym.len) >= 0
                 && indirect_first_report(p, node.pos)) {
-                report_where(p.modules, p.src, node.pos)
-                report("a call names the function it goes to, and '")
-                report_src(p.src, sym.off, sym.len)
-                report("' holds a function rather than being one. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one")
-                frost_rt_recover_note()
+                arena_push(
+                    p.indirect_calls,
+                    IndirectCall { at = node.pos, sym = node.val, decided = 0 }
+                )
             }
         }
         i = i + 1

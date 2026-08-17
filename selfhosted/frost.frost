@@ -1067,6 +1067,8 @@ main :: fn() -> i64 {
         frame_places = arena_make($LocalVar, 4096),
         frame_reported = arena_make($LocalVar, 4096),
         indirect_reported = arena_make($LocalVar, 4096),
+        indirect_calls = arena_make($IndirectCall, 256),
+        halt_at = -1,
         walk_types = arena_make($LocalVar, 4096),
         region_via_pointer = arena_make($LocalVar, 4096),
         frame_ret = -1,
@@ -1211,17 +1213,21 @@ main :: fn() -> i64 {
     check_frame_escapes(parser)
     check_reference_fields(parser)
     check_borrow_exclusivity(parser)
-    // Every call that goes to a value rather than to a name. A walk over the
-    // arena, so it needs nothing the checks around it build, and it sits ahead
-    // of the two that read a whole program: a body whose calls are not settled
-    // is not one to ask about moves or types.
-    refuse_indirect_calls(parser)
+    // Every call that goes to a value rather than to a name, found here and
+    // said after the types. A walk over the arena, so it needs nothing the
+    // checks around it build, and it runs ahead of the two that read a whole
+    // program because it must see the nodes a reader wrote rather than the
+    // instance bodies the type walk adds to them.
+    find_indirect_calls(parser)
     check_moves(parser)
     // Last of the checks, because it is the one that walks functions the way
     // the emitters do, and the passes before it read whatever local table the
     // parse left behind. It also reads what `check_moves` settles about runs
     // and summaries, so the two are in this order and not the other.
     check_types(parser, program)
+    // Whatever the type walk read no function around, said now that every
+    // function it did read has answered for the calls written in it.
+    flush_indirect_calls(parser)
     // After the types. What a format call was given is worked out from the
     // types around it, so a value whose type came out of something else that
     // is wrong is the second thing to say, not the first: `for held in a` over

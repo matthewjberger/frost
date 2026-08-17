@@ -592,7 +592,10 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             inner := parse_expr(p)
             advance(p)
-            return new_unary(p, NodeKind::AddrOf, inner)
+            // Placed where `ptr_to` is written rather than where its argument
+            // closed, which is the token after it: a report about what the
+            // address is of points at the whole of what takes it.
+            return new_unary_at(p, NodeKind::AddrOf, inner, offset)
         }
         // `type_id(T)`: the number this compiler goes by for that type, which
         // it already has, since a type is a code here. What it is for is a
