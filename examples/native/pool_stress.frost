@@ -17,13 +17,13 @@ main :: fn() -> i64 {
     slab_reset(p)
 
     mut handles: [4]Handle<Unit> = [0; 4]
-    for i in 0 .. 4 {
+    for i in 0..4 {
         u := Unit { id = i, stats = Stats { hp = i * 10, xp = i, slot = i } }
         handles[i] = slab_insert(p, u)
     }
 
     mut alive: i64 = 0
-    for i in 0 .. 4 {
+    for i in 0..4 {
         if (slab_alive(p, handles[i])) { alive = alive + 1 }
     }
     print("{}\n", alive) // 4
@@ -34,7 +34,7 @@ main :: fn() -> i64 {
     show(slab_release(p, handles[3])) // 1
 
     mut sum_hp: i64 = 0
-    for i in 0 .. 4 {
+    for i in 0..4 {
         if (slab_alive(p, handles[i])) {
             sum_hp = sum_hp + p[handles[i]].stats.hp
         }

@@ -36,7 +36,9 @@ pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
                 // written. Left out, `held: Widget = 3` read as a binding of a
                 // type the program had, and what the reader was told was that
                 // an `i64` is not a `Widget`.
-                report_unknown_in_block(ast, *body, &known, &values, &mut found);
+                report_unknown_in_block(
+                    ast, *body, &known, &values, &mut found,
+                );
                 for parameter in ast.params_in(*params) {
                     if let Some(ty) = &parameter.type_annotation {
                         // At the type, which is what the report names. The
@@ -271,7 +273,9 @@ fn report_unknown_in_expression(
         // layout for a type that is not there to have one.
         Expression::Call(_, arguments) => {
             for argument in ast.exprs_in(*arguments) {
-                report_unknown_in_expression(ast, *argument, known, values, found);
+                report_unknown_in_expression(
+                    ast, *argument, known, values, found,
+                );
             }
         }
         Expression::TypeValue(ty) => {

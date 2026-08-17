@@ -315,6 +315,12 @@ spaced :: fn(
     if (left == TokenKind::Lparen || left == TokenKind::Lbracket) {
         return right == TokenKind::Lbrace
     }
+    // A range binds to its two ends, so `0..5` and `'a'..='z'` are written the
+    // way the reference spells them rather than spread out.
+    if (left == TokenKind::Dotdot || left == TokenKind::Dotdoteq
+        || right == TokenKind::Dotdot || right == TokenKind::Dotdoteq) {
+        return false
+    }
     // A minus or a bang in front of a value signs or negates it. Asked before
     // the brackets below, which see only that an open one follows and let a
     // space in: `!a` was written tight and `!(a == 3)` was not.

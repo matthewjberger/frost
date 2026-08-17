@@ -1388,14 +1388,8 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         &program.roots,
     ));
     faults.extend(frost::check_declared_types(&program.ast, &program.roots));
-    faults.extend(frost::check_recursive_structs(
-        &program.ast,
-        &program.roots,
-    ));
-    faults.extend(frost::check_nested_functions(
-        &program.ast,
-        &program.roots,
-    ));
+    faults.extend(frost::check_recursive_structs(&program.ast, &program.roots));
+    faults.extend(frost::check_nested_functions(&program.ast, &program.roots));
     faults.extend(frost::check_entry_point(&program.ast, &program.roots));
     let (unchecked, idle) =
         frost::check_unsafety_and_audit(&program.ast, &program.roots);
@@ -1538,7 +1532,6 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         }
         std::process::exit(1);
     }
-
 
     if cli.run_ir {
         let module = lowered_and_checked(

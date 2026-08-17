@@ -8,7 +8,7 @@ square :: fn(x: i64) -> i64 { x * x }
 // that step's body inside the loop: nothing is dispatched and nothing is loaded.
 reduce :: fn($step: fn(i64) -> i64, data: [6]i64) -> i64 {
     mut total: i64 = 0
-    for i in 0 .. 6 {
+    for i in 0..6 {
         total = total + step(data[i])
     }
     total

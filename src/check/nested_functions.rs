@@ -32,7 +32,11 @@ pub fn check_nested_functions(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
     found
 }
 
-fn in_block(ast: &Ast, block: crate::ast::Range32, found: &mut Vec<Diagnostic>) {
+fn in_block(
+    ast: &Ast,
+    block: crate::ast::Range32,
+    found: &mut Vec<Diagnostic>,
+) {
     for statement in ast.stmts_in(block) {
         in_statement(ast, *statement, found);
     }

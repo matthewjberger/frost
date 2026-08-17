@@ -2112,7 +2112,11 @@ impl<'a> Parser<'a> {
                 self.refuse_literal_name(&name)?;
             }
             let name = self.ast.intern(&name);
-            bindings.push(MultiBinding { name, mutable, at: mut_at });
+            bindings.push(MultiBinding {
+                name,
+                mutable,
+                at: mut_at,
+            });
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
             } else {
@@ -2204,10 +2208,9 @@ impl<'a> Parser<'a> {
         self.refuse_literal_name(&name)?;
         let at_bind = self.here(String::new());
         if !matches!(self.read_token(), Token::ColonAssign) {
-            return Err(self.reword(
-                at_bind,
-                "`:=` goes after the name a `ref` binds",
-            ));
+            return Err(
+                self.reword(at_bind, "`:=` goes after the name a `ref` binds")
+            );
         }
         let place = self.parse_expression(Precedence::Lowest)?;
         if matches!(self.peek_nth(0), Token::Semicolon) {
@@ -2979,9 +2982,10 @@ impl<'a> Parser<'a> {
                     bail!("Expected ')' after the type in {word}");
                 }
                 let span = self.span_from(start);
-                let argument = self
-                    .ast
-                    .push_expr(Expression::TypeValue(held), self.span_from(at_type));
+                let argument = self.ast.push_expr(
+                    Expression::TypeValue(held),
+                    self.span_from(at_type),
+                );
                 let callee = self.ast.intern(&word);
                 let callee =
                     self.ast.push_expr(Expression::Identifier(callee), span);

@@ -306,7 +306,9 @@ pub struct Ast {
 
 // A field of a struct literal or an enum-variant literal: the name and what
 // it is set to.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq,
+)]
 pub struct NamedExpr {
     pub name: Symbol,
     pub value: ExprId,
@@ -318,7 +320,9 @@ pub struct NamedExpr {
 
 // One `name` binding a payload field of a matched enum variant: the field,
 // and the name the arm reads it by.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq,
+)]
 pub struct PatternBinding {
     pub field: Symbol,
     pub binding: Symbol,
@@ -364,7 +368,9 @@ pub struct Parameter {
     pub capability: bool,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq,
+)]
 pub struct MultiBinding {
     pub name: Symbol,
     pub mutable: bool,

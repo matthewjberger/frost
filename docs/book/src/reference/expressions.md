@@ -227,9 +227,9 @@ CH_LOWER_Z :: 122
 
 kind_of :: fn(c: i64) -> i64 {
     match c {
-        case CH_LOWER_A ..= CH_LOWER_Z | CH_UPPER_A ..= CH_UPPER_Z: 1
-        case CH_0 ..= CH_9: 2
-        case 0 | 5 .. 10: 3
+        case CH_LOWER_A..=CH_LOWER_Z | CH_UPPER_A..=CH_UPPER_Z: 1
+        case CH_0..=CH_9: 2
+        case 0 | 5..10: 3
         case _: 0
     }
 }

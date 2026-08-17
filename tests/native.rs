@@ -29,7 +29,9 @@ use support::{
 fn own_report(stderr: &[u8]) -> String {
     String::from_utf8_lossy(stderr)
         .lines()
-        .filter(|line| line.starts_with("frost: ") || line.starts_with("frost "))
+        .filter(|line| {
+            line.starts_with("frost: ") || line.starts_with("frost ")
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -5297,12 +5299,13 @@ fn the_tour_prints_what_its_comments_claim() {
     // 90 healed by 10, a Hero's 10 damage, that doubled by `round`, the party
     // walked by `for` and answered for in two values, the strongest again with
     // the total discarded, the columns container walked over the slots that
-    // still hold something, a handle from another container refused, and the
-    // session's id handed back by the `move` that consumed it, with the two
-    // stated layouts read off between them.
+    // still hold something, a column read out as a view rather than copied, a
+    // handle from another container refused, and the session's id handed back
+    // by the `move` that consumed it, with the two stated layouts read off
+    // between them.
     assert_eq!(
         output,
-        "100\n10\n20\n52\n30\n30\n26\n0\n9\n32\n320\n32\n72\n7\n"
+        "100\n10\n20\n52\n30\n30\n26\n3\n0\n9\n32\n320\n32\n72\n7\n"
     );
 }
 

@@ -149,8 +149,10 @@ fn statement_has_try(ast: &Ast, statement: StmtId) -> Option<ExprId> {
         Statement::Defer(inner) | Statement::ErrDefer(inner) => {
             statement_has_try(ast, *inner)
         }
-        Statement::While(condition, body) => expression_has_try(ast, *condition)
-            .or_else(|| block_has_try(ast, *body)),
+        Statement::While(condition, body) => {
+            expression_has_try(ast, *condition)
+                .or_else(|| block_has_try(ast, *body))
+        }
         Statement::For(_, _, iterable, body) => {
             expression_has_try(ast, *iterable)
                 .or_else(|| block_has_try(ast, *body))

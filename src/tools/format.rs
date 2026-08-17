@@ -529,6 +529,13 @@ fn spaced(
     if matches!(left, Token::LeftParentheses | Token::LeftBracket) {
         return matches!(right, Token::LeftBrace);
     }
+    // A range binds to its two ends, so `0..5` and `'a'..='z'` are written the
+    // way the reference spells them rather than spread out.
+    if matches!(left, Token::DotDot | Token::DotDotEqual)
+        || matches!(right, Token::DotDot | Token::DotDotEqual)
+    {
+        return false;
+    }
     // A minus or a bang in front of a value signs or negates it. Asked before
     // the brackets below, which see only that an open one follows and let a
     // space in: `!a` was written tight and `!(a == 3)` was not.
@@ -1425,27 +1432,83 @@ main :: fn() -> i64 {
     // without watching it, and this is the property the corpus gate rests on
     // for the files it happens to hold rather than for the language.
     const SHAPES: &[(&str, &str)] = &[
-        ("an assignment", "main :: fn() -> i64 {\n    mut a: i64 = 1\n    a = a + 2 * 3 - 4 / 5 % 6\n    a\n}\n"),
-        ("a comparison", "main :: fn() -> i64 {\n    a := 1\n    b := a < 2 && a > 0 || !(a == 3)\n    b\n}\n"),
-        ("a shift and a mask", "main :: fn() -> i64 {\n    a := 1\n    a & 2 | a << 1 >> 2\n}\n"),
-        ("a negation", "main :: fn() -> i64 {\n    a := -3\n    b := -a\n    b\n}\n"),
-        ("a call inside a call", "main :: fn() -> i64 {\n    x := foo(1, 2, bar(3, 4))\n    x\n}\n"),
+        (
+            "an assignment",
+            "main :: fn() -> i64 {\n    mut a: i64 = 1\n    a = a + 2 * 3 - 4 / 5 % 6\n    a\n}\n",
+        ),
+        (
+            "a comparison",
+            "main :: fn() -> i64 {\n    a := 1\n    b := a < 2 && a > 0 || !(a == 3)\n    b\n}\n",
+        ),
+        (
+            "a shift and a mask",
+            "main :: fn() -> i64 {\n    a := 1\n    a & 2 | a << 1 >> 2\n}\n",
+        ),
+        (
+            "a negation",
+            "main :: fn() -> i64 {\n    a := -3\n    b := -a\n    b\n}\n",
+        ),
+        (
+            "a call inside a call",
+            "main :: fn() -> i64 {\n    x := foo(1, 2, bar(3, 4))\n    x\n}\n",
+        ),
         ("a struct declaration", "P :: struct { x: i64, y: i64 }\n"),
         ("a packed struct", "P :: packed struct { a: u8, b: i64 }\n"),
         ("an enum declaration", "K :: enum { A, B, C }\n"),
         ("a distinct type", "M :: distinct i64\n"),
-        ("a struct literal", "P :: struct { x: i64 }\nmain :: fn() -> i64 {\n    p := P { x = 1 }\n    p.x\n}\n"),
-        ("a match", "K :: enum { A, B }\nmain :: fn() -> i64 {\n    k := K::A\n    match (k) {\n        case K::A { 0 }\n        case K::B { 1 }\n    }\n}\n"),
-        ("a compile-time parameter", "hold :: fn($T: Type, v: $T) -> T { v }\n"),
-        ("an array type and a repeat", "main :: fn() -> i64 {\n    a: [4]i64 = [0; 4]\n    b := [1, 2, 3]\n    a[0] + b[1]\n}\n"),
-        ("a pointer type", "main :: fn() -> i64 {\n    n: i64 = 1\n    p: ^i64 = ptr_to(n)\n    0\n}\n"),
-        ("an if chain", "main :: fn() -> i64 {\n    if (1 > 0) { 0 } else if (2 > 1) { 1 } else { 2 }\n}\n"),
-        ("a while with a break", "main :: fn() -> i64 {\n    mut i: i64 = 0\n    while (i < 3) {\n        if (i == 1) { break }\n        i = i + 1\n    }\n    i\n}\n"),
+        (
+            "a struct literal",
+            "P :: struct { x: i64 }\nmain :: fn() -> i64 {\n    p := P { x = 1 }\n    p.x\n}\n",
+        ),
+        (
+            "a match",
+            "K :: enum { A, B }\nmain :: fn() -> i64 {\n    k := K::A\n    match (k) {\n        case K::A { 0 }\n        case K::B { 1 }\n    }\n}\n",
+        ),
+        (
+            "a compile-time parameter",
+            "hold :: fn($T: Type, v: $T) -> T { v }\n",
+        ),
+        (
+            "an array type and a repeat",
+            "main :: fn() -> i64 {\n    a: [4]i64 = [0; 4]\n    b := [1, 2, 3]\n    a[0] + b[1]\n}\n",
+        ),
+        (
+            "a pointer type",
+            "main :: fn() -> i64 {\n    n: i64 = 1\n    p: ^i64 = ptr_to(n)\n    0\n}\n",
+        ),
+        (
+            "an if chain",
+            "main :: fn() -> i64 {\n    if (1 > 0) { 0 } else if (2 > 1) { 1 } else { 2 }\n}\n",
+        ),
+        (
+            "a while with a break",
+            "main :: fn() -> i64 {\n    mut i: i64 = 0\n    while (i < 3) {\n        if (i == 1) { break }\n        i = i + 1\n    }\n    i\n}\n",
+        ),
         ("a defer", "main :: fn() -> i64 {\n    defer {}\n    0\n}\n"),
-        ("an unsafe block", "main :: fn() -> i64 {\n    n: i64 = 1\n    p: ^i64 = ptr_to(n)\n    unsafe { p^ }\n}\n"),
-        ("a when block", "when (TARGET_WINDOWS) {\n    NAME :: \"windows\"\n} else {\n    NAME :: \"other\"\n}\n"),
-        ("an import and an export", "import \"io.frost\"\nexport a, b, c\n"),
-        ("a failure set", "K :: enum { Bad }\nf :: fn() -> i64 ! K { 1 }\n"),
+        (
+            "an unsafe block",
+            "main :: fn() -> i64 {\n    n: i64 = 1\n    p: ^i64 = ptr_to(n)\n    unsafe { p^ }\n}\n",
+        ),
+        (
+            "a when block",
+            "when (TARGET_WINDOWS) {\n    NAME :: \"windows\"\n} else {\n    NAME :: \"other\"\n}\n",
+        ),
+        (
+            "an import and an export",
+            "import \"io.frost\"\nexport a, b, c\n",
+        ),
+        (
+            "a failure set",
+            "K :: enum { Bad }\nf :: fn() -> i64 ! K { 1 }\n",
+        ),
+        (
+            "a range in a for",
+            "main :: fn() -> i64 {\n    for i in 0..5 {}\n    for j in 0..=5 {}\n    0\n}\n",
+        ),
+        (
+            "a range in a case",
+            "main :: fn() -> i64 {\n    match 3 {\n        case 0 | 5..10: 1\n        case _: 0\n    }\n}\n",
+        ),
     ];
 
     #[test]
@@ -1467,8 +1530,24 @@ main :: fn() -> i64 {
     #[test]
     fn every_shape_is_already_what_the_formatter_writes() {
         for (named, source) in SHAPES {
-            assert_eq!(format(source), *source, "{named} is written differently");
+            assert_eq!(
+                format(source),
+                *source,
+                "{named} is written differently"
+            );
         }
+    }
+
+    // A range binds to its two ends. Spread out it reads as three tokens rather
+    // than as the one operator the reference spells `a..b`.
+    #[test]
+    fn a_range_binds_to_its_ends() {
+        let source = "main :: fn() -> i64 {\n    for i in 0..5 {}\n    0\n}\n";
+        assert_eq!(format(source), source);
+        assert_eq!(
+            format("main :: fn() -> i64 {\n    for i in 0 .. 5 {}\n    0\n}\n"),
+            source
+        );
     }
 
     // A bang binds to what it negates, whatever follows it. Read after the

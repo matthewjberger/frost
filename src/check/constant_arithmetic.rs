@@ -33,7 +33,10 @@ pub fn check_constant_arithmetic(
 
 /// The value, or what stopped it. `None` for a shape this does not read, which
 /// is not a fault: it is a question for a pass that can answer it.
-fn worked_out(ast: &Ast, value: crate::ast::ExprId) -> Result<Option<i64>, String> {
+fn worked_out(
+    ast: &Ast,
+    value: crate::ast::ExprId,
+) -> Result<Option<i64>, String> {
     match ast.expr(value) {
         Expression::Literal(Literal::Integer(held)) => Ok(Some(*held)),
         // `Negate`, which is what a minus in front of a number is. Written as
@@ -43,9 +46,7 @@ fn worked_out(ast: &Ast, value: crate::ast::ExprId) -> Result<Option<i64>, Strin
             let Some(held) = worked_out(ast, *inner)? else {
                 return Ok(None);
             };
-            Ok(Some(
-                held.checked_neg().ok_or("negating this overflows")?,
-            ))
+            Ok(Some(held.checked_neg().ok_or("negating this overflows")?))
         }
         Expression::Infix(left, operator, right) => {
             let (Some(left), Some(right)) =
@@ -56,7 +57,9 @@ fn worked_out(ast: &Ast, value: crate::ast::ExprId) -> Result<Option<i64>, Strin
             let overflowed = || "this overflows an i64".to_string();
             let divided = || "this divides by zero".to_string();
             Ok(Some(match operator {
-                Operator::Add => left.checked_add(right).ok_or_else(overflowed)?,
+                Operator::Add => {
+                    left.checked_add(right).ok_or_else(overflowed)?
+                }
                 Operator::Subtract => {
                     left.checked_sub(right).ok_or_else(overflowed)?
                 }
@@ -81,11 +84,7 @@ fn worked_out(ast: &Ast, value: crate::ast::ExprId) -> Result<Option<i64>, Strin
                     if right == 0 {
                         return Err(divided());
                     }
-                    if right == -1 {
-                        0
-                    } else {
-                        left % right
-                    }
+                    if right == -1 { 0 } else { left % right }
                 }
                 _ => return Ok(None),
             }))

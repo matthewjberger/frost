@@ -9,7 +9,11 @@ import "columns.frost"
 Kind :: enum { Hero, Monster { damage: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
-// `mut` borrows for the call and changes the caller's value. There is no `&`.
+// `mut` borrows for the call and writes to the caller's value. There is no `&`,
+// so nothing at the call site marks the write: `heal(hero, 10)` reads like any
+// other call. That is the trade. Symmetry with the read case was bought with
+// the one thing a sigil at the call site buys, which is seeing the write
+// without looking anywhere else. The declaration is where to look.
 heal :: fn(mut e: Entity, amount: i64) {
     e.hp = e.hp + amount
 }
@@ -38,24 +42,24 @@ tally :: fn(party: []Entity) -> (total: i64, strongest: i64) {
 }
 
 // A `linear` value is consumed exactly once on every path out, or the program
-// does not build. `move` is what consumes it, so forgetting to close a session
-// is a compile error rather than a leak found later.
+// does not build. `move` consumes it, so forgetting to close a session is a
+// compile error rather than a leak found later.
 Session :: linear struct { id: i64 }
 
 // One element of the columns container below.
 Particle :: struct { x: i64 }
 
-// A declaration may state its layout rather than take the one its fields
-// imply. `packed struct` puts every field at the next byte, and `align(N)`
-// after a field's type is what that field starts at a multiple of. Neither
-// word is reserved: the `struct` after `packed` and the `(` after `align` are
-// what mark them.
+// A declaration may state its layout rather than take the one its fields imply.
+// `packed struct` puts every field at the next byte, and `align(N)` after a
+// field's type rounds that field up to a multiple of N. Neither word is
+// reserved: the `struct` after `packed` and the `(` after `align` mark them.
 Header :: packed struct { magic: u32, kind: u8, length: u32 }
 Block :: struct { flag: u8, weight: i64 align(16) }
 
-// A call written where a compile-time value is read is run before the program
-// is. Nothing marks the function: `round_up` is an ordinary one, and what says
-// this call is worked out early is that a constant is.
+// A call written where a compile-time value is read runs before the program
+// does. Nothing marks the function: `round_up` is an ordinary one, called the
+// ordinary way. The binding form decides it, since `::` already means a value
+// known early.
 round_up :: fn(value: i64, to: i64) -> i64 { (value + to - 1) / to * to }
 
 LANES :: round_up(300, 64)
@@ -67,16 +71,19 @@ STRIDES :: [4, 8, 16, 32]
 WIDEST :: STRIDES[3]
 
 // A fixed array of numbers is what a vector register holds, so the arithmetic
-// operators are defined over one, once per lane. There is no vector type: this
-// is the array the language already had.
+// operators are defined over one, once per lane. A number on one side applies
+// to every lane. There is no vector type: this is the array the language
+// already had.
 mix :: fn(a: [4]f32, b: [4]f32) -> [4]f32 { a * b + a }
 
 close :: fn(move s: Session) -> i64 {
     s.id
 }
 
-// `-> i64 ! Blocked` says how this can fail, and `?` hands a failure to the
-// caller instead of checking it here. What comes back is an ordinary enum.
+// `-> i64 ! Blocked` says how this can fail. The two ways out are told apart by
+// what is written rather than by a word: a braced literal is the failure, since
+// an `i64` has no such spelling, and a value of the answer type is the success.
+// `?` hands a failure to the caller instead of checking it here.
 Blocked :: struct { at: i64 }
 
 strike :: fn(e: Entity) -> i64 ! Blocked {
@@ -86,9 +93,10 @@ strike :: fn(e: Entity) -> i64 ! Blocked {
     attack(e)
 }
 
-// `errdefer` runs only where a failure leaves, which is what closes the session
-// on the path the `?` takes. The other path consumes it as usual, and the
-// checker knows the two are different paths rather than a double consumption.
+// `errdefer` runs only on the path a failure leaves by. That closes the session
+// when `?` hands the failure up. The path that succeeds consumes it as usual,
+// and the checker reads the two as separate paths rather than as one value
+// consumed twice.
 round :: fn(e: Entity) -> i64 ! Blocked {
     s := Session { id = 3 }
     errdefer close(s)
@@ -97,7 +105,9 @@ round :: fn(e: Entity) -> i64 ! Blocked {
     hit * 2
 }
 
-// The value it answered with, or the health that stopped it.
+// A `! E` answer is an ordinary enum named `Result`, with `Ok` carrying the
+// value and `Err` carrying the failure. The compiler declares it where the
+// failure set is written, which is why nothing in this file does.
 damage_of :: fn(e: Entity) -> i64 {
     match round(e) {
         case Result::Ok { value }: value
@@ -105,11 +115,21 @@ damage_of :: fn(e: Entity) -> i64 {
     }
 }
 
+// A slice is a view: an address and a length, not a copy. So a call may answer
+// with one, and nothing in the language spells a lifetime. What keeps it safe
+// is a single question asked where the call returns: does this view name
+// storage that dies here? A view into what the caller owns outlives the call,
+// so this is allowed. A view into this function's own frame is refused by name,
+// and `column_of` would be refused if it made the run itself.
+column_of :: fn(c: columns<Particle, 8>) -> []i64 {
+    c.x
+}
+
 main :: fn() -> i64 {
     // A literal leaves out a type the context already carries and a variant
     // leaves out its enum. Every field is still named.
     mut hero: Entity = { hp = 90, kind = Kind::Hero }
-    heal(hero, 10) // hero is borrowed and changed
+    heal(hero, 10) // hero is borrowed and written to
     print("{}\n", hero.hp) // 100
     print("{}\n", attack(hero)) // 10
 
@@ -131,10 +151,16 @@ main :: fn() -> i64 {
 
     // A columns container stores each field of `Particle` in its own array, so
     // a pass over one field strides it rather than stepping over the rest.
-    // `live_slots` walks the slots that hold an element, in slot order, and
-    // never reaches one that was released.
+    //
+    // `columns_new()` is the zeroed value the binding starts at. The free list
+    // and the container's own id are laid down by `columns_reset`, because that
+    // id is a number the program is handed while it runs rather than one the
+    // compiler holds. Two calls, and the second is not a repeat of the first.
     mut swarm: columns<Particle, 8> = columns_new()
     columns_reset(swarm)
+
+    // A handle is a number: a slot and a generation packed into one word, so a
+    // run of them is a run of numbers and `0` is the handle that names nothing.
     mut made: [8]Handle<Particle> = [0; 8]
     mut i: i64 = 0
     while (i < 8) {
@@ -142,12 +168,23 @@ main :: fn() -> i64 {
         i = i + 1
     }
     assert(columns_release(swarm, made[2]))
+
+    // `live_slots` walks the slots that hold an element, in slot order, and
+    // never reaches one that was released.
     mut walked: i64 = 0
     for slot in live_slots(swarm) {
         walked = walked + swarm.x[slot]
     }
     print("{}\n", walked) // 26, the 0..7 that are still there without the 2
 
+    // The whole column, read as a view rather than copied out of the container.
+    print("{}\n", column_of(swarm)[3]) // 3
+
+    // `$` marks an argument the compiler is given rather than the program: it
+    // takes a type where a value would go. That is what lets `cast` be an
+    // ordinary function taking the type to convert to, instead of a form the
+    // grammar has to carry.
+    //
     // A handle carries which container it came from, so one from another pool
     // of the same shape is refused rather than read.
     mut spare: columns<Particle, 8> = columns_new()
@@ -163,7 +200,7 @@ main :: fn() -> i64 {
 
     left: [4]f32 = [1.0, 2.0, 3.0, 4.0]
     right: [4]f32 = [5.0, 6.0, 7.0, 8.0]
-    lanes := mix(left, right) * 2.0
+    lanes := mix(left, right) * 2.0 // the 2.0 reaches every lane
     print("{}\n", cast($i64, lanes[3])) // 72
 
     s := Session { id = 7 }

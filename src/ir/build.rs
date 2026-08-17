@@ -9674,10 +9674,7 @@ impl<'a> FunctionLowering<'a> {
                     .map(|local| self.type_of_local(local))
                     .is_some_and(|ty| matches!(ty, Type::Proc(..))) =>
             {
-                anyhow::anyhow!(
-                    "{UNDEFINED_CALL} '{}'",
-                    self.ast.name(*name)
-                )
+                anyhow::anyhow!("{UNDEFINED_CALL} '{}'", self.ast.name(*name))
             }
             Expression::Identifier(name) => anyhow::anyhow!(
                 "a call names the function it goes to, and '{}' holds a function rather than being one. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one",
@@ -12020,7 +12017,7 @@ impl<'a> FunctionLowering<'a> {
                 self.builder.struct_layout(struct_name).ok_or_else(|| {
                     anyhow::anyhow!(
                         "'{struct_name}' {}",
-                    crate::check::declared_types::UNDECLARED_TYPE
+                        crate::check::declared_types::UNDECLARED_TYPE
                     )
                 })?;
             layout
@@ -12063,7 +12060,11 @@ impl<'a> FunctionLowering<'a> {
                 position: at,
                 message: format!(
                     "struct '{struct_name}' is missing {} {}; a field left out would be read uninitialized",
-                    if missing.len() == 1 { "field" } else { "fields" },
+                    if missing.len() == 1 {
+                        "field"
+                    } else {
+                        "fields"
+                    },
                     missing
                         .iter()
                         .map(|name| format!("'{name}'"))
@@ -12238,7 +12239,11 @@ impl<'a> FunctionLowering<'a> {
                 position: at,
                 message: format!(
                     "variant '{variant_name}' is missing {} {}; a field left out would be read uninitialized",
-                    if missing.len() == 1 { "field" } else { "fields" },
+                    if missing.len() == 1 {
+                        "field"
+                    } else {
+                        "fields"
+                    },
                     missing
                         .iter()
                         .map(|name| format!("'{name}'"))

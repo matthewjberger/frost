@@ -24,10 +24,7 @@ use std::collections::HashMap;
 pub const RECURSIVE_STRUCT: &str = "by value, which has no end";
 
 /// Every struct that would have to contain itself.
-pub fn check_recursive_structs(
-    ast: &Ast,
-    roots: &[StmtId],
-) -> Vec<Diagnostic> {
+pub fn check_recursive_structs(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
     let mut held: HashMap<&str, Vec<&Type>> = HashMap::new();
     let mut order: Vec<(&str, StmtId)> = Vec::new();
     for statement in roots {
