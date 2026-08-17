@@ -254,7 +254,17 @@ bound_term :: fn(
     // A bound may weigh what a type measures against a number: a container that
     // packs its element into a word is written for the types that fit in one,
     // and saying so is what a bound is for.
-    if (names_a_measurement(p, cur_off(p), cur_len(p))) {
+    // A bound is a predicate applied to a parameter, or a comparison of what
+    // types measure. Only a name opens the first, so anything else opens the
+    // second and is weighed as a number: `8 >= sizeof(T)` reads the way
+    // `sizeof(T) <= 8` does, and what is wrong with `"W" == 1` is said about
+    // the number the text is not.
+    if (names_a_measurement(p, cur_off(p), cur_len(p))
+        || cur(p) != TokenKind::Ident) {
+        // Where the comparison starts, for a report about a measurement with
+        // nothing after it to compare against. Read once it has been parsed,
+        // the cursor names the brace that opens the body.
+        opened_at := written_at(p)
         left := bound_number(p, gfn_index, arg, xarg_start, xarg_count)
         op := cur(p)
         advance(p)
@@ -265,7 +275,7 @@ bound_term :: fn(
         if (op == TokenKind::Gt) { return left > right }
         if (op == TokenKind::Eqeq) { return left == right }
         if (op == TokenKind::Ne) { return left != right }
-        report_where(p.modules, p.src, cur_off(p))
+        report_where(p.modules, p.src, opened_at)
         report("a measurement in a bound is weighed against a number, so what follows it compares")
         frost_rt_recover_escape()
     }
@@ -274,7 +284,9 @@ bound_term :: fn(
     advance(p)
     if (cur(p) != TokenKind::Lparen) {
         report_where(p.modules, p.src, pred_off)
-        report("a `where` bound is a predicate applied to a compile-time parameter")
+        report("a `where` bound is a predicate applied to a compile-time parameter, and '")
+        report_src(p.src, pred_off, pred_len)
+        report("' is not one")
         frost_rt_recover_escape()
     }
     advance(p)
@@ -464,8 +476,15 @@ bound_atom :: fn(
     name_off := cur_off(p)
     name_len := cur_len(p)
     if (names_a_measurement(p, name_off, name_len) == false) {
-        report_where(p.modules, p.src, name_off)
+        report_where(p.modules, p.src, written_at(p))
         report("a number in a bound is what a type measures, or arithmetic over one")
+        frost_rt_recover_escape()
+    }
+    if (names_a_bound_measurement(p, name_off, name_len) == false) {
+        report_where(p.modules, p.src, name_off)
+        report("'")
+        report_src(p.src, name_off, name_len)
+        report("' is not a measurement a bound can be written over, which are sizeof, alignof and field_count")
         frost_rt_recover_escape()
     }
     advance(p)

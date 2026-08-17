@@ -330,14 +330,19 @@ asked:
 | --- | --- |
 | `offset_of(field)` | where it sits in the type that declares it |
 | `sizeof(field)` | how wide what it holds is |
+| `alignof(field)` | what it is aligned to |
+| `typename(field)` | the name of the type it holds, as text |
+| `type_id(field)` | the number standing for the type it holds |
 | the 11.4a predicates | what kind of type it holds |
 | `field_count(T)` | how many fields a type has, which sizes a table |
 
-Every one of those is a number the compiler worked out to lay the type out.
-Naming a field anywhere else is an error.
+Each is what the compiler already worked out to lay the type out, asked of the
+field rather than of a type written by name. Naming a field anywhere else is an
+error.
 
 There is no reflection by name. `has_field(T, "position")` is the string-keyed
-predicate 11.4a rules out, and a field's name is not readable at all.
+predicate 11.4a rules out, and a field's own name is not readable: `typename`
+answers with the name of the type the field holds, not with the field's.
 
 The bound is the same one 11.1c holds: the list a `for` walks is the struct's
 own field list, so its length is fixed by a declaration. No recursion, no
@@ -534,7 +539,10 @@ Terms combine with `&&`, `||` and `!`. A distinct type answers as what it is
 represented by.
 
 A bound may also weigh what a type measures against a number, using `sizeof`,
-`alignof` and `field_count` with `+ - * /` over them:
+`alignof` and `field_count` with `+ - * /` over them. Those three are the whole
+of it: `typename` answers with text rather than a number, so a bound cannot be
+written over one, and a bound naming it is refused. Either side may hold the
+measurement, so `8 >= sizeof(T)` reads the way `sizeof(T) <= 8` does:
 
 ```frost,sketch
 pack :: fn($T: Type, v: $T) -> i64 where sizeof(T) <= 8 { ... }

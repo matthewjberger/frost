@@ -16,7 +16,8 @@ import "names.frost"
 export record_const_functions, const_fn_index, const_call, const_arg_push,
     const_arg_mark, const_call_ahead, const_expr_here, const_call_here,
     at_const_call, const_int, const_bool, const_fold_ahead,
-    const_asks_folding, names_a_layout, names_a_measurement
+    const_asks_folding, names_a_layout, names_a_measurement,
+    names_a_bound_measurement
 
 // How far one evaluation may run. A body may loop, so how long it takes is not
 // read off the text, and this is what says a compile finishes.
@@ -1442,6 +1443,15 @@ const_skip_parens :: fn(mut p: Parser) {
 // for, since a measurement is what the layout pass works out and a constant is
 // worked out again after it. `type_id` is settled while the program is emitted
 // and `offset_of` names a field rather than a type, so neither is one of these.
+// What a bound may weigh against a number. A bound is arithmetic, so it takes
+// the three that answer with one; `typename` answers with text, which is a
+// measurement a constant may ask for and not one a bound can compare.
+names_a_bound_measurement :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    (str_range_eq(p.src, off, len, "sizeof")
+        || str_range_eq(p.src, off, len, "alignof")
+        || str_range_eq(p.src, off, len, "field_count"))
+}
+
 names_a_measurement :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     (str_range_eq(p.src, off, len, "sizeof")
         || str_range_eq(p.src, off, len, "alignof")

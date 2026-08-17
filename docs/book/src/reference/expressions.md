@@ -271,6 +271,11 @@ recognized at a call, and each stays usable as an ordinary identifier elsewhere.
   where the type is known, so a generic asked inside its own body answers with
   what it was instantiated with rather than with the name of its parameter. A
   distinct type answers with its own name, not its representation's.
+- `include_str("path")` is a file's bytes, spliced in where the call is written
+  and read as an ordinary string literal from the parser onward. The path is
+  relative to the file the call is written in and the argument is one string
+  literal, so what is read is settled while the program is compiled. The
+  implementation chapter on finding a module has the rest.
 - `unsafe { ... }` is a block, and it is the only place four operations may be
   written: reading or writing through a raw pointer, `ptr_cast`, `slice_from`,
   and calling an `extern fn` that is not marked `safe`. Outside one each is a

@@ -4910,6 +4910,52 @@ Holder :: struct { a: i64, b: i64 }
 ",
         "this expression is not an assignable place",
     ),
+    // A bound weighs what a type measures against a number, and `typename`
+    // answers with text, so it is not one of the three that may be weighed.
+    (
+        "a_bound_written_over_a_measurement_that_is_not_a_number",
+        "W :: struct { x: i64 }
+         tell :: fn($T: Type, v: $T) -> i64 where typename(T) == \"W\" {
+             sizeof(T)
+         }
+         main :: fn() -> i64 { tell(W { x = 1 }) }
+",
+        "'typename' is not a measurement a bound can be written over, which are \
+         sizeof, alignof and field_count",
+    ),
+    // A bound term that is neither a measurement nor a predicate. Only a name
+    // opens a predicate, so text opens a comparison and is weighed as the
+    // number it is not.
+    (
+        "a_bound_term_that_is_neither_a_measurement_nor_a_predicate",
+        "W :: struct { x: i64 }
+         tell :: fn($T: Type, v: $T) -> i64 where \"W\" == 1 { sizeof(T) }
+         main :: fn() -> i64 { tell(W { x = 1 }) }
+",
+        "a number in a bound is what a type measures, or arithmetic over one",
+    ),
+    // A bare name where a bound goes. It names no predicate and applies to
+    // nothing, and the report says which name it was.
+    (
+        "a_bound_that_is_a_bare_name",
+        "W :: struct { x: i64 }
+         tell :: fn($T: Type, v: $T) -> i64 where T { sizeof(T) }
+         main :: fn() -> i64 { tell(W { x = 1 }) }
+",
+        "a `where` bound is a predicate applied to a compile-time parameter, \
+         and 'T' is not one",
+    ),
+    // A measurement written as the whole bound. It answers a number and a
+    // bound answers a yes or no, so half the comparison is missing.
+    (
+        "a_bound_that_is_a_measurement_with_nothing_to_compare",
+        "W :: struct { x: i64 }
+         tell :: fn($T: Type, v: $T) -> i64 where sizeof(T) { sizeof(T) }
+         main :: fn() -> i64 { tell(W { x = 1 }) }
+",
+        "a measurement in a bound is weighed against a number, so what follows \
+         it compares",
+    ),
 ];
 
 // One arena, one carve, and the three ways the pointer leaves the block. Held
@@ -5710,6 +5756,30 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }
         ",
         "3 4\n",
+    ),
+    // What a `for` over a type's fields may ask of one. `typename(field)` is
+    // the name of the type the field holds, and it was the one of these the
+    // expansion did not rewrite: the bootstrap left the loop's own name
+    // standing and printed "field" twice, and the self-hosted compiler refused
+    // it as a type nothing declares.
+    (
+        "a_field_walk_asks_what_the_compiler_laid_the_type_out_with",
+        "import \"io.frost\"
+         V :: struct { a: f32, b: i64 }
+         main :: fn() -> i64 {
+             for field in fields(V) {
+                 print(
+                     \"{} {} {} {}\\n\",
+                     typename(field),
+                     sizeof(field),
+                     alignof(field),
+                     offset_of(field)
+                 )
+             }
+             0
+         }
+        ",
+        "f32 4 4 0\ni64 8 8 8\n",
     ),
     // A borrow of a borrow, named where a value is wanted.
     //

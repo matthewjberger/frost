@@ -18,7 +18,7 @@ export expand_includes, instance_fits_kind, tuple_is_first_for,
     parse_generic_instance, parse_program, join_synth_fns,
     function_literal_follows_at,
     record_mono_rets,
-    resolve_variant_fixups, struct_field_count
+    resolve_variant_fixups, struct_field_count, written_at
 
 // The code a compile-time argument carries, with the cursor on the token after
 // the `$`. The three kinds of argument are a number, a name that is a function
@@ -684,6 +684,24 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             if (cur(p) == TokenKind::Dollar) {
                 advance(p)
+            }
+            // `typename(field)` is the name of what that field holds, the way
+            // `type_id(field)` is its number. A field reads as a named type
+            // here, so which of the two it is comes from whether a `for` over
+            // `fields(T)` bound the name.
+            held := field_binding_of(p, cur_off(p), cur_len(p))
+            if (held >= 0) {
+                entry := arena_at(p.field_bindings, held)
+                field_off, field_len := synth_type_name(p, entry.ty)
+                advance(p)
+                advance(p)
+                return new_named_node(
+                    p,
+                    NodeKind::StrLit,
+                    0,
+                    field_off,
+                    field_len
+                )
             }
             if (unbound_template(p)) {
                 advance(p)

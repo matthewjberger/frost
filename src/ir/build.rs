@@ -2950,14 +2950,26 @@ fn bound_number(
             let Some(Literal::Integer(held)) =
                 measured(&ty, context.structs, context.enums, &named)
             else {
-                bail!(
-                    "'{named}' is not a measurement a bound can be written over, which are sizeof, alignof and field_count"
-                )
+                // The word that is wrong is the one written in the bound, so
+                // the report lands on it rather than on the call that read the
+                // bound: what a caller wrote is fine and the declaration is
+                // where the fix goes.
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "'{named}' is not a measurement a bound can be written over, which are sizeof, alignof and field_count"
+                    )),
+                    ast.position_of(ast.expr_span(*callee)),
+                );
             };
             Ok(held)
         }
-        _ => bail!(
-            "a number in a bound is what a type measures, or arithmetic over one"
+        // The term that is not a number is what the reader has to change, so
+        // the fault lands on it rather than on the call that read the bound.
+        _ => locate(
+            Err(anyhow::anyhow!(
+                "a number in a bound is what a type measures, or arithmetic over one"
+            )),
+            ast.position_of(ast.expr_span(expression)),
         ),
     }
 }
@@ -3016,6 +3028,18 @@ fn evaluate_bound(
                 )
             };
             let predicate = ast.name(*predicate);
+            // A measurement answers a number, and a bound answers a yes or no,
+            // so one written on its own is half a comparison. Said here because
+            // the arm below reads it as a predicate and names it for taking its
+            // parameter the wrong way, which is not what is wrong with it.
+            if matches!(predicate, "sizeof" | "alignof" | "field_count") {
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "a measurement in a bound is weighed against a number, so what follows it compares"
+                    )),
+                    ast.position_of(ast.expr_span(*callee)),
+                );
+            }
             if arguments.len() != 1 {
                 bail!(
                     "'{predicate}' takes one compile-time parameter, and {} were given",
@@ -3063,9 +3087,14 @@ fn evaluate_bound(
                 ast.position_of(ast.expr_span(*callee)),
             )
         }
-        _ => bail!(
-            "a `where` bound is a predicate applied to a compile-time parameter, and '{}' is not one",
-            display_expr(ast, expression)
+        // The term that is not a predicate is what the reader has to change,
+        // so the fault lands on it rather than on the call that read the bound.
+        _ => locate(
+            Err(anyhow::anyhow!(
+                "a `where` bound is a predicate applied to a compile-time parameter, and '{}' is not one",
+                display_expr(ast, expression)
+            )),
+            ast.position_of(ast.expr_span(expression)),
         ),
     }
 }
@@ -3563,14 +3592,17 @@ impl Expansion<'_> {
         }
         let node = ast.expr(expression).clone();
         // `sizeof(field)` is the width of what that field holds,
-        // `alignof(field)` what it is aligned to, and `type_id(field)` its
-        // number. A field reads as a named type to the parser, which is what
-        // makes this the place that tells the two apart. A name a `for` over a
-        // list of types bound is a type here and nowhere else, and resolves the
-        // same way.
+        // `alignof(field)` what it is aligned to, `type_id(field)` its number
+        // and `typename(field)` its name. A field reads as a named type to the
+        // parser, which is what makes this the place that tells the two apart.
+        // A name a `for` over a list of types bound is a type here and nowhere
+        // else, and resolves the same way.
         if let Expression::Call(callee, arguments) = &node
             && let Expression::Identifier(named) = ast.expr(*callee)
-            && matches!(ast.name(*named), "sizeof" | "alignof" | "type_id")
+            && matches!(
+                ast.name(*named),
+                "sizeof" | "alignof" | "type_id" | "typename"
+            )
             && arguments.len() == 1
         {
             let callee = *callee;
