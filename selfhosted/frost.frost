@@ -970,6 +970,8 @@ main :: fn() -> i64 {
         move_faults = arena_make($LocalVar, 256),
         move_locals = arena_make($LocalVar, 8192),
         gbindings = arena_make($GBinding, 4096),
+        gfn_templates = arena_make($GfnTemplate, 64),
+        gfn_templates_built = 0,
         type_param_off = 0,
         type_param_len = 0,
         xparam_start = 0,

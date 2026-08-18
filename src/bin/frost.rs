@@ -495,6 +495,55 @@ fn names_a_missing_name(message: &str) -> Option<String> {
 }
 
 /// Everything the run collected, as the one error a refused compile prints.
+// One container, one refusal. A pool of resources is found by two roads, once
+// under the name a reader wrote and once while a call to a generic over it is
+// specialized, and both say the same thing about the same type. The first stays,
+// since it is the line the reader can do something about.
+fn said_once(faults: &mut Vec<frost::Diagnostic>) {
+    // Which fault carries each claim, and where it points. A message a pass
+    // placed itself carries `at file:line:column:` in front of the claim, and
+    // one that did not is placed by the statement it was found in.
+    let placed = |fault: &frost::Diagnostic| -> (usize, usize) {
+        let Some(at) = fault.message.find(": '") else {
+            return (fault.position.line, fault.position.column);
+        };
+        let head = &fault.message[..at];
+        let mut numbers = head.rsplit(':');
+        let column = numbers.next().and_then(|held| held.parse().ok());
+        let line = numbers.next().and_then(|held| held.parse().ok());
+        match (line, column) {
+            (Some(line), Some(column)) => (line, column),
+            _ => (fault.position.line, fault.position.column),
+        }
+    };
+    let mut earliest: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for (index, fault) in faults.iter().enumerate() {
+        if !fault.message.contains(" is a pool of ") {
+            continue;
+        }
+        let claim = match fault.message.find(": '") {
+            Some(at) => fault.message[at + 2..].to_string(),
+            None => fault.message.clone(),
+        };
+        let keep = match earliest.get(&claim) {
+            Some(held) => placed(fault) < placed(&faults[*held]),
+            None => true,
+        };
+        if keep {
+            earliest.insert(claim, index);
+        }
+    }
+    let kept: std::collections::HashSet<usize> =
+        earliest.into_values().collect();
+    let mut index = 0;
+    faults.retain(|fault| {
+        let held = index;
+        index += 1;
+        !fault.message.contains(" is a pool of ") || kept.contains(&held)
+    });
+}
+
 fn refuse(collected: &[frost::Diagnostic]) -> Result<()> {
     if collected.is_empty() {
         return Ok(());
@@ -597,6 +646,7 @@ fn lowered_and_checked(
     }) {
         let mut faults = collected.to_vec();
         suggest_names(program, &program.roots.clone(), withheld, &mut faults);
+        said_once(&mut faults);
         refuse(&faults)?;
     }
     let lowered = beside(
@@ -648,6 +698,7 @@ fn lowered_and_checked(
         faults.extend(lowered.ownership);
     }
     suggest_names(program, &program.roots.clone(), withheld, &mut faults);
+    said_once(&mut faults);
     refuse(&faults)?;
     // A build that is refused says what it refused and nothing else, so this is
     // past the last of them. A warning is a report too, and a caller reading

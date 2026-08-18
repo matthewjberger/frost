@@ -11453,6 +11453,15 @@ instance_fits_kind :: fn(
     if (owner >= 0 && owner != gfn_index) {
         return false
     }
+    // A tuple a generic struct instance offers goes to the generics that take
+    // one of those, which is what brings `vec_get<Table>` into being from
+    // `Vec<Table>` alone. It does not go to every other generic that happens to
+    // accept the same kinds: a set of arguments one declaration was written
+    // with is not an argument list every generic was called with.
+    template := owner_template(owner)
+    if (template >= 0 && generic_takes_template(p, gfn_index, template) == false) {
+        return false
+    }
     gfn := arena_at(p.generic_fns, gfn_index)
     if (gfn.pack_len > 0) {
         return is_pack == gfn_index + 1

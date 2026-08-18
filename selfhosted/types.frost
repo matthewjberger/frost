@@ -18,6 +18,7 @@ export is_narrowing,
     settle_pending_tuples, hold_declaration, restore_declaration,
     MONO_DEPTH_MAX, Declaring,
     fn_index_of, note_type_args, takes_pack, pack_call_args,
+    owner_template, generic_takes_template,
     names_a_record_constant,
     note_format_forward, note_format_call, check_format_types,
     parse_call_type_args,
@@ -1571,6 +1572,97 @@ note_type_args :: fn(
     arena_at(p.type_arg_table, probe).mark = 1
 }
 
+// How a tuple a generic struct instance offers says which template wrote it.
+// Owners at or above zero are generic functions and -1 is every generic, so a
+// template takes the range below that. A struct that is no instance of a
+// template offers to every generic the way it always did.
+template_owner :: fn(template: i64) -> i64 {
+    if (template < 0) {
+        return -1
+    }
+    -2 - template
+}
+
+// The template an owner names, or -1 where the owner is not one.
+owner_template :: fn(owner: i64) -> i64 {
+    if (owner > (-2)) {
+        return -1
+    }
+    -2 - owner
+}
+
+// Which generic struct templates each generic function's declaration names,
+// worked out once over the tokens of every generic. A declaration names one
+// where it writes `Name<`, which is every position a generic type stands in:
+// a parameter, an answer, a binding inside the body.
+build_gfn_templates :: fn(mut p: Parser) {
+    if (p.gfn_templates_built == 1) {
+        return
+    }
+    p.gfn_templates_built = 1
+    mut gi: i64 = 0
+    while (gi < p.generic_fns.count) {
+        gfn := arena_at(p.generic_fns, gi)
+        mut i := gfn.token_start
+        mut depth: i64 = 0
+        mut started: bool = false
+        while (i < p.tokens.count) {
+            token := arena_at(p.tokens, i)
+            if (token.kind == TokenKind::Lbrace) {
+                depth = depth + 1
+                started = true
+            } else if (token.kind == TokenKind::Rbrace) {
+                depth = depth - 1
+                if (started && depth <= 0) {
+                    i = p.tokens.count
+                }
+            } else if (token.kind == TokenKind::Ident
+                && arena_at(p.tokens, i + 1).kind == TokenKind::Lt) {
+                template := template_named(p, token.off, token.len)
+                if (template >= 0) {
+                    arena_push(
+                        p.gfn_templates,
+                        GfnTemplate { gfn = gi, template = template }
+                    )
+                }
+            }
+            i = i + 1
+        }
+        gi = gi + 1
+    }
+}
+
+// The generic struct this name declares, or -1 where it declares none.
+template_named :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i: i64 = 0
+    while (i < p.structs.count) {
+        def := arena_at(p.structs, i)
+        if (def.is_generic == 1 && def.name_len == len
+            && bytes_equal(p.src, def.name_off, off, len)) {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// Whether this generic's declaration names this template.
+generic_takes_template :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    template: i64
+) -> bool {
+    mut i: i64 = 0
+    while (i < p.gfn_templates.count) {
+        held := arena_at(p.gfn_templates, i)
+        if (held.gfn == gfn_index && held.template == template) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 // A stand-in for one tuple's identity. Two that collide are still weighed in
 // full, so this only has to be cheap and spread out.
 tuple_hash :: fn(
@@ -1627,6 +1719,7 @@ rebuild_type_arg_table :: fn(mut p: Parser, slots: i64) {
 }
 
 collect_type_args :: fn(mut p: Parser) {
+    build_gfn_templates(p)
     mut i: i64 = 0
     while (i < p.instances.count) {
         // A generic struct written as `Box<i64>` names no function, so its
@@ -1646,7 +1739,7 @@ collect_type_args :: fn(mut p: Parser) {
                 entry.xarg_start,
                 entry.xarg_count,
                 0,
-                -1
+                template_owner(entry.generic_index)
             )
         }
         i = i + 1

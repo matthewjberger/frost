@@ -34,7 +34,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     TY_PARAM, TY_U16,
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, FormatCall,
     TypeCacheEntry, UnsafeSpan, IndirectCall,
-    Variant, WalkedField,
+    Variant, WalkedField, GfnTemplate,
     add_root, add_layer, Layer, Generator, layer_of, path_under,
     arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
     frost_rt_check_size, frost_rt_check_span,
@@ -911,6 +911,15 @@ GenericFn :: struct {
     // survives, and a call whose instance has not been parsed yet reads its
     // answer out of it.
     template_ret: i64,
+}
+
+// One generic struct template a generic function's declaration names. A tuple a
+// struct instance offers is offered to the generics that take one, and to no
+// others: a set of arguments one declaration was written with is not an
+// argument list every other generic was called with.
+GfnTemplate :: struct {
+    gfn: i64,
+    template: i64,
 }
 
 // One generic parameter name beyond the first, held in the `gparams` arena.
@@ -1937,6 +1946,10 @@ Parser :: struct {
     // settled what its list holds.
     format_calls: Arena<FormatCall>,
     gbindings: Arena<GBinding>,
+    // Which generic struct templates each generic function's declaration names,
+    // worked out once and read for every tuple a struct instance offers.
+    gfn_templates: Arena<GfnTemplate>,
+    gfn_templates_built: i64,
     type_param_off: i64,
     type_param_len: i64,
     // The parameters beyond the first that the current declaration collected into

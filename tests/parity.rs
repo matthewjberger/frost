@@ -5449,31 +5449,17 @@ fn both_compilers_refuse_the_same_programs() {
 // the words after the caret. `spoken` keeps what a report claims and drops the
 // header and the column it sits under, so two compilers pointing a reader at two
 // different places about one fault compared equal.
-// The refusals the two compilers place differently. One entry, and it is about
-// an instance nobody wrote.
-//
-// Both refuse `columns<Session, 4>` where `Session` is a resource, and both say
-// it twice. The bootstrap says it twice about that container. The self-hosted
-// compiler says it once about that container and once about a
-// `Slab<Session, 4>`, which the program never writes: settling what every
-// generic answers with tries every tuple of type arguments the program holds
-// against every generic, so the arguments one call was written with register an
-// instance of every other generic they fit, and `std/columns.frost` imports
-// `std/slab.frost`. The extra instance is the self-hosted compiler's own and
-// predates the container being a library declaration: a program that imports
-// `slab.frost` and instantiates any other generic over a resource at the same
-// arity has the same instance invented for it.
-const POSITIONED_DIFFERENTLY: &[&str] = &["a_columns_container_of_a_resource"];
+// The refusals the two compilers place differently. Empty, and it is the test
+// above that keeps it so: a pair that drifts fails on the way in, and one that
+// is mended fails until its name comes off.
+const POSITIONED_DIFFERENTLY: &[&str] = &[];
 
-// The refusals the two compilers word differently. One entry, and it is the
-// test above that keeps the rest empty: a pair that drifts fails on the way in,
-// and one that is mended fails until its name comes off.
-//
-// The one entry is the invented instance described at POSITIONED_DIFFERENTLY.
-// The second thing each compiler says is about a different container: the
-// bootstrap about the one the program wrote, the self-hosted compiler about a
-// `Slab<Session, 4>` nothing wrote.
-const WORDED_DIFFERENTLY: &[&str] = &["a_columns_container_of_a_resource"];
+// The refusals the two compilers word differently. Empty, and it is the test
+// above that keeps it so: a pair that drifts fails on the way in, and one that
+// is mended fails until its name comes off. Written down after the harness
+// learned to compare what was said rather than to look for a phrase inside it,
+// which is what let forty of these drift unseen.
+const WORDED_DIFFERENTLY: &[&str] = &[];
 
 // The file each header names, which is what a report calls a file rather than
 // where the file is.
