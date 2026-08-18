@@ -690,6 +690,20 @@ check_bound_at_call :: fn(
     }
     sym := arena_at(p.fns, fn_index)
     report_where(p.modules, p.src, at)
+    // `where packable(T) else "..."`. The bound says what was asked and the
+    // author's line says why the answer matters, so where one is written it is
+    // what a reader is told and the predicate is not repeated at them.
+    message := bound_message_at(p, gfn.bound_token)
+    if (message >= 0) {
+        token := arena_at(p.tokens, message)
+        report_src(p.src, token.off, token.len)
+        report(" ('")
+        report_src(p.src, sym.off, sym.len)
+        report("' was written with ")
+        report_bound_args(p, gfn_index, arg, xarg_start, xarg_count)
+        report(")")
+        frost_rt_recover_escape()
+    }
     report("'")
     report_src(p.src, sym.off, sym.len)
     report("' is declared `where ")
@@ -711,6 +725,41 @@ check_bound_at_call :: fn(
         }
     }
     report("`, and that does not hold for ")
+    report_bound_args(p, gfn_index, arg, xarg_start, xarg_count)
+    frost_rt_recover_escape()
+}
+
+// The string an `else` after a bound names, as the token holding it, or -1
+// where the declaration wrote none. The parse skips a bound to the body's `{`,
+// so the words are still in the tokens where the bound started.
+bound_message_at :: fn(mut p: Parser, bound_token: i64) -> i64 {
+    mut i: i64 = bound_token
+    while (i < p.tokens.count) {
+        token := arena_at(p.tokens, i)
+        if (token.kind == TokenKind::Lbrace) {
+            return -1
+        }
+        if (token.kind == TokenKind::KwElse) {
+            if (i + 1 < p.tokens.count) {
+                return i + 1
+            }
+            return -1
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// What the call bound each of the generic's compile-time parameters to, which
+// is what a reader changes to make the bound hold.
+report_bound_args :: fn(
+    mut p: Parser,
+    gfn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64
+) {
+    gfn := arena_at(p.generic_fns, gfn_index)
     report_src(p.src, gfn.tparam_off, gfn.tparam_len)
     report(" = ")
     report_type_name(p, arg)
@@ -724,7 +773,6 @@ check_bound_at_call :: fn(
         report_type_name(p, garg.value)
         x = x + 1
     }
-    frost_rt_recover_escape()
 }
 
 // ---------------------------------------------------------------------------

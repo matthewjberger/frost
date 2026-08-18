@@ -1670,7 +1670,7 @@ fn expression_sources(
                     union(&mut arguments.iter().copied())
                 }
                 "sizeof" | "alignof" | "type_id" | "offset_of"
-                | "slice_len" | "typename" => HashSet::new(),
+                | "slice_len" | "typename" | "name_of" => HashSet::new(),
                 // C has global storage, so what an extern answers with is not
                 // built from what it was handed.
                 _ if walk.externs.contains(name) => HashSet::new(),
@@ -3092,7 +3092,7 @@ impl Frame<'_> {
             // A count, an offset and a width are numbers, and a type's name is
             // bytes the compiler wrote. None of them names a caller's storage.
             "sizeof" | "alignof" | "type_id" | "offset_of" | "slice_len"
-            | "typename" => Provenance::Outlives,
+            | "typename" | "name_of" => Provenance::Outlives,
             // A conversion answers with the type it was given. Where that type
             // holds no view it carries no storage, and where it does the
             // storage is whatever was converted.

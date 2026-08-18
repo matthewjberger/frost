@@ -27,7 +27,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     is_borrow, is_pointer, is_proc, vector_of, is_raw_pointer, is_slab_ty, is_slice_ty,
     is_indirect, pointer_to, borrow_of,
     is_integer, integer_bits, one_bit, bit_ordinal, report_ordinal,
-    is_columns_ty, columns_lookup, columns_made_for, record_columns,
+    is_columns_ty,
     is_columns_zeroed_call, field_type_by_range,
     is_columns_bookkeeping,
     is_struct_ty, proc_of, proc_ret, proc_param_count, proc_param_at,
@@ -650,6 +650,7 @@ is_compiler_name :: fn(mut p: Parser, off: i64, len: i64) -> bool {
         || str_range_eq(p.src, off, len, "cast")
         || str_range_eq(p.src, off, len, "flags_has")
         || str_range_eq(p.src, off, len, "live_slots")
+        || str_range_eq(p.src, off, len, "name_of")
         || str_range_eq(p.src, off, len, "ptr_cast")
         || str_range_eq(p.src, off, len, "ptr_to")
         || str_range_eq(p.src, off, len, "sizeof")
@@ -1375,36 +1376,14 @@ write_instance_name :: fn(mut p: Parser, struct_ty: i64) {
         i = i + 1
     }
     // The template's name, which is what the reader wrote before the `<`. An
-    // instance carries a name this compiler chose, and a container built out
-    // of the element's own fields is named after the element: a
-    // `columns<Session, 4>` read that way came out as `Session<Session>`.
+    // instance carries a name this compiler chose, so the declaration it was
+    // made from is what a reader is shown.
     mut named := index
-    mut of_columns: bool = false
     if (found >= 0) {
         held := arena_at(p.instances, found).generic_index
-        if (held == COLUMNS_OF) {
-            of_columns = true
-        }
         if (held >= 0) {
             named = held
         }
-    }
-    // A columns container is asked for by a word rather than declared as a
-    // template, so there is no entry holding its name. Its slot table is what
-    // says how many it holds, and it is asked for here rather than taken on
-    // trust: a container recorded as one without that table would be a length
-    // read off a type that is not an array, which is an arena read past its end
-    // rather than a name.
-    slots := slab_field_type(p, struct_ty, "generations")
-    if (of_columns && is_array_ty(slots)) {
-        synth_bytes(p, "columns")
-        made := arena_at(p.instances, found)
-        synth_bytes(p, "<")
-        write_argument_name(p, made.arg)
-        synth_bytes(p, ", ")
-        synth_digits(p, array_length(p, slots))
-        synth_bytes(p, ">")
-        return
     }
     def := arena_at(p.structs, named)
     synth_range(p, def.name_off, def.name_len)
@@ -2088,64 +2067,6 @@ is_columns_bookkeeping :: fn(mut p: Parser, off: i64, len: i64) -> bool {
         || str_range_eq(p.src, off, len, "free_count")
         || str_range_eq(p.src, off, len, "live_words")
         || str_range_eq(p.src, off, len, "live_count"))
-}
-
-// An already-synthesized columns container for element `element` at capacity
-// `count`, or -1. Structural dedup so the same `columns<T,N>` written in two
-// places is one type, which is what lets a value pass between functions.
-columns_lookup :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
-    mut i: i64 = 0
-    while (i < p.instances.count) {
-        entry := arena_at(p.instances, i)
-        if (entry.generic_index == COLUMNS_OF && entry.arg == element) {
-            candidate := STRUCT_BASE + entry.struct_index
-            gens := slab_field_type(p, candidate, "generations")
-            if (is_array_ty(gens) && array_length(p, gens) == count) {
-                return candidate
-            }
-        }
-        i = i + 1
-    }
-    -1
-}
-
-// The element type a columns container stores, and how many slots it has, read
-// off the record made where it was synthesized. A container carries one array
-// per field of its element and nothing naming the element itself, and two
-// structs with the same field names and types would answer alike to a walk over
-// the shape, so what it was made for is written down instead.
-columns_made_for :: fn(mut p: Parser, container: i64) -> i64 {
-    if (is_struct_ty(container) == false) {
-        return -1
-    }
-    index := struct_index_of(container)
-    mut i: i64 = 0
-    while (i < p.instances.count) {
-        entry := arena_at(p.instances, i)
-        if (entry.generic_index == COLUMNS_OF
-            && entry.struct_index == index) {
-            return entry.arg
-        }
-        i = i + 1
-    }
-    -1
-}
-
-// Note that this container was made for this element at this capacity, so the
-// next one written the same way is this one and a call over it can read what it
-// holds.
-record_columns :: fn(mut p: Parser, element: i64, container: i64) {
-    arena_push(
-        p.instances,
-        Instance {
-            generic_index = COLUMNS_OF,
-            arg = element,
-            xarg_start = 0,
-            xarg_count = 0,
-            struct_index = struct_index_of(container),
-            asked_at = p.stmt_at
-        }
-    )
 }
 
 // Resolve a type name (byte range) to a type code: the current generic type

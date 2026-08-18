@@ -275,10 +275,11 @@ resolve). Construction uses the annotated instance type. This works over
 scalars and structs, with multiple type parameters, array fields of the
 parameter, by-reference passing, and nesting inside other structs.
 
-`columns<T, N>` is synthesized by the same pre-pass, reflecting over `T`'s
-fields in place of substituting a template: for each field it registers one
-`[N]field` array named after the field, plus the `generations` / `free_list` /
-`free_count` free list a slab carries. The deref `c[handle].field` and the
+`columns<T, N>` is an ordinary instance of the template `std/columns.frost`
+declares. Its body holds a `for` over `fields(T)`, which the same pre-pass reads
+per instance: for each field of `T` it registers one `[N]field` array named
+after the field, and the `generations` / `free_list` / `free_count` free list a
+slab carries is declared beside the walk. The deref `c[handle].field` and the
 scatter `c[handle] = value` lower to the slab's bounds-and-generation check
 (`frost_rt_slot`) reused verbatim, selecting the column before indexing it, and
 `columns_zeroed()` zero-initializes. It is the structure-of-arrays sibling of the

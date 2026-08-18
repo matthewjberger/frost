@@ -392,6 +392,12 @@ pub struct StructField {
     // declare names the word the reader wrote, and the declaration's own place
     // put the caret on the struct rather than on the field.
     pub at: crate::lexer::Position,
+    // The type parameter a `for name in fields(T)` in the body walks. Where it
+    // is set this entry stands for one field per field of that type rather than
+    // for a field of its own, `name` is the loop's name, and `field_type` is
+    // what the body wrote with that name standing for what the field holds.
+    #[serde(default)]
+    pub walk_over: Option<String>,
 }
 
 // A variant's fields are a run in `struct_fields`; a unit variant records
@@ -496,6 +502,13 @@ pub struct ReturnSignature {
     // they did.
     #[serde(default)]
     pub bound_text: String,
+    // What the declaration says when the bound does not hold, written
+    // `where packable(T) else "T has to pack into 16 bytes"`. The compiler holds
+    // the wording of every other refusal, and this is the one a library author
+    // knows better than it does: the bound says what was asked and only the
+    // author can say why the answer matters.
+    #[serde(default)]
+    pub bound_message: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
@@ -867,6 +880,7 @@ impl ReturnSignature {
             uses: Vec::new(),
             bound: None,
             bound_text: String::new(),
+            bound_message: None,
             at: crate::lexer::Position::default(),
         }
     }
@@ -1407,6 +1421,10 @@ impl<'a> Splicer<'a> {
                 // with the field rather than being worked out again.
                 align: field.align,
                 at: field.at,
+                // Which parameter the entry walks is part of the declaration
+                // too, so it crosses with the field the way a stated alignment
+                // does.
+                walk_over: field.walk_over,
             })
             .collect();
         dest.add_struct_fields(copied)
@@ -1462,6 +1480,7 @@ impl<'a> Splicer<'a> {
             uses: held.uses,
             bound,
             bound_text: held.bound_text,
+            bound_message: held.bound_message,
             // Carried, not dropped: this copy is what every check reads once
             // the modules are one program, so a place left behind here is a
             // place no pass can ever see.

@@ -57,6 +57,15 @@ pub fn check_declared_types(ast: &Ast, roots: &[StmtId]) -> Vec<Diagnostic> {
                 }
             }
             Statement::Struct(_, _, fields) => {
+                // A `for name in fields(T)` in the body binds its name as a
+                // type for the field it writes, so the name is known inside
+                // this declaration and nowhere else.
+                let mut known = known.clone();
+                for field in ast.fields_in(*fields) {
+                    if field.walk_over.is_some() {
+                        known.insert(ast.name(field.name));
+                    }
+                }
                 for field in ast.fields_in(*fields) {
                     // At the type the field names. The declaration's own place
                     // put the caret on the struct, which is not the word the

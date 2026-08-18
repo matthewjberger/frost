@@ -24,8 +24,13 @@ use std::collections::{HashMap, HashSet};
 
 /// The generic structs a program declares, by name, with their parameters and
 /// the field types written under them.
+// A declaration's fields as this check reads them: the name, the type, and the
+// parameter a `for name in fields(T)` walks where the entry is one.
+pub(crate) type TemplateFields<'a> =
+    Vec<(&'a str, &'a Type, Option<&'a str>)>;
+
 pub(crate) type Templates<'a> =
-    HashMap<&'a str, (Vec<&'a str>, Vec<(&'a str, &'a Type)>)>;
+    HashMap<&'a str, (Vec<&'a str>, TemplateFields<'a>)>;
 
 /// Instantiation names with where each was written.
 pub(crate) type Located = HashMap<String, Position>;
@@ -249,7 +254,7 @@ fn walk_concrete(
             for (param, argument) in params.iter().zip(arguments.iter()) {
                 subst.insert((*param).to_string(), argument_type(argument));
             }
-            fields.iter().find_map(|(_, field_type)| {
+            fields.iter().find_map(|(_, field_type, _)| {
                 let concrete = substitute_type(field_type, &subst);
                 walk_concrete(&concrete, templates, held, seen)
             })
@@ -276,18 +281,16 @@ fn walk_concrete(
 
 /// The element type of a pool, or `None` where this instantiation is not one.
 ///
-/// `columns<T, N>` is the compiler's own container and names its element first.
-/// A slab is an ordinary struct recognized by its shape, which is a `storage`
-/// array beside a `generations` array: that is the same rule the handle deref
-/// uses, so a type that can be indexed by a handle is a type this asks about.
+/// Both are recognized by their shape, which is the same rule the handle deref
+/// uses, so a type that can be indexed by a handle is a type this asks about. A
+/// slab holds a `storage` array beside a `generations` array. A columns
+/// container holds one array per field of the element in place of `storage`, so
+/// what it is made of is read off the parameter its walk names.
 fn pool_element(
     base: &str,
     arguments: &[String],
     templates: &Templates,
 ) -> Option<Type> {
-    if base == "columns" {
-        return arguments.first().map(|argument| argument_type(argument));
-    }
     let (params, fields) = templates.get(base)?;
     if params.len() != arguments.len() {
         return None;
@@ -295,17 +298,28 @@ fn pool_element(
     let field_type = |wanted: &str| {
         fields
             .iter()
-            .find(|(name, _)| *name == wanted)
-            .map(|(_, field_type)| *field_type)
+            .find(|(name, _, _)| *name == wanted)
+            .map(|(_, field_type, _)| *field_type)
     };
-    let storage = field_type("storage")?;
     let generations = field_type("generations")?;
-    if !is_run(storage) || !is_run(generations) {
+    if !is_run(generations) {
         return None;
     }
     let mut subst: HashMap<String, Type> = HashMap::new();
     for (param, argument) in params.iter().zip(arguments.iter()) {
         subst.insert((*param).to_string(), argument_type(argument));
+    }
+    // A columns container, whose slots are one array per field of the element.
+    // What it holds is what its walk was given, since no one field names it.
+    if field_type("storage").is_none() {
+        let walked = fields
+            .iter()
+            .find_map(|(_, _, walk_over)| *walk_over)?;
+        return subst.get(walked).cloned();
+    }
+    let storage = field_type("storage")?;
+    if !is_run(storage) {
+        return None;
     }
     match substitute_type(storage, &subst) {
         Type::Array(inner, _) | Type::ArrayGeneric(inner, _) => Some(*inner),
@@ -336,10 +350,16 @@ pub(crate) fn declared_structs<'a>(
                     .iter()
                     .map(|param| ast.name(*param))
                     .collect();
-                let fields: Vec<(&str, &Type)> = ast
+                let fields: TemplateFields = ast
                     .fields_in(*fields)
                     .iter()
-                    .map(|field| (ast.name(field.name), &field.field_type))
+                    .map(|field| {
+                        (
+                            ast.name(field.name),
+                            &field.field_type,
+                            field.walk_over.as_deref(),
+                        )
+                    })
                     .collect();
                 templates.insert(ast.name(*name), (params, fields));
             }
@@ -353,12 +373,14 @@ pub(crate) fn declared_structs<'a>(
                     .iter()
                     .map(|param| ast.name(*param))
                     .collect();
-                let payload: Vec<(&str, &Type)> = ast
+                let payload: TemplateFields = ast
                     .variants_in(*variants)
                     .iter()
                     .filter_map(|variant| variant.fields)
                     .flat_map(|fields| ast.fields_in(fields))
-                    .map(|field| (ast.name(field.name), &field.field_type))
+                    .map(|field| {
+                        (ast.name(field.name), &field.field_type, None)
+                    })
                     .collect();
                 templates.insert(ast.name(*name), (params, payload));
             }
@@ -389,7 +411,7 @@ fn instance_is_linear(
     for (param, argument) in params.iter().zip(arguments.iter()) {
         subst.insert((*param).to_string(), argument_type(argument));
     }
-    fields.iter().any(|(_, field_type)| {
+    fields.iter().any(|(_, field_type, _)| {
         substitute_type(field_type, &subst).is_linear_with(held)
     })
 }

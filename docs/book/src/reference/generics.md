@@ -301,7 +301,9 @@ return, and `type_id` lets a query later name the component by writing the type.
 
 Expansion has no recursion, no unbounded loop, and nothing that reads the world.
 Every construct here iterates a list whose length is known once the generic is
-instantiated, so the program's own text bounds the cost of expansion.
+instantiated, so the program's own text bounds the cost of expansion. A
+compile-time call, which is the other half of 5.2c, is bounded by its own step
+count and nesting depth instead.
 
 A literal is read where a `format` parameter takes one, and a constant or a
 length may be a call the build runs early. Both are bounded: the reader counts
@@ -336,6 +338,7 @@ asked:
 
 | | |
 | --- | --- |
+| `name_of(field)` | the name its own declaration gave it, as text |
 | `offset_of(field)` | where it sits in the type that declares it |
 | `sizeof(field)` | how wide what it holds is |
 | `alignof(field)` | what it is aligned to |
@@ -348,13 +351,58 @@ Each is what the compiler already worked out to lay the type out, asked of the
 field rather than of a type written by name. Naming a field anywhere else is an
 error.
 
-There is no reflection by name. `has_field(T, "position")` is the string-keyed
-predicate 11.4a rules out, and a field's own name is not readable: `typename`
-answers with the name of the type the field holds, not with the field's.
+`name_of` writes a name and nothing reads one back. `has_field(T, "position")`
+is the string-keyed predicate 11.4a rules out, so there is no way to go from a
+string to a field, and that is the direction the rule is about. `typename` still
+answers with the name of the type the field holds rather than with the field's.
+
+A walk over an enum hands back its variants. A variant holds no one type, so
+`name_of` and `offset_of`, which is the number standing for it, are the whole of
+what it answers, and `sizeof`, `typename` and a predicate over one are refused
+where they are written. `field_count(T)` counts variants for an enum the way it
+counts fields for a struct.
+
+```frost,sketch
+Step :: enum { Left, Right, Up }
+
+tags :: fn($T: Type) {
+    for variant in fields(T) {
+        print("{} is tag {}
+", name_of(variant), offset_of(variant))
+    }
+}
+```
 
 The bound is the same one 11.1c holds: the list a `for` walks is the struct's
 own field list, so its length is fixed by a declaration. No recursion, no
 unbounded loop, and nothing that reads the world.
+
+## 11.1d.1 Building a type out of a walk
+
+A `for` over `fields(T)` may stand in a struct's body. It writes one field per
+field of `T`, each keeping the name that field's own declaration gave it, and
+the type after it is written with the loop's name standing for what the walked
+field holds:
+
+```frost,sketch
+columns :: struct($T: Type, $N: usize) {
+    for column in fields(T) { [N]column }
+    generations: [N]i64,
+    free_list: [N]i64,
+    free_count: i64,
+}
+```
+
+`columns<Particle, 8>` over a `Particle { x: i64, y: i64 }` is then a struct
+with an `[8]i64` called `x`, an `[8]i64` called `y`, and the three fields
+written under the walk. `std/columns.frost` is this written out, and it is the
+whole of how that container is laid out: the compiler holds no shape of its own
+for it.
+
+The walk is read where the instance is, since only there is `T` a type with
+fields. The name the walk binds is a type inside the braces and nowhere else,
+and a field it writes may say `align(N)` the way a field written by hand does.
+This is the only way a declaration writes a field it did not name.
 
 ## 11.1e What a call writes
 
@@ -572,6 +620,26 @@ store :: fn($T: Type, v: $T) -> i64 where packable(T) { sizeof(T) }
 The refusal names the function and what the call gave it: `'store' is declared
 `where packable(T)`, and that does not hold for T = Wide`. One that reaches
 itself is refused after thirty-two.
+
+A declaration may say what a reader is told instead, written `else` and one
+string after the bound. The bound says what was asked and the author's line says
+why the answer matters, so the two together are what a caller needs:
+
+```frost
+Small :: struct { x: i64 }
+
+packs :: fn($T: Type) -> bool { is_struct(T) && sizeof(T) <= 16 }
+
+store :: fn($T: Type, v: $T) -> i64
+    where packs(T) else "a stored value has to pack into 16 bytes" {
+    sizeof(T)
+}
+```
+
+A call that does not hold is then told
+`a stored value has to pack into 16 bytes ('store' was written with T = Wide)`.
+The string is a literal, so what a reader is told is settled where the bound is
+written rather than worked out at the call.
 
 There is no bound keyed by a name, such as asking whether a type has a field
 called `position`.

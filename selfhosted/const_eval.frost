@@ -3,9 +3,13 @@
 // A constant and an array length are needed before any body is parsed, so this
 // reads the callee straight off the tokens rather than off a tree. What it
 // understands is the whole-number half of the language: parameters and locals,
-// arithmetic and comparison, `if`, `while`, `return`, and calls to other
-// functions written the same way. Everything else is refused where it is
-// written, naming what stopped it.
+// arithmetic and comparison, `if`, `while`, `for`, `match`, `return`, and calls
+// to other functions written the same way, itself included. Everything else is
+// refused where it is written, naming what stopped it.
+//
+// What bounds the work is the step count and the nesting depth. A step that
+// calls itself is counted by both, so nothing here reads the shape of the call
+// graph to know a compile finishes.
 
 import "core.frost"
 import "lexer.frost"
@@ -23,8 +27,9 @@ export record_const_functions, const_fn_index, const_call, const_arg_push,
 // read off the text, and this is what says a compile finishes.
 CONST_STEPS :: 1000000
 
-// How deep calls may nest. A function that reaches itself is refused by name,
-// so this is what catches a long chain of distinct functions.
+// How deep calls may nest. A call may reach itself, so this is the whole of
+// what bounds a chain: a step that calls itself and a long chain of distinct
+// functions are the same shape once one of them is counted.
 CONST_DEPTH :: 32
 
 // What a statement did: ran, left the call with a value, or left a loop.
@@ -311,24 +316,7 @@ const_call :: fn(
     name_off := entry.name_off
     name_len := entry.name_len
     body_at := entry.at
-    mut i: i64 = 0
-    while (i < p.const_stack.count) {
-        held := arena_at(p.const_stack, i)
-        if (held.name_len == name_len
-            && bytes_equal(p.src, held.name_off, name_off, name_len)) {
-            const_fault(p, at)
-            creport(p, "'")
-            creport_src(p, name_off, name_len)
-            creport(
-                p,
-                "' reaches itself, and a compile-time call is worked out "
-            )
-            creport(p, "by running it, which never ends")
-            const_stop(p)
-        }
-        i = i + 1
-    }
-    if (p.const_stack.count >= CONST_DEPTH) {
+    if (p.const_depth >= CONST_DEPTH) {
         const_fault(p, at)
         creport(p, "a compile-time call may nest ")
         creport_int(p, CONST_DEPTH)
@@ -420,12 +408,9 @@ const_call :: fn(
         creport(p, "nothing to work out here")
         const_stop(p)
     }
-    arena_push(
-        p.const_stack,
-        ConstFrame { name_off = name_off, name_len = name_len }
-    )
+    p.const_depth = p.const_depth + 1
     answered := const_block(p, at)
-    p.const_stack.count = p.const_stack.count - 1
+    p.const_depth = p.const_depth - 1
     p.const_locals.count = locals_mark
     p.ti = saved
     p.const_args.count = arg_start
@@ -576,6 +561,12 @@ const_stmt :: fn(mut p: Parser, at: i64) -> ConstFlow {
     }
     if (kind == TokenKind::KwWhile) {
         return const_while(p, at)
+    }
+    if (kind == TokenKind::KwFor) {
+        return const_for(p, at)
+    }
+    if (kind == TokenKind::KwMatch) {
+        return const_match(p, at)
     }
     if (kind == TokenKind::Lbrace) {
         return const_block(p, at)
@@ -821,6 +812,313 @@ const_while :: fn(mut p: Parser, at: i64) -> ConstFlow {
         }
     }
     ConstFlow { flow = FLOW_RAN, kind = CONST_INT, value = 0, count = 0 }
+}
+
+// A `for` over a span of whole numbers, or over a run already worked out. Both
+// have a length before the body is read, so what the walk costs is bounded the
+// way the step count bounds a `while`. `for index, item in run` names the
+// position as well as the element.
+const_for :: fn(mut p: Parser, at: i64) -> ConstFlow {
+    advance(p)
+    if (cur(p) != TokenKind::Ident) {
+        const_fault(p, at)
+        creport(p, "a `for` names what it walks")
+        const_stop(p)
+    }
+    first_off := cur_off(p)
+    first_len := cur_len(p)
+    advance(p)
+    mut second_off: i64 = 0
+    mut second_len: i64 = 0
+    mut named_two: bool = false
+    if (cur(p) == TokenKind::Comma) {
+        advance(p)
+        second_off = cur_off(p)
+        second_len = cur_len(p)
+        named_two = true
+        advance(p)
+    }
+    if (cur(p) != TokenKind::KwIn) {
+        const_fault(p, at)
+        creport(p, "a `for` names what it walks and then what it walks over")
+        const_stop(p)
+    }
+    advance(p)
+    low := const_expr(p, at)
+    mut over_span: bool = false
+    mut inclusive: bool = false
+    mut high := const_int(0)
+    if (cur(p) == TokenKind::Dotdot || cur(p) == TokenKind::Dotdoteq) {
+        over_span = true
+        inclusive = cur(p) == TokenKind::Dotdoteq
+        advance(p)
+        high = const_expr(p, at)
+    }
+    mut count: i64 = 0
+    mut start: i64 = 0
+    mut from: i64 = 0
+    if (over_span) {
+        if (low.kind != CONST_INT || high.kind != CONST_INT) {
+            const_fault(p, at)
+            creport(p, "a `for` over a span walks whole numbers")
+            const_stop(p)
+        }
+        from = low.value
+        mut last := high.value
+        if (inclusive == false) {
+            last = high.value - 1
+        }
+        count = last - from + 1
+        if (count < 0) {
+            count = 0
+        }
+    } else if (low.kind == CONST_ARRAY || low.kind == CONST_TEXT) {
+        start = low.value
+        count = low.count
+    } else {
+        const_fault(p, at)
+        creport(p, "a `for` walks a span or a run of values, and this is ")
+        creport(p, "neither")
+        const_stop(p)
+    }
+    if (cur(p) != TokenKind::Lbrace) {
+        const_fault(p, at)
+        creport(p, "a `for` walks over a block")
+        const_stop(p)
+    }
+    body_at := p.ti
+    locals_mark := p.const_locals.count
+    mut answered := ConstFlow {
+        flow = FLOW_RAN,
+        kind = CONST_INT,
+        value = 0,
+        count = 0
+    }
+    mut left: bool = false
+    mut index: i64 = 0
+    while (index < count) {
+        const_spend(p, at)
+        p.const_locals.count = locals_mark
+        mut item := const_int(from + index)
+        if (over_span == false) {
+            if (low.kind == CONST_TEXT) {
+                item = const_int(p.src[start + index])
+            } else {
+                entry := arena_at(p.const_items, start + index)
+                item = ConstValue {
+                    kind = entry.kind,
+                    value = entry.value,
+                    count = entry.count
+                }
+            }
+        }
+        if (named_two) {
+            arena_push(
+                p.const_locals,
+                ConstLocal {
+                    name_off = first_off,
+                    name_len = first_len,
+                    kind = CONST_INT,
+                    value = index,
+                    count = 0
+                }
+            )
+            arena_push(
+                p.const_locals,
+                ConstLocal {
+                    name_off = second_off,
+                    name_len = second_len,
+                    kind = item.kind,
+                    value = item.value,
+                    count = item.count
+                }
+            )
+        } else {
+            arena_push(
+                p.const_locals,
+                ConstLocal {
+                    name_off = first_off,
+                    name_len = first_len,
+                    kind = item.kind,
+                    value = item.value,
+                    count = item.count
+                }
+            )
+        }
+        p.ti = body_at
+        held := const_block(p, at)
+        if (held.flow == FLOW_LEFT) {
+            answered = held
+            left = true
+            break
+        }
+        if (held.flow == FLOW_BROKE) {
+            break
+        }
+        index = index + 1
+    }
+    p.const_locals.count = locals_mark
+    p.ti = body_at
+    const_skip_block(p)
+    if (left) {
+        return answered
+    }
+    ConstFlow { flow = FLOW_RAN, kind = CONST_INT, value = 0, count = 0 }
+}
+
+// The arm a `match` takes. The subject is worked out first, so which arm it is
+// settled before any of them is read, and the arms that were not taken are
+// read for their length and worked out nowhere.
+const_match :: fn(mut p: Parser, at: i64) -> ConstFlow {
+    advance(p)
+    if (cur(p) != TokenKind::Lparen) {
+        const_fault(p, at)
+        creport(p, "a `match` names what it reads")
+        const_stop(p)
+    }
+    advance(p)
+    subject := const_expr(p, at)
+    advance(p)
+    if (cur(p) != TokenKind::Lbrace) {
+        const_fault(p, at)
+        creport(p, "a `match` reads a block of arms")
+        const_stop(p)
+    }
+    advance(p)
+    mut answered := ConstFlow {
+        flow = FLOW_RAN,
+        kind = CONST_INT,
+        value = 0,
+        count = 0
+    }
+    mut taken: bool = false
+    while (cur(p) == TokenKind::KwCase) {
+        advance(p)
+        covers := const_pattern(p, at, subject)
+        if (cur(p) != TokenKind::Colon) {
+            const_fault(p, at)
+            creport(p, "an arm of a `match` is a pattern and then a ':'")
+            const_stop(p)
+        }
+        advance(p)
+        if (covers && taken == false) {
+            taken = true
+            if (cur(p) == TokenKind::Lbrace) {
+                answered = const_block(p, at)
+            } else {
+                held := const_expr(p, at)
+                answered = ConstFlow {
+                    flow = FLOW_LEFT,
+                    kind = held.kind,
+                    value = held.value,
+                    count = held.count
+                }
+            }
+        } else {
+            const_skip_arm(p)
+        }
+    }
+    advance(p)
+    if (taken == false) {
+        const_fault(p, at)
+        creport(p, "no arm of this `match` covers what its subject worked ")
+        creport(p, "out to")
+        const_stop(p)
+    }
+    answered
+}
+
+// Past an arm that was not taken, leaving the cursor on the next `case` or on
+// the `}` that ends the arms.
+const_skip_arm :: fn(mut p: Parser) {
+    if (cur(p) == TokenKind::Lbrace) {
+        const_skip_block(p)
+        return
+    }
+    mut depth: i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Lbrace || kind == TokenKind::Lparen
+            || kind == TokenKind::Lbracket) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rbrace) {
+            if (depth == 0) {
+                return
+            }
+            depth = depth - 1
+        } else if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket) {
+            depth = depth - 1
+        } else if (depth == 0 && kind == TokenKind::KwCase) {
+            return
+        }
+        advance(p)
+    }
+}
+
+// Whether an arm's pattern covers what the subject worked out to. Every
+// alternative under one arm is read, so the cursor ends on the ':' whichever of
+// them answered.
+const_pattern :: fn(mut p: Parser, at: i64, subject: ConstValue) -> bool {
+    mut covers: bool = false
+    mut more: bool = true
+    while (more) {
+        if (const_pattern_one(p, at, subject)) {
+            covers = true
+        }
+        more = cur(p) == TokenKind::Pipe
+        if (more) {
+            advance(p)
+        }
+    }
+    covers
+}
+
+// One alternative: a whole number, a yes or no, a run of bytes, a span of whole
+// numbers, or `_`. A compile-time value is one of those, so a pattern naming a
+// variant has nothing here to stand against.
+const_pattern_one :: fn(mut p: Parser, at: i64, subject: ConstValue) -> bool {
+    if (cur(p) == TokenKind::Underscore) {
+        advance(p)
+        return true
+    }
+    if (cur(p) == TokenKind::Ident
+        && peek_kind(p, 1) == TokenKind::Coloncolon) {
+        const_fault(p, at)
+        creport(p, "a compile-time `match` reads a whole number, a yes or ")
+        creport(p, "no, or a run of bytes, and this arm names a variant")
+        const_stop(p)
+        return false
+    }
+    low := const_unary(p, at)
+    if (cur(p) == TokenKind::Dotdot || cur(p) == TokenKind::Dotdoteq) {
+        inclusive := cur(p) == TokenKind::Dotdoteq
+        advance(p)
+        high := const_unary(p, at)
+        if (subject.kind != CONST_INT || low.kind != CONST_INT
+            || high.kind != CONST_INT) {
+            const_fault(p, at)
+            creport(p, "a span of whole numbers covers whole numbers")
+            const_stop(p)
+            return false
+        }
+        if (subject.value < low.value) {
+            return false
+        }
+        if (inclusive) {
+            return subject.value <= high.value
+        }
+        return subject.value < high.value
+    }
+    if (low.kind != subject.kind) {
+        return false
+    }
+    if (low.kind == CONST_TEXT) {
+        if (low.count != subject.count) {
+            return false
+        }
+        return bytes_equal(p.src, low.value, subject.value, low.count)
+    }
+    low.value == subject.value
 }
 
 // The expression grammar, level for level with the one the parser uses, so a
@@ -1225,6 +1523,23 @@ const_factor :: fn(mut p: Parser, at: i64) -> ConstValue {
     }
     if (kind == TokenKind::Lbracket) {
         return const_postfix(p, at, const_array(p, at))
+    }
+    // A `match` written where a value is read. The arms answer the way a block
+    // does, so the one that was taken leaves with a value.
+    if (kind == TokenKind::KwMatch) {
+        held := const_match(p, at)
+        if (held.flow != FLOW_LEFT) {
+            const_fault(p, at)
+            creport(p, "this `match` answers with nothing, so there is no ")
+            creport(p, "value here")
+            const_stop(p)
+            return const_int(0)
+        }
+        return ConstValue {
+            kind = held.kind,
+            value = held.value,
+            count = held.count
+        }
     }
     if (kind == TokenKind::Ident) {
         name_off := cur_off(p)

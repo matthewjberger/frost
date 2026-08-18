@@ -186,6 +186,27 @@ fn walk_unsafety(ast: &Ast, roots: &[StmtId], audit: bool) -> Vec<Diagnostic> {
 
 /// The type a top-level constant holds, for the shapes that say so plainly. Only
 /// enough to tell an index into one from an index into a raw pointer.
+// What a field written by a `for name in fields(T)` looks like, with the loop's
+// name standing for a type nothing here can know. The length of an array over
+// one is unknown for the same reason, and neither matters: this pass asks
+// whether a place is reached through a raw pointer.
+fn walked_shape(ty: &Type, loop_name: &str) -> Type {
+    match ty {
+        Type::Struct(name) if name == loop_name => Type::Unknown,
+        Type::ArrayGeneric(inner, _) => {
+            Type::Array(Box::new(walked_shape(inner, loop_name)), 0)
+        }
+        Type::Array(inner, size) => {
+            Type::Array(Box::new(walked_shape(inner, loop_name)), *size)
+        }
+        Type::Slice(inner) => {
+            Type::Slice(Box::new(walked_shape(inner, loop_name)))
+        }
+        Type::Ptr(inner) => Type::Ptr(Box::new(walked_shape(inner, loop_name))),
+        other => other.clone(),
+    }
+}
+
 fn constant_type(ast: &Ast, value: ExprId) -> Option<Type> {
     match ast.expr(value) {
         Expression::Literal(Literal::Array(elements)) => {
@@ -458,16 +479,6 @@ impl Checker<'_> {
             }
             Expression::FieldAccess(base, field) => {
                 let base_type = self.type_of(*base)?;
-                // A `columns<T, N>` is laid out by reflecting T's fields, which
-                // happens after this pass, so the field a body names has no
-                // declaration to look up yet. Every one of them is an array,
-                // which is all this rule needs: what it refuses is a raw
-                // pointer, and a column is not one.
-                if let Type::Struct(name) = &base_type
-                    && name.starts_with("columns<")
-                {
-                    return Some(Type::Array(Box::new(Type::Unknown), 0));
-                }
                 let name = match base_type {
                     Type::Struct(name) => name,
                     Type::Ptr(inner)
@@ -483,10 +494,24 @@ impl Checker<'_> {
                 // them under `Box`. Without this the gate cannot see that
                 // `b.data` is a `^T`, and indexing a raw pointer held by any
                 // generic container is allowed outside an `unsafe` block.
-                ast.fields_in(*self.fields.get(Type::template_of(&name))?)
+                let declared = *self.fields.get(Type::template_of(&name))?;
+                if let Some(found) = ast
+                    .fields_in(declared)
                     .iter()
-                    .find(|declared| declared.name == *field)
-                    .map(|declared| declared.field_type.clone())
+                    .find(|held| held.name == *field)
+                {
+                    return Some(found.field_type.clone());
+                }
+                // A field a `for name in fields(T)` writes has no declaration
+                // under its own name: which fields there are is settled per
+                // instance, and that happens after this pass. What the walk
+                // wrote is the shape of every one of them, which is all this
+                // rule needs, since what it refuses is a raw pointer.
+                let walk = ast
+                    .fields_in(declared)
+                    .iter()
+                    .find(|held| held.walk_over.is_some())?;
+                Some(walked_shape(&walk.field_type, ast.name(walk.name)))
             }
             // An element of an array or a slice, so `rows[i][j]` names the inner
             // element rather than nothing. A `str` indexes to a byte, and a
@@ -561,7 +586,7 @@ impl Checker<'_> {
                 // declaration to read.
                 match ast.name(*name) {
                     "sizeof" | "alignof" | "type_id" => return Some(Type::I64),
-                    "typename" => return Some(Type::Str),
+                    "typename" | "name_of" => return Some(Type::Str),
                     _ => {}
                 }
                 // A name bound to a function the call site chose, which is a

@@ -2,7 +2,7 @@
 // the Parser that every pass threads through itself.
 
 export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
-    ARRAY_BASE, Arena, ArrayDef, COLUMNS_OF,
+    ARRAY_BASE, Arena, ArrayDef,
     CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, CH_BANG, CH_CARET, CH_COLON,
     CH_COMMA, CH_CR, CH_DOLLAR, CH_DOT, CH_DQUOTE, CH_EQ, CH_GT, CH_LBRACE,
     CH_LBRACKET, CH_LF, CH_LOWER_A, CH_LOWER_N, CH_LOWER_T, CH_LOWER_Z,
@@ -28,13 +28,13 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     op_answers_truth,
     BORROW_FLAG, POINTER_BASE, INDIRECT_BASE, Parser, STRUCT_BASE, StructDef,
     StructField, Sym, TokenKind, VariantFixup, FixupKind,
-    ConstFn, ConstLocal, ConstFrame, ConstValue, ConstItem, ConstRecord,
+    ConstFn, ConstLocal, ConstValue, ConstItem, ConstRecord,
     ConstLayout, ConstFlow,
     CONST_INT, CONST_BOOL, CONST_ARRAY, CONST_RECORD, CONST_TEXT, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, FormatCall,
     TypeCacheEntry, UnsafeSpan, IndirectCall,
-    Variant,
+    Variant, WalkedField,
     add_root, add_layer, Layer, Generator, layer_of, path_under,
     arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
     frost_rt_check_size, frost_rt_check_span,
@@ -447,11 +447,6 @@ BORROW_FLAG :: 1000000000
 // pointer tests. It is resolved to an array length or an integer literal while
 // the generic body is re-parsed with the argument bound.
 CONST_BASE :: 2000000000
-// The `generic_index` an instance record carries when what it records is a
-// columns container rather than an instance of a declared template. The
-// container is synthesized from a type's fields and nothing declares it, so
-// there is no template index to name.
-COLUMNS_OF :: -2
 // A function pointer, a value that is the address of a function with a given
 // signature. It is a pointer at the ABI but not a data pointer. It is neither
 // dereferenced nor pointer-arithmeticked, it is called. A code at or above this
@@ -1097,12 +1092,6 @@ ConstLocal :: struct {
     count: i64,
 }
 
-// A call being run, so one that reaches itself is caught by name.
-ConstFrame :: struct {
-    name_off: i64,
-    name_len: i64,
-}
-
 // The five things a compile-time value may be. Held in `core` rather than
 // beside the evaluator because the constant table carries one and every file
 // that reads that table needs the names.
@@ -1249,6 +1238,26 @@ Variant :: struct {
     name_off: i64,
     name_len: i64,
     tag: i64,
+}
+
+// One entry of what a `for` over `fields(T)` walks. A struct's field and an
+// enum's variant are the same shape here: both have a name and a number, and
+// only a field has one type behind it.
+WalkedField :: struct {
+    // The loop's own name, which the body writes.
+    name_off: i64,
+    name_len: i64,
+    // The name the declaration gave the field or the variant, which `name_of`
+    // answers with.
+    field_off: i64,
+    field_len: i64,
+    // What a field holds. A variant holds no one type, so a walk over an enum
+    // leaves this at TY_I64 and `is_variant` says not to read it.
+    ty: i64,
+    // Where a field sits in the type that declares it, or the number standing
+    // for a variant.
+    at: i64,
+    is_variant: i64,
 }
 
 // A `test "name" { ... }` block, as the name it was given and the function its
@@ -1733,11 +1742,11 @@ Parser :: struct {
     locals: Arena<LocalVar>,
     consts: Arena<ConstDef>,
     // What a compile-time call needs: every function one may run, the names in
-    // scope while one runs, which calls are running so one that reaches itself
-    // is caught, and the arguments waiting on a stack.
+    // scope while one runs, how many calls are running so a chain is bounded,
+    // and the arguments waiting on a stack.
     const_fns: Arena<ConstFn>,
     const_locals: Arena<ConstLocal>,
-    const_stack: Arena<ConstFrame>,
+    const_depth: i64,
     const_args: Arena<ConstValue>,
     // Every item of every aggregate the evaluator has worked out. A value
     // names its own run by where it starts and how many there are.
@@ -1879,7 +1888,11 @@ Parser :: struct {
     // The fields in force: a `for` over `fields(T)` binds its name to one of
     // them per copy of the body. `ty` is what the field holds and `slot` is
     // where it sits, which is every question that may be asked of one.
-    field_bindings: Arena<LocalVar>,
+    field_bindings: Arena<WalkedField>,
+    // Whether the walk being read has already refused a question asked of a
+    // variant. The body is read once per variant, so without this one mistake
+    // is said once per variant rather than once.
+    walk_refused: i64,
     // What each name binds while the declaration around it is being parsed.
     // Only what a compile-time list is given is read from here, and only at the
     // call that gives it, since that is the one question whose answer has to be

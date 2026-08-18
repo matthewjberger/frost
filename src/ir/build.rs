@@ -33,6 +33,7 @@ pub const COMPILER_NAMES: &[&str] = &[
     "cast",
     "flags_has",
     "live_slots",
+    "name_of",
     "ptr_cast",
     "ptr_to",
     "sizeof",
@@ -49,18 +50,32 @@ pub const COMPILER_NAMES: &[&str] = &[
     "wrap_sub",
 ];
 
+// Whether an instance name is the standard library's columns container, which
+// is what answers for one declared in the file the reader is in. A private name
+// is mangled where it crosses an import, so this is the name half of the
+// question and `columns_layout` is the half that answers anywhere.
+fn is_columns_shaped(name: &str) -> bool {
+    Type::template_of(name).ends_with("columns")
+        && name.len() > Type::template_of(name).len()
+}
+
+// Whether a layout is a columns container: the generational bookkeeping of a
+// slab, with one array per field of the element in place of one `storage` run.
+fn columns_layout(layout: &StructLayout) -> bool {
+    layout.field("generations").is_some()
+        && layout.field("free_list").is_some()
+        && layout.field(LIVE_WORDS).is_some()
+        && layout.field("storage").is_none()
+}
+
 // The liveness bookkeeping a generational container carries beside its
-// generations and free list, named here because the synthesis writes it, the
+// generations and free list, named here because the library declares it, the
 // library maintains it and the `for` walk reads it.
 pub const LIVE_WORDS: &str = "live_words";
 pub const LIVE_COUNT: &str = "live_count";
+// How many slots one liveness word carries, which is what a walk over the live
+// ones steps by.
 const SLOTS_PER_WORD: usize = 64;
-
-// One word per sixty-four slots, and never a zero-length array, since a
-// container of no capacity still has to have the field to be laid out.
-pub fn live_word_count(capacity: usize) -> usize {
-    capacity.div_ceil(SLOTS_PER_WORD).max(1)
-}
 
 // A field of a columns container that belongs to the container rather than to
 // the element, so scattering an element into its slot passes over it.
@@ -98,7 +113,19 @@ impl FunctionSignature {
 
 // A generic struct declaration as its parameter names and written fields, and
 // a generic enum's the same with one field list per variant that carries one.
-type GenericStructDefs = HashMap<String, (Vec<String>, Vec<(String, Type)>)>;
+// One entry of a generic struct's declared body: an ordinary field, or a
+// `for name in fields(T)` standing for one field per field of what T is bound
+// to. Held apart from the instance's own fields because only the instance knows
+// what T is.
+#[derive(Clone)]
+struct TemplateField {
+    name: String,
+    ty: Type,
+    align: Option<usize>,
+    walk_over: Option<String>,
+}
+
+type GenericStructDefs = HashMap<String, (Vec<String>, Vec<TemplateField>)>;
 type GenericEnumVariants = Vec<(String, Option<Vec<(String, Type)>>)>;
 type GenericEnumDefs = HashMap<String, (Vec<String>, GenericEnumVariants)>;
 
@@ -645,11 +672,14 @@ fn build_module_inner(
                 .iter()
                 .map(|param| ast.name(*param).to_string())
                 .collect();
-            let fields: Vec<(String, Type)> = ast
+            let fields: Vec<TemplateField> = ast
                 .fields_in(*fields)
                 .iter()
-                .map(|field| {
-                    (ast.name(field.name).to_string(), field.field_type.clone())
+                .map(|field| TemplateField {
+                    name: ast.name(field.name).to_string(),
+                    ty: field.field_type.clone(),
+                    align: field.align,
+                    walk_over: field.walk_over.clone(),
                 })
                 .collect();
             generic_struct_defs
@@ -784,6 +814,7 @@ fn build_module_inner(
                     parameters,
                     ExpansionContext {
                         structs: &builder.structs,
+                        enums: &builder.enums,
                         subst: &HashMap::new(),
                         linear,
                     },
@@ -1024,6 +1055,7 @@ fn build_module_inner(
             let return_sig = ReturnSignature {
                 bound: None,
                 bound_text: String::new(),
+                bound_message: None,
                 at: generic_signature.at,
                 kind: match ast.signature_to_type(&generic_signature) {
                     Some(ty) => ReturnKind::Single(substitute_type(
@@ -1078,6 +1110,7 @@ fn build_module_inner(
                 parameters,
                 ExpansionContext {
                     structs: &builder.structs,
+                    enums: &builder.enums,
                     subst: &specialization.subst,
                     linear,
                 },
@@ -3133,15 +3166,21 @@ fn check_bound(
     if evaluate_bound(ast, bound, subst, context, 0)? {
         return Ok(());
     }
-    let written = &signature.bound_text;
     let mut bindings: Vec<String> = subst
         .iter()
         .map(|(name, ty)| format!("{name} = {ty}"))
         .collect();
     bindings.sort();
+    let bindings = bindings.join(", ");
+    // What the declaration wrote, where it wrote one. The bound says what was
+    // asked and the author's line says why the answer matters, so the two
+    // together are what a caller needs and the predicate on its own is not.
+    if let Some(message) = &signature.bound_message {
+        bail!("{message} ('{callee}' was written with {bindings})")
+    }
+    let written = &signature.bound_text;
     bail!(
-        "'{callee}' is declared `where {written}`, and that does not hold for {}",
-        bindings.join(", ")
+        "'{callee}' is declared `where {written}`, and that does not hold for {bindings}"
     )
 }
 
@@ -3170,17 +3209,37 @@ struct Expansion<'a> {
     // The compiler laid these out to emit the program. A layout table is the
     // same numbers, written where the reader can use them.
     structs: &'a HashMap<String, StructLayout>,
+    // Every enum's layout, so a walk over one reports its variants the way a
+    // walk over a struct reports its fields.
+    enums: &'a HashMap<String, EnumLayout>,
     // The type arguments this specialization was made for, so `fields(T)` in a
     // generic body names the type the call chose.
     subst: &'a HashMap<String, Type>,
     // The fields in force: a `for` over `fields(T)` binds its name to one of
     // them per copy of the body. A field is not a value, so the only things
-    // that read this are `offset_of`, `sizeof` and the type predicates.
-    fields: HashMap<String, (usize, Type)>,
+    // that read this are `name_of`, `offset_of`, `sizeof` and the type
+    // predicates.
+    fields: HashMap<String, Walked>,
     // The types that have to be consumed, so `is_linear` answers here the way
     // it answers in a `where` bound. Both ask the same question of the same
     // set, so an expansion-time `if` and a call-site bound cannot disagree.
     linear: &'a HashSet<String>,
+}
+
+// One entry of what a `for` over `fields(T)` walks. A struct's field and an
+// enum's variant are the same shape here: both have a name and a number, and
+// only a field has one type behind it.
+#[derive(Clone)]
+struct Walked {
+    // The name the declaration gave it, which `name_of` answers with.
+    name: String,
+    // Where a field sits in the type that declares it, or the number standing
+    // for a variant.
+    offset: usize,
+    // What a field holds. A variant holds no one type, so a walk over an enum
+    // leaves this empty and the name and the number are the whole of what may
+    // be asked.
+    ty: Option<Type>,
 }
 
 // What expansion reads that does not change while it runs: the layouts a walk
@@ -3188,6 +3247,7 @@ struct Expansion<'a> {
 // and the types that have to be consumed.
 struct ExpansionContext<'a> {
     structs: &'a HashMap<String, StructLayout>,
+    enums: &'a HashMap<String, EnumLayout>,
     subst: &'a HashMap<String, Type>,
     linear: &'a HashSet<String>,
 }
@@ -3201,6 +3261,7 @@ fn expand_compile_time(
 ) -> Result<Range32> {
     let ExpansionContext {
         structs,
+        enums,
         subst,
         linear,
     } = context;
@@ -3214,6 +3275,7 @@ fn expand_compile_time(
         pack,
         types,
         structs,
+        enums,
         subst,
         fields: HashMap::new(),
         linear,
@@ -3258,30 +3320,25 @@ impl Expansion<'_> {
             // fixed by a declaration rather than by anything this walks.
             if let Statement::For(variable, None, iterable, body) =
                 ast.stmt(statement).clone()
-                && let Some(layout) = self.fields_named(ast, iterable)
+                && let Some(fields) = self.walked(ast, iterable)
             {
                 let variable = ast.name(variable).to_string();
-                let fields: Vec<(usize, Type)> = layout
-                    .fields
-                    .iter()
-                    .map(|field| (field.offset, field.ty.clone()))
-                    .collect();
                 for field in fields {
                     let bound = self.with_field(&variable, field);
                     expanded.extend(bound.statements(ast, body)?);
                 }
                 continue;
             }
-            // A `for` over `fields(..)` of something that is not a struct. Left
-            // to fall through, the walk read it as an ordinary call and the
-            // reader was told there is no function called `fields`, which is
-            // not what is wrong: there is, and a number has no fields to walk.
+            // A `for` over `fields(..)` of something that has none. Left to
+            // fall through, the walk read it as an ordinary call and the reader
+            // was told there is no function called `fields`, which is not what
+            // is wrong: there is, and a number has nothing to walk.
             if let Statement::For(_, None, iterable, _) = ast.stmt(statement)
                 && names_a_field_walk(ast, *iterable)
             {
                 return Err(crate::diagnostic::LocatedError {
                     position: ast.expr_position(*iterable),
-                    message: "a `for` over `fields(T)` walks a struct, and this is not one"
+                    message: "a `for` over `fields(T)` walks a struct's fields or an enum's variants, and this is neither"
                         .to_string(),
                 }
                 .into());
@@ -3340,14 +3397,11 @@ impl Expansion<'_> {
         Ok(expanded)
     }
 
-    // The struct a `fields(...)` names, when this expression is one. The
-    // argument is a type: a type parameter this specialization bound, or a
-    // struct named outright.
-    fn fields_named(
-        &self,
-        ast: &Ast,
-        expression: ExprId,
-    ) -> Option<&StructLayout> {
+    // What a `fields(...)` walks, when this expression is one. The argument is a
+    // type: a type parameter this specialization bound, or a type named
+    // outright. A struct answers with its fields and an enum with its variants,
+    // so one loop is written over either.
+    fn walked(&self, ast: &Ast, expression: ExprId) -> Option<Vec<Walked>> {
         let Expression::Call(callee, arguments) = ast.expr(expression) else {
             return None;
         };
@@ -3357,8 +3411,32 @@ impl Expansion<'_> {
         if ast.name(*named) != "fields" || arguments.len() != 1 {
             return None;
         }
-        self.structs
-            .get(&self.named_type(ast, ast.exprs_in(*arguments)[0])?)
+        let named = self.named_type(ast, ast.exprs_in(*arguments)[0])?;
+        if let Some(layout) = self.structs.get(&named) {
+            return Some(
+                layout
+                    .fields
+                    .iter()
+                    .map(|field| Walked {
+                        name: field.name.clone(),
+                        offset: field.offset,
+                        ty: Some(field.ty.clone()),
+                    })
+                    .collect(),
+            );
+        }
+        let layout = self.enums.get(&named)?;
+        Some(
+            layout
+                .variants
+                .iter()
+                .map(|variant| Walked {
+                    name: variant.name.clone(),
+                    offset: variant.tag as usize,
+                    ty: None,
+                })
+                .collect(),
+        )
     }
 
     // The name of the type an expression names, following the type arguments
@@ -3377,11 +3455,7 @@ impl Expansion<'_> {
     }
 
     // The field a name is bound to, for a name a `for` over `fields(T)` bound.
-    fn field_named(
-        &self,
-        ast: &Ast,
-        expression: ExprId,
-    ) -> Option<&(usize, Type)> {
+    fn field_named(&self, ast: &Ast, expression: ExprId) -> Option<&Walked> {
         match ast.expr(expression) {
             Expression::Identifier(named) => self.fields.get(ast.name(*named)),
             _ => None,
@@ -3426,19 +3500,21 @@ impl Expansion<'_> {
             pack: self.pack,
             types,
             structs: self.structs,
+            enums: self.enums,
             subst: self.subst,
             fields: self.fields.clone(),
             linear: self.linear,
         }
     }
 
-    fn with_field(&self, name: &str, field: (usize, Type)) -> Expansion<'_> {
+    fn with_field(&self, name: &str, field: Walked) -> Expansion<'_> {
         let mut fields = self.fields.clone();
         fields.insert(name.to_string(), field);
         Expansion {
             pack: self.pack,
             types: self.types.clone(),
             structs: self.structs,
+            enums: self.enums,
             subst: self.subst,
             fields,
             linear: self.linear,
@@ -3466,16 +3542,21 @@ impl Expansion<'_> {
         let argument = ast.exprs_in(*arguments)[0];
         if named == "field_count"
             && let Some(name) = self.named_type(ast, argument)
-            && let Some(layout) = self.structs.get(&name)
         {
-            return Ok(Some(layout.fields.len() as i64));
+            if let Some(layout) = self.structs.get(&name) {
+                return Ok(Some(layout.fields.len() as i64));
+            }
+            if let Some(layout) = self.enums.get(&name) {
+                return Ok(Some(layout.variants.len() as i64));
+            }
         }
         if named == "offset_of" {
             // The fault is what was written inside the parentheses, so it
             // lands there. Left unplaced it carried the position of whatever
             // declaration was being read, which is the head of the function a
             // reader would then go looking through.
-            let Some((offset, _)) = self.field_named(ast, argument) else {
+            let Some(Walked { offset, .. }) = self.field_named(ast, argument)
+            else {
                 return locate(
                     Err(anyhow::anyhow!(
                         "offset_of names a field of a type, which is what a `for` over `fields(T)` binds"
@@ -3531,7 +3612,14 @@ impl Expansion<'_> {
                 // ways depending on which of the two positions it was written
                 // in.
                 let ty = match self.fields.get(subject) {
-                    Some((_, ty)) => ty,
+                    Some(Walked { ty: Some(ty), .. }) => ty,
+                    // A variant of an enum, which holds no one type. Its name
+                    // and its number are the whole of what it answers, so a
+                    // predicate over one is a question with nothing to read.
+                    Some(walked) => bail!(
+                        "'{}' is a variant of an enum, so it is asked about with `name_of` and `offset_of`, and a type predicate has nothing to read",
+                        walked.name
+                    ),
                     None => match self.types.get(subject) {
                         Some(ty) => ty,
                         None => match self.subst.get(subject) {
@@ -3610,6 +3698,38 @@ impl Expansion<'_> {
             ));
         }
         let node = ast.expr(expression).clone();
+        // `name_of(field)` is the name the declaration gave it, as a `str`.
+        // Writing a name is safe. Reading one back to find a field is what
+        // there is no way to write, so a name leaves here and nothing takes one.
+        if let Expression::Call(callee, arguments) = &node
+            && let Expression::Identifier(named) = ast.expr(*callee)
+            && ast.name(*named) == "name_of"
+            && arguments.len() == 1
+        {
+            let argument = ast.exprs_in(*arguments)[0];
+            let held = match ast.expr(argument) {
+                Expression::TypeValue(Type::Struct(written)) => {
+                    self.fields.get(written)
+                }
+                Expression::Identifier(written) => {
+                    self.fields.get(ast.name(*written))
+                }
+                _ => None,
+            };
+            let Some(walked) = held else {
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "name_of names a field or a variant, which is what a `for` over `fields(T)` binds"
+                    )),
+                    ast.position_of(ast.expr_span(argument)),
+                );
+            };
+            let name = walked.name.clone();
+            return Ok(ast.push_expr(
+                Expression::Literal(Literal::String(name)),
+                span,
+            ));
+        }
         // `sizeof(field)` is the width of what that field holds,
         // `alignof(field)` what it is aligned to, `type_id(field)` its number
         // and `typename(field)` its name. A field reads as a named type to the
@@ -3629,7 +3749,20 @@ impl Expansion<'_> {
             let resolved = match ast.expr(argument) {
                 Expression::TypeValue(Type::Struct(written)) => {
                     match self.fields.get(written) {
-                        Some((_, ty)) => Some(ty.clone()),
+                        Some(Walked { ty: Some(ty), .. }) => Some(ty.clone()),
+                        // At the word that was written, which is what a
+                        // reader has to change. The declaration's own place put
+                        // the caret on the head of the function it sits in.
+                        Some(walked) => {
+                            return locate(
+                                Err(anyhow::anyhow!(
+                                    "'{}' is a variant of an enum, so it is asked about with `name_of` and `offset_of`, and '{}' reads a type",
+                                    walked.name,
+                                    ast.name(*named)
+                                )),
+                                ast.position_of(span),
+                            );
+                        }
                         None => self.types.get(written).cloned(),
                     }
                 }
@@ -3655,7 +3788,7 @@ impl Expansion<'_> {
             && self.fields.contains_key(ast.name(*named))
         {
             bail!(
-                "'{named}' is a field of a type, so it is asked about with `offset_of`, `sizeof` and the type predicates, and is not a value",
+                "'{named}' is a field of a type, so it is asked about with `name_of`, `offset_of`, `sizeof` and the type predicates, and is not a value",
                 named = ast.name(*named)
             )
         }
@@ -4307,13 +4440,13 @@ fn infer_struct_instance_shallow(
     let (type_params, fields) = discovery.structs.get(struct_name)?;
     let mut subst: HashMap<String, Type> = HashMap::new();
     for entry in ast.named_in(field_inits) {
-        if let Some((_, field_type)) = fields
+        if let Some(field) = fields
             .iter()
-            .find(|(field_name, _)| field_name == ast.name(entry.name))
+            .find(|field| field.name == ast.name(entry.name))
             && let Some(value_type) =
                 infer_expr_type_shallow(ast, entry.value, env, discovery)
         {
-            infer_subst_into(field_type, &value_type, type_params, &mut subst);
+            infer_subst_into(&field.ty, &value_type, type_params, &mut subst);
         }
     }
     let rendered: Vec<String> = type_params
@@ -4732,11 +4865,14 @@ fn expand_generic_structs(
                 .iter()
                 .map(|param| ast.name(*param).to_string())
                 .collect();
-            let fields: Vec<(String, Type)> = ast
+            let fields: Vec<TemplateField> = ast
                 .fields_in(*fields)
                 .iter()
-                .map(|field| {
-                    (ast.name(field.name).to_string(), field.field_type.clone())
+                .map(|field| TemplateField {
+                    name: ast.name(field.name).to_string(),
+                    ty: field.field_type.clone(),
+                    align: field.align,
+                    walk_over: field.walk_over.clone(),
                 })
                 .collect();
             generic_structs
@@ -4955,6 +5091,7 @@ fn expand_generic_structs(
                                 field_type: field_type.clone(),
                                 align: None,
                                 at: crate::lexer::Position::default(),
+                                walk_over: None,
                             })
                             .collect();
                         ast.add_struct_fields(entries)
@@ -4970,81 +5107,6 @@ fn expand_generic_structs(
             ));
             continue;
         }
-        if base == "columns" {
-            // `columns<T, N>` is the SoA container: one `[N]field` array per
-            // field of T (named after the field) plus the generational
-            // bookkeeping a slab carries. The layout cannot be written in
-            // library Frost, so it is reflected from T's fields here. Only a
-            // CONCRETE instance is synthesized. The generic template form
-            // `columns<T, N>` in a library signature is skipped, since it is
-            // monomorphized to a concrete instance where it is used.
-            if argument_strings.len() != 2 {
-                continue;
-            }
-            let Ok(count) = argument_strings[1].trim().parse::<usize>() else {
-                continue;
-            };
-            let Ok(element) =
-                crate::parser::type_from_string(&argument_strings[0])
-            else {
-                continue;
-            };
-            let Type::Struct(element_name) = &element else {
-                continue;
-            };
-            let Some(element_fields) = concrete_structs.get(element_name)
-            else {
-                continue;
-            };
-            let mut columns_fields: Vec<(String, Type)> = element_fields
-                .iter()
-                .map(|(field_name, field_type)| {
-                    (
-                        field_name.clone(),
-                        Type::Array(Box::new(field_type.clone()), count),
-                    )
-                })
-                .collect();
-            columns_fields.push((
-                "generations".to_string(),
-                Type::Array(Box::new(Type::I64), count),
-            ));
-            columns_fields.push((
-                "free_list".to_string(),
-                Type::Array(Box::new(Type::I64), count),
-            ));
-            columns_fields.push(("free_count".to_string(), Type::I64));
-            // Which slots hold an element, one bit each, so `for i in live_slots(c)`
-            // walks them in slot order and skips sixty-four dead slots at a
-            // time. The free list says which slots are free but not in an order
-            // that can be walked, and a generation of zero is a slot that was
-            // never filled as much as one that is. Appended, so every column
-            // above keeps the offset it had.
-            columns_fields.push((
-                LIVE_WORDS.to_string(),
-                Type::Array(Box::new(Type::I64), live_word_count(count)),
-            ));
-            columns_fields.push((LIVE_COUNT.to_string(), Type::I64));
-            for (_, field_type) in &columns_fields {
-                collect_instances_in_type(field_type, &mut queue);
-            }
-            let entries: Vec<StructField> = columns_fields
-                .iter()
-                .map(|(field_name, field_type)| StructField {
-                    name: ast.intern(field_name),
-                    field_type: field_type.clone(),
-                    align: None,
-                    at: crate::lexer::Position::default(),
-                })
-                .collect();
-            let name = ast.intern(&instance);
-            let fields = ast.add_struct_fields(entries);
-            synthetic.push(ast.push_stmt(
-                Statement::Struct(name, Range32::EMPTY, fields),
-                TokenSpan::NONE,
-            ));
-            continue;
-        }
         let Some((type_params, fields)) = generic_structs.get(&base) else {
             continue;
         };
@@ -5055,22 +5117,58 @@ fn expand_generic_structs(
             &instance,
             "struct",
         )?;
-        let concrete_fields: Vec<(String, Type)> = fields
-            .iter()
-            .map(|(field_name, field_type)| {
-                (field_name.clone(), substitute_type(field_type, &subst))
-            })
-            .collect();
-        for (_, field_type) in &concrete_fields {
+        let mut concrete_fields: Vec<(String, Type, Option<usize>)> =
+            Vec::new();
+        let mut deferred = false;
+        for field in fields {
+            let Some(walked) = &field.walk_over else {
+                concrete_fields.push((
+                    field.name.clone(),
+                    substitute_type(&field.ty, &subst),
+                    field.align,
+                ));
+                continue;
+            };
+            // A `for name in fields(T)` writes one field per field of what this
+            // instance bound T to, each keeping the name its own declaration
+            // gave it. The loop's name stands for what that field holds, so the
+            // type the body wrote is substituted with it bound.
+            let Some(Type::Struct(element)) = subst.get(walked) else {
+                bail!(
+                    "'{instance}' walks the fields of '{walked}', and what it was given is not a struct"
+                )
+            };
+            let Some(element_fields) = concrete_structs.get(element) else {
+                // The template form, where T is still a parameter and there is
+                // nothing to walk. It is monomorphized to a concrete instance
+                // where it is used, and that instance is what is synthesized.
+                deferred = true;
+                break;
+            };
+            for (field_name, field_type) in element_fields {
+                let mut inner = subst.clone();
+                inner.insert(field.name.clone(), field_type.clone());
+                concrete_fields.push((
+                    field_name.clone(),
+                    substitute_type(&field.ty, &inner),
+                    field.align,
+                ));
+            }
+        }
+        if deferred {
+            continue;
+        }
+        for (_, field_type, _) in &concrete_fields {
             collect_instances_in_type(field_type, &mut queue);
         }
         let entries: Vec<StructField> = concrete_fields
             .iter()
-            .map(|(field_name, field_type)| StructField {
+            .map(|(field_name, field_type, align)| StructField {
                 name: ast.intern(field_name),
                 field_type: field_type.clone(),
-                align: None,
+                align: *align,
                 at: crate::lexer::Position::default(),
+                walk_over: None,
             })
             .collect();
         let name = ast.intern(&instance);
@@ -8298,13 +8396,13 @@ impl<'a> FunctionLowering<'a> {
             };
             let Type::Struct(named) = &held else {
                 bail!(
-                    "`field_count` counts the fields of a struct, and '{}' is not one",
+                    "`field_count` counts the fields of a struct or the variants of an enum, and '{}' is neither",
                     spelled(&held)
                 );
             };
             let Some(layout) = self.builder.struct_layout(named) else {
                 bail!(
-                    "`field_count` counts the fields of a struct, and '{}' is not one",
+                    "`field_count` counts the fields of a struct or the variants of an enum, and '{}' is neither",
                     spelled(&held)
                 );
             };
@@ -9229,10 +9327,14 @@ impl<'a> FunctionLowering<'a> {
                                 .collect::<Vec<&str>>(),
                             fields
                                 .iter()
-                                .map(|(field_name, field_type)| {
-                                    (field_name.as_str(), field_type)
+                                .map(|field| {
+                                    (
+                                        field.name.as_str(),
+                                        &field.ty,
+                                        field.walk_over.as_deref(),
+                                    )
                                 })
-                                .collect::<Vec<(&str, &Type)>>(),
+                                .collect::<crate::check::linear_instances::TemplateFields>(),
                         ),
                     )
                 })
@@ -11406,13 +11508,22 @@ impl<'a> FunctionLowering<'a> {
         Ok((element_address, element))
     }
 
-    // A columns container, the SoA sibling of a slab, recognized by its
-    // synthesized `columns<...>` name. Its data is one array per field of the
-    // element rather than one `storage` array, so a Handle deref picks a column
-    // before indexing.
+    // A columns container, the SoA sibling of a slab. Its data is one array per
+    // field of the element rather than one `storage` array, so a Handle deref
+    // picks a column before indexing. Read off the shape rather than the name,
+    // since the declaration is a library one and a private name is mangled
+    // where it crosses an import.
     fn columns_shaped_base(&self, base: ExprId) -> Option<String> {
         match self.probe_type(base)? {
-            Type::Struct(name) if name.starts_with("columns<") => Some(name),
+            Type::Struct(name)
+                if is_columns_shaped(&name)
+                    || self
+                        .builder
+                        .struct_layout(&name)
+                        .is_some_and(columns_layout) =>
+            {
+                Some(name)
+            }
             _ => None,
         }
     }
@@ -11636,11 +11747,11 @@ impl<'a> FunctionLowering<'a> {
                 "{called}() needs its type from the context, e.g. `mut c : {wanted} = {called}()`"
             );
         };
-        // A columns container is known by its name, since the compiler is what
-        // made it. A slab is known by its shape, the way it is everywhere else,
-        // and by the name the standard library gives it, since an instance
-        // whose element is itself an instance has no layout to read yet at the
-        // point this is lowered.
+        // Both are known by their shape, and by the name the standard library
+        // gives them. A private name is mangled where it crosses an import, so
+        // the name alone answers only for a declaration in this file, and an
+        // instance whose element is itself an instance has no layout to read
+        // yet at the point this is lowered.
         let recognized = if slab {
             name.starts_with("Slab<")
                 || self.builder.struct_layout(name).is_some_and(|layout| {
@@ -11648,7 +11759,11 @@ impl<'a> FunctionLowering<'a> {
                         && layout.field("generations").is_some()
                 })
         } else {
-            name.starts_with("columns<")
+            is_columns_shaped(name)
+                || self
+                    .builder
+                    .struct_layout(name)
+                    .is_some_and(columns_layout)
         };
         if !recognized {
             bail!("{called}() initializes a `{wanted}`, not '{name}'");
@@ -13232,13 +13347,13 @@ impl<'a> FunctionLowering<'a> {
             self.builder.generic_struct_defs.get(struct_name)?;
         let mut subst: HashMap<String, Type> = HashMap::new();
         for entry in self.ast.named_in(field_inits) {
-            if let Some((_, field_type)) = fields
+            if let Some(field) = fields
                 .iter()
-                .find(|(field_name, _)| field_name == self.ast.name(entry.name))
+                .find(|field| field.name == self.ast.name(entry.name))
                 && let Some(value_type) = self.shallow_value_type(entry.value)
             {
                 infer_subst_into(
-                    field_type,
+                    &field.ty,
                     &value_type,
                     type_params,
                     &mut subst,

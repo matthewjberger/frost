@@ -5,19 +5,34 @@
 // slot goes stale when it is released and reused, and a handle to it stops
 // reading.
 //
-// `columns<T, N>` is a compiler-synthesized type, one `[N]field` array per
-// field of `T` plus the `generations`/`free_list`/`free_count` bookkeeping.
-// `columns_zeroed()` builds a zeroed one. The deref `c[handle].field` and the
-// element scatter `c[handle] = value` are compiler-supplied because they select
-// a column before indexing, which is not writable where a struct is one value.
-// Everything below is ordinary Frost over those, mirroring std/slab.frost, so
-// switching a system from `Slab<T, N>` to `columns<T, N>` changes the container
-// token and the `slab_` prefix, nothing else.
+// `columns<T, N>` is declared below, out of a `for` over `fields(T)`: one
+// `[N]field` array per field of `T`, each keeping the name its own declaration
+// gave it, plus the bookkeeping a slab carries. `columns_zeroed()` builds a
+// zeroed one. The deref `c[handle].field` and the element scatter
+// `c[handle] = value` are compiler-supplied because they select a column before
+// indexing, which is not writable where a struct is one value. Everything else
+// here is ordinary Frost over those, mirroring std/slab.frost, so switching a
+// system from `Slab<T, N>` to `columns<T, N>` changes the container token and
+// the `slab_` prefix, nothing else.
 
 import "slab.frost"
 
-export columns_reset, columns_full, columns_insert, columns_alive,
+export columns, columns_reset, columns_full, columns_insert, columns_alive,
     columns_release
+
+// One array per field of the element, named after that field, and the
+// generational bookkeeping beside them. `live_words` says which slots hold an
+// element, one bit each, so `for slot in live_slots(c)` walks them in slot
+// order and skips sixty-four dead slots at a time. It comes after the columns,
+// so every column keeps the offset it would have had without it.
+columns :: struct($T: Type, $N: usize) {
+    for column in fields(T) { [N]column }
+    generations: [N]i64,
+    free_list: [N]i64,
+    free_count: i64,
+    live_words: [(N + 63) / 64]i64,
+    live_count: i64,
+}
 
 // Every slot free, every generation back to zero. Built with `columns_zeroed()`
 // and then reset, since construction cannot run code.

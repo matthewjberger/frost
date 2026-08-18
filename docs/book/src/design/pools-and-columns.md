@@ -58,10 +58,11 @@ field in its own contiguous array, a structure of arrays, so that pass walks one
 tight column. `columns<T, N>` is that transpose of the slab, and it keeps the
 slab's generational safety unchanged.
 
-`columns<T, N>` is a compiler-synthesized type. For a struct `T` with fields
-`f1..fn`, it lays out one `[N]` array per field, each named after the field, plus
-the same `generations` / `free_list` / `free_count` bookkeeping the slab
-carries, and a record of which slots hold an element:
+`columns<T, N>` is declared in `std/columns.frost`, out of a `for` over
+`fields(T)` in its own body (11.1d.1). For a struct `T` with fields `f1..fn`, it
+lays out one `[N]` array per field, each named after the field, plus the same
+`generations` / `free_list` / `free_count` bookkeeping the slab carries, and a
+record of which slots hold an element:
 
 ```frost
 import "math.frost"
@@ -75,11 +76,12 @@ Particle :: struct { position: Vec3, velocity: Vec3, mass: f32 }
 //     live_words:  [16]i64,   live_count: i64 }
 ```
 
-The layout cannot be written in library Frost, because "one array per field of
-`T`" is not a thing the type system can say about an arbitrary `T`. So the
-compiler reflects over `T`'s fields and synthesizes it, the way it synthesizes a
-generic struct instance. Each column is named after its field, so both access
-patterns use machinery that already exists:
+"One array per field of `T`" is what a walk in a struct's body says, so the
+layout is a library declaration and the compiler holds no shape of its own for
+it. What the compiler still supplies is the two access forms, since each selects
+a column before indexing and that is not writable where a struct is one value.
+Each column is named after its field, so both use machinery that already
+exists:
 
 - `c.field` is the whole column. It is ordinary field access that yields the
   `[N]t` array, and an array coerces to a slice for free, so `c.position` passed

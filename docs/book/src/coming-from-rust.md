@@ -788,10 +788,21 @@ lookup table is decided before the program runs, and `TABLE[2]` reads out of it
 with the index checked where it is written. `wrap_add`, `wrap_sub` and
 `wrap_mul` fold too, which is Rust's `wrapping_*` family in a `const fn`.
 
-Everything else is refused where it is written: a function that reaches itself,
-a call into the world, a pointer, a number with a fraction, and a bound of a
-million steps. A refused call stays refused, so one declaration is never a
-number in one place and a call in another.
+A call may reach itself, and a `for` and a `match` are read there too, so a
+table built by a recurrence or by a walk is written the way it reads. What
+bounds the work is a million steps and a nesting depth of thirty-two, which
+count a step that calls itself like any other.
+
+Everything else is refused where it is written: a call into the world, a
+pointer, and a number with a fraction. A refused call stays refused, so one
+declaration is never a number in one place and a call in another.
+
+A struct's body may hold a `for` over `fields(T)` too, which writes one field per
+field of what `T` is bound to. That is compile-time type construction, and it is
+how `std/columns.frost` lays out one array per field of its element. What Zig's
+`@Type` does that this does not is build a type out of a description the program
+computed: here the fields come from another type's, and their names are the ones
+that type gave them.
 
 The compile-time layer stops well short of a language of its own. Every
 construct walks a list whose length the call fixed, or a body whose steps are

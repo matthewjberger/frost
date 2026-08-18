@@ -474,7 +474,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
              0
          }
         ",
-        "a `for` over `fields(T)` walks a struct, and this is not one",
+        "a `for` over `fields(T)` walks a struct's fields or an enum's variants, and this is neither",
     ),
     // An array whose length is a constant below zero. Both told the reader the
     // name is not a constant, which it is: a count is held as a number that
@@ -4243,15 +4243,15 @@ Holder :: struct { a: i64, b: i64 }
          \x20   0\n}\n",
         "a `packed struct` pads no field",
     ),
-    // A compile-time call is worked out by running it, so one that reaches
-    // itself has no answer to work out.
+    // A compile-time call may reach itself. What bounds it is the nesting
+    // depth, which counts a step that calls itself the way it counts any other.
     (
-        "a_compile_time_call_that_reaches_itself",
+        "a_compile_time_call_that_nests_too_deep",
         "import \"io.frost\"\n\
          loops :: fn(n: i64) -> i64 { if (n <= 0) { return 0 } loops(n - 1) + 1 }\n\
-         DEEP :: loops(4)\n\
+         DEEP :: loops(40)\n\
          main :: fn() -> i64 { print(\"{}\\n\", DEEP) 0 }\n",
-        "reaches itself",
+        "may nest 32 deep",
     ),
     // What a compile-time call may do is arithmetic over its arguments. A call
     // into the world has nothing to answer with before the program runs, and
@@ -5036,18 +5036,18 @@ Holder :: struct { a: i64, b: i64 }
         "a measurement in a bound is weighed against a number, so what follows \
          it compares",
     ),
-    // An enum is laid out as a struct carrying the tag beside every variant's
-    // fields, so asking whether it is one is not the question a reader asks:
-    // what a walk over it would hand back is the compiler's own layout.
+    // A walk over an enum hands back its variants, and a variant holds no one
+    // type, so its name and the number standing for it are the whole of what it
+    // answers.
     (
-        "a_field_walk_over_an_enum",
+        "a_type_question_asked_of_a_variant",
         "K :: enum { A, B }
          main :: fn() -> i64 {
              for field in fields(K) { sizeof(field) }
              0
          }
 ",
-        "a `for` over `fields(T)` walks a struct, and this is not one",
+        "is a variant of an enum, so it is asked about with `name_of` and `offset_of`, and 'sizeof' reads a type",
     ),
     // The same question asked of a count rather than of a walk. Left
     // unanswered it read as a call to a function nothing declares, and there
@@ -5056,7 +5056,7 @@ Holder :: struct { a: i64, b: i64 }
         "a_field_count_of_something_with_no_fields",
         "main :: fn() -> i64 { field_count(i64) }
 ",
-        "`field_count` counts the fields of a struct, and 'i64' is not one",
+        "`field_count` counts the fields of a struct or the variants of an enum, and 'i64' is neither",
     ),
     // A `when` chooses on what the build is for, and the vocabulary is the
     // three the compiler declares. A name a program declares is not one of
@@ -5449,14 +5449,31 @@ fn both_compilers_refuse_the_same_programs() {
 // the words after the caret. `spoken` keeps what a report claims and drops the
 // header and the column it sits under, so two compilers pointing a reader at two
 // different places about one fault compared equal.
-const POSITIONED_DIFFERENTLY: &[&str] = &[];
+// The refusals the two compilers place differently. One entry, and it is about
+// an instance nobody wrote.
+//
+// Both refuse `columns<Session, 4>` where `Session` is a resource, and both say
+// it twice. The bootstrap says it twice about that container. The self-hosted
+// compiler says it once about that container and once about a
+// `Slab<Session, 4>`, which the program never writes: settling what every
+// generic answers with tries every tuple of type arguments the program holds
+// against every generic, so the arguments one call was written with register an
+// instance of every other generic they fit, and `std/columns.frost` imports
+// `std/slab.frost`. The extra instance is the self-hosted compiler's own and
+// predates the container being a library declaration: a program that imports
+// `slab.frost` and instantiates any other generic over a resource at the same
+// arity has the same instance invented for it.
+const POSITIONED_DIFFERENTLY: &[&str] = &["a_columns_container_of_a_resource"];
 
-// The refusals the two compilers word differently. Empty, and it is the test
-// above that keeps it so: a pair that drifts fails on the way in, and one that
-// is mended fails until its name comes off. Written down after the harness
-// learned to compare what was said rather than to look for a phrase inside it,
-// which is what let forty of these drift unseen.
-const WORDED_DIFFERENTLY: &[&str] = &[];
+// The refusals the two compilers word differently. One entry, and it is the
+// test above that keeps the rest empty: a pair that drifts fails on the way in,
+// and one that is mended fails until its name comes off.
+//
+// The one entry is the invented instance described at POSITIONED_DIFFERENTLY.
+// The second thing each compiler says is about a different container: the
+// bootstrap about the one the program wrote, the self-hosted compiler about a
+// `Slab<Session, 4>` nothing wrote.
+const WORDED_DIFFERENTLY: &[&str] = &["a_columns_container_of_a_resource"];
 
 // The file each header names, which is what a report calls a file rather than
 // where the file is.

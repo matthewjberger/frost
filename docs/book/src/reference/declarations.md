@@ -364,14 +364,49 @@ five bytes, `TABLE` is that run of four, `ORIGIN` is that pair of numbers, and a
 call answering a yes or no is `true` or `false`. The call itself is gone by
 then: it ran once, before the program did.
 
+A call may reach itself. What bounds the work is the step count and the nesting
+depth below, and a step that calls itself is counted by both, so a table built
+by a recurrence is written the way it reads:
+
+```frost
+fib :: fn(n: i64) -> i64 {
+    if (n < 2) { return n }
+    fib(n - 1) + fib(n - 2)
+}
+
+TENTH :: fib(10)
+```
+
+A `for` walks a span of whole numbers or a run already worked out, and a `match`
+reads a whole number, a yes or no, or a run of bytes. Both are bounded by the
+same step count as the `while` beside them:
+
+```frost
+total :: fn(n: i64) -> i64 {
+    mut sum : i64 = 0
+    for i in 0..n { sum = sum + i }
+    sum
+}
+
+grade :: fn(score: i64) -> i64 {
+    match (score) {
+        case 0..=9: 1
+        case 10 | 11: 2
+        case _: 3
+    }
+}
+```
+
+An arm naming a variant is refused: a compile-time value is a whole number, a
+yes or no, or a run of bytes, and a variant is none of those.
+
 Everything else is refused, naming what stopped it:
 
-- A function that reaches itself, directly or through others.
 - A call into the world. A function this program does not declare has no body to
   read, so an `extern`, and anything that reaches one, stops the call. Reading a
   file, printing, and allocating are all out.
-- A pointer, an `unsafe` block, a `match`, a `for`, a `defer`, a `?`. Each is
-  named where it is written.
+- A pointer, an `unsafe` block, a `defer`, a `?`. Each is named where it is
+  written.
 - A number with a fraction. A compile-time value is a whole number or a yes or
   no.
 - What a type answers once it is laid out: `sizeof`, `alignof`, `offset_of`,
@@ -381,7 +416,8 @@ Everything else is refused, naming what stopped it:
   call where a program runs.
 - A write to an element or a field, `out[index] = v` or `p.x = v`. A
   compile-time call writes to a name.
-- More than a million steps, or calls nested deeper than thirty-two.
+- More than a million steps, or calls nested deeper than thirty-two. Those
+  two are the whole of what says a compile finishes.
 
 A call names a function the file can name: what it declares, and what the files
 it imports export.

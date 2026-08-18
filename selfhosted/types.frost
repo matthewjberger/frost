@@ -3020,23 +3020,6 @@ read_through :: fn(mut p: Parser, held: i64, through: i64) -> i64 {
         if (held < 0 || is_struct_ty(held) == false) {
             return -1
         }
-        // A columns container is synthesized rather than instantiated from a
-        // template, so what it was made with is read off its own shape: the
-        // element is the struct its columns are arrays of, and the capacity is
-        // how long they are.
-        if (is_columns_ty(p, held)) {
-            if (through == 2) {
-                return columns_made_for(p, held)
-            }
-            if (through == 3) {
-                gens := slab_field_type(p, held, "generations")
-                if (is_array_ty(gens) == false) {
-                    return -1
-                }
-                return CONST_BASE + array_length(p, gens)
-            }
-            return -1
-        }
         return instance_arg_at(p, struct_index_of(held), through - 2)
     }
     held

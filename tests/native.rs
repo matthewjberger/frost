@@ -7660,14 +7660,14 @@ const TYPE_NAMES: &str =
     "import \"io.frost\"\nPosition :: struct { x: f32, y: f32 }
      Health :: struct { points: i64 }
      Meters :: distinct f32
-     name_of :: fn($T: Type) -> str { typename($T) }
+     named :: fn($T: Type) -> str { typename($T) }
      width :: fn($T: Type) -> i64 { str_len(typename($T)) }
      main :: fn() -> i64 {
          print(\"{}\\n\", typename($Position))
          print(\"{}\\n\", typename($i64))
          print(\"{}\\n\", typename($Meters))
-         print(\"{}\\n\", name_of($Health))
-         print(\"{}\\n\", name_of($Position))
+         print(\"{}\\n\", named($Health))
+         print(\"{}\\n\", named($Position))
          print(\"{}\\n\", width($Health))
          held := typename($Position)
          print(\"{}\\n\", str_len(held))
@@ -10360,6 +10360,7 @@ fn self_hosted_columns_container() {
 // monomorphized like any other. Kept self-contained (its own `printf` extern,
 // no std import) so it runs under the bootstrap.
 const BOOTSTRAP_COLUMNS: &str = r#"
+import "columns.frost"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 Particle :: struct { x: i64, y: i64 }
 col_reset :: fn($T: Type, $N: usize, mut c: columns<T, N>) {

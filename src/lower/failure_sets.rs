@@ -251,12 +251,14 @@ impl Lowerer {
             field_type: value.clone(),
             align: None,
             at: crate::lexer::Position::default(),
+            walk_over: None,
         }]);
         let err_fields = ast.add_struct_fields(vec![StructField {
             name: error_field,
             field_type: error.clone(),
             align: None,
             at: crate::lexer::Position::default(),
+            walk_over: None,
         }]);
         let variants = ast.add_enum_variants(&[
             EnumVariant {

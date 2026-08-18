@@ -1921,6 +1921,58 @@ impl<'a> Parser<'a> {
     /// A struct's own alignment is the widest its fields ask for, so this is
     /// also how a struct is given one, and there is no second form saying the
     /// same thing about the whole declaration.
+    // `for name in fields(T) { Type }` inside a struct body. It stands for one
+    // field per field of T, so what is recorded is the loop's name, the type
+    // the body wrote, and which parameter is walked. The instance is where the
+    // three become fields, since only there is T a type with fields to read.
+    fn parse_field_walk(&mut self, packed: bool) -> Result<StructField> {
+        self.read_token();
+        let at = self.current_position().unwrap_or_default();
+        let name = match self.read_token() {
+            Token::Identifier(name) => name.to_string(),
+            _ => bail!("a `for` in a struct body names what it walks"),
+        };
+        if !matches!(self.read_token(), Token::In) {
+            bail!("a `for` in a struct body names what it walks and then what it walks over");
+        }
+        let walked = match self.read_token() {
+            Token::Identifier(word) if word == "fields" => {
+                if !matches!(self.read_token(), Token::LeftParentheses) {
+                    bail!("`fields` reads the type it walks in parentheses");
+                }
+                let walked = match self.read_token() {
+                    Token::Identifier(name) => name.to_string(),
+                    _ => bail!(
+                        "a `for` in a struct body walks the fields of a type parameter"
+                    ),
+                };
+                if !matches!(self.read_token(), Token::RightParentheses) {
+                    bail!("`fields` reads one type");
+                }
+                walked
+            }
+            _ => bail!(
+                "a `for` in a struct body walks `fields(T)`, which is the one list a declaration has"
+            ),
+        };
+        if !matches!(self.read_token(), Token::LeftBrace) {
+            bail!("a `for` in a struct body writes one type in braces");
+        }
+        let field_type = self.parse_type()?;
+        let align = self.parse_field_alignment(packed)?;
+        if !matches!(self.read_token(), Token::RightBrace) {
+            bail!("a `for` in a struct body writes one type in braces");
+        }
+        let name = self.ast.intern(&name);
+        Ok(StructField {
+            name,
+            field_type,
+            align,
+            at,
+            walk_over: Some(walked),
+        })
+    }
+
     fn parse_field_alignment(&mut self, packed: bool) -> Result<Option<usize>> {
         if !self.at_field_alignment() {
             return Ok(None);
@@ -2338,6 +2390,17 @@ impl<'a> Parser<'a> {
             }
             let mut fields = Vec::new();
             while self.peek_nth(0) != &Token::RightBrace {
+                // `for name in fields(T) { Type }` writes one field per field
+                // of T, each keeping the name its own declaration gave it. The
+                // loop's name stands for what the walked field holds, so the
+                // type after it is written the way `sizeof(name)` reads one.
+                if matches!(self.peek_nth(0), Token::For) {
+                    fields.push(self.parse_field_walk(packed)?);
+                    if matches!(self.peek_nth(0), Token::Comma) {
+                        self.read_token();
+                    }
+                    continue;
+                }
                 {
                     let field_name = self.read_field_name("a field name")?;
                     if !matches!(self.read_token(), Token::Colon) {
@@ -2353,6 +2416,7 @@ impl<'a> Parser<'a> {
                         field_type,
                         align: field_align,
                         at: field_at,
+                        walk_over: None,
                     });
                 }
                 if matches!(self.peek_nth(0), Token::Comma) {
@@ -2413,6 +2477,7 @@ impl<'a> Parser<'a> {
                             // by a declaration, so there is nothing to state.
                             align: None,
                             at: field_at,
+                            walk_over: None,
                         });
                         if matches!(self.peek_nth(0), Token::Comma) {
                             self.read_token();
@@ -2691,6 +2756,7 @@ impl<'a> Parser<'a> {
                     uses: Vec::new(),
                     bound: None,
                     bound_text: String::new(),
+                    bound_message: None,
                     at: Default::default(),
                 });
                 let body = self.ast.push_expr(
@@ -4471,6 +4537,7 @@ impl<'a> Parser<'a> {
         // struct literal is read here.
         let mut bound = None;
         let mut bound_text = String::new();
+        let mut bound_message = None;
         if matches!(self.peek_nth(0), Token::Where) {
             self.read_token();
             let first = self.mark();
@@ -4480,12 +4547,30 @@ impl<'a> Parser<'a> {
             self.no_struct_literal = held;
             bound = Some(expression?);
             bound_text = self.tokens_written(first, self.mark());
+            // `else "..."` is what the declaration says when the bound does not
+            // hold. One string literal, so what a reader is told is settled
+            // where the bound is written rather than worked out at the call.
+            if matches!(self.peek_nth(0), Token::Else) {
+                self.read_token();
+                match self.read_token() {
+                    Token::StringLiteral(held) => {
+                        bound_message = Some(held.clone())
+                    }
+                    _ => {
+                        return Err(self.at_consumed(
+                            "`where ... else` is followed by one string, which is what the reader is told"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
         }
         Ok(ReturnSignature {
             kind,
             uses,
             bound,
             bound_text,
+            bound_message,
             at,
         })
     }

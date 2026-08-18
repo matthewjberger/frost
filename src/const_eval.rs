@@ -1,4 +1,6 @@
-use crate::ast::{Ast, ExprId, Expression, Literal, Range32, Statement};
+use crate::ast::{
+    Ast, ExprId, Expression, Literal, Pattern, PatternId, Range32, Statement,
+};
 use crate::lexer::Token;
 use crate::parser::Operator;
 use std::collections::HashMap;
@@ -11,8 +13,9 @@ const STEP_LIMIT: u64 = 1_000_000;
 /// What a compile-time call is told when a fraction turns up in one.
 const FRACTION: &str = "a compile-time value is a whole number or a yes or no, and this is a number with a fraction";
 
-/// How deep calls may nest. A function that reaches itself is refused by name,
-/// so this is what catches a long chain of distinct functions.
+/// How deep calls may nest. A call may reach itself, so this is the whole of
+/// what bounds a chain: a step that calls itself and a long chain of distinct
+/// functions are the same shape once one of them is counted.
 const DEPTH_LIMIT: usize = 32;
 
 /// What a type answers once it has been laid out. Each is a call where a
@@ -21,6 +24,7 @@ const DEPTH_LIMIT: usize = 32;
 pub const LAYOUT_ANSWERS: &[&str] = &[
     "sizeof",
     "alignof",
+    "name_of",
     "offset_of",
     "field_count",
     "typename",
@@ -107,6 +111,12 @@ struct Body {
     statements: Range32,
 }
 
+/// What a `match` reads, and the arms it chooses between.
+struct Cases {
+    subject: ExprId,
+    arms: Range32,
+}
+
 /// The two sides of an `if`, and what decides between them.
 struct Arms {
     condition: ExprId,
@@ -130,6 +140,10 @@ enum Flow {
 /// The functions it may call are the ones the file declares, parsed from their
 /// tokens. That is what lets a constant call a function written below it, and
 /// what keeps this out of the way of the parse it feeds.
+///
+/// A call may reach itself. What bounds the work is the step count and the
+/// nesting depth, and a step that calls itself is counted by both, so nothing
+/// here has to read the shape of the call graph to know a compile finishes.
 pub struct Folder<'a> {
     tokens: &'a [Token],
     bodies: HashMap<String, (usize, usize)>,
@@ -267,11 +281,6 @@ impl<'a> Folder<'a> {
         arguments: Vec<Value>,
         stack: &mut Vec<String>,
     ) -> Result<Value, String> {
-        if stack.iter().any(|held| held == name) {
-            return Err(format!(
-                "'{name}' reaches itself, and a compile-time call is worked out by running it, which never ends"
-            ));
-        }
         if stack.len() >= DEPTH_LIMIT {
             return Err(format!(
                 "a compile-time call may nest {DEPTH_LIMIT} deep and '{name}' is deeper"
@@ -376,6 +385,15 @@ impl<'a> Folder<'a> {
                     };
                     return self.branch(ast, arms, locals, stack);
                 }
+                // A bare `match` is a statement here the same way, so an arm
+                // may leave the call rather than answer with a value.
+                if let Expression::Switch(subject, arms) = ast.expr(*value) {
+                    let cases = Cases {
+                        subject: *subject,
+                        arms: *arms,
+                    };
+                    return self.arm(ast, cases, locals, stack);
+                }
                 let held = self.value(ast, *value, locals, stack)?;
                 Ok(Flow::Value(held))
             }
@@ -398,6 +416,37 @@ impl<'a> Folder<'a> {
                     Flow::Left(value) => return Ok(Flow::Left(value)),
                 }
             },
+            // A `for` over a span of whole numbers, or over a run this has
+            // already worked out. Both have a length before the body is read,
+            // so the walk is as bounded as the `while` above it is by its step
+            // count. `for index, item in run` names the position as well.
+            Statement::For(name, second, iterable, body) => {
+                let items = self.items(ast, *iterable, locals, stack)?;
+                let name = ast.name(*name).to_string();
+                let second =
+                    second.map(|held| ast.name(held).to_string());
+                for (index, item) in items.into_iter().enumerate() {
+                    self.spend()?;
+                    match &second {
+                        Some(element) => {
+                            locals.insert(
+                                name.clone(),
+                                Value::Integer(index as i64),
+                            );
+                            locals.insert(element.clone(), item);
+                        }
+                        None => {
+                            locals.insert(name.clone(), item);
+                        }
+                    }
+                    match self.block(ast, *body, locals, stack)? {
+                        Flow::Ran | Flow::Value(_) | Flow::Continued => {}
+                        Flow::Broke => break,
+                        Flow::Left(value) => return Ok(Flow::Left(value)),
+                    }
+                }
+                Ok(Flow::Ran)
+            }
             Statement::Break => Ok(Flow::Broke),
             Statement::Continue => Ok(Flow::Continued),
             held => Err(format!(
@@ -434,6 +483,82 @@ impl<'a> Folder<'a> {
             Some(arm) => self.block(ast, arm, locals, stack),
             None => Ok(Flow::Ran),
         }
+    }
+
+    // What a `for` walks: a span of whole numbers, or a run this has already
+    // worked out. Both have a length before the body is read, so the walk is
+    // bounded the way the step count bounds a `while`.
+    fn items(
+        &mut self,
+        ast: &Ast,
+        iterable: ExprId,
+        locals: &HashMap<String, Value>,
+        stack: &mut Vec<String>,
+    ) -> Result<Vec<Value>, String> {
+        if let Expression::Range(start, end, inclusive) = ast.expr(iterable) {
+            let inclusive = *inclusive;
+            let span = "a `for` over a span walks whole numbers";
+            let Value::Integer(from) =
+                self.value(ast, *start, locals, stack)?
+            else {
+                return Err(span.to_string());
+            };
+            let Value::Integer(to) = self.value(ast, *end, locals, stack)?
+            else {
+                return Err(span.to_string());
+            };
+            let last = match inclusive {
+                true => to,
+                false => match to.checked_sub(1) {
+                    Some(last) => last,
+                    None => return Ok(Vec::new()),
+                },
+            };
+            let mut held = Vec::new();
+            let mut at = from;
+            while at <= last {
+                self.spend()?;
+                held.push(Value::Integer(at));
+                let Some(next) = at.checked_add(1) else { break };
+                at = next;
+            }
+            return Ok(held);
+        }
+        match self.value(ast, iterable, locals, stack)? {
+            Value::Array(items) => Ok(items.to_vec()),
+            Value::Text(held) => Ok(held
+                .as_bytes()
+                .iter()
+                .map(|byte| Value::Integer(*byte as i64))
+                .collect()),
+            held => Err(format!(
+                "a `for` walks a span or a run of values, and {} is neither",
+                held.describe()
+            )),
+        }
+    }
+
+    // The arm a `match` takes. The subject is worked out here, so which arm it
+    // is settled before any of them is read, and the arms that were not taken
+    // are never worked out at all.
+    fn arm(
+        &mut self,
+        ast: &Ast,
+        cases: Cases,
+        locals: &mut HashMap<String, Value>,
+        stack: &mut Vec<String>,
+    ) -> Result<Flow, String> {
+        let held = self.value(ast, cases.subject, locals, stack)?;
+        for case in ast.cases_in(cases.arms).to_vec() {
+            self.spend()?;
+            if covers(ast, case.pattern, &held)? {
+                return self.block(ast, case.body, locals, stack);
+            }
+        }
+        Err(format!(
+            "no arm of this `match` covers what its subject worked out to, which is {}",
+            held.describe()
+        ))
     }
 
     fn value(
@@ -635,6 +760,20 @@ impl<'a> Folder<'a> {
                     ),
                 }
             }
+            Expression::Switch(subject, arms) => {
+                let mut held = locals.clone();
+                let cases = Cases {
+                    subject: *subject,
+                    arms: *arms,
+                };
+                match self.arm(ast, cases, &mut held, stack)? {
+                    Flow::Left(value) => Ok(value),
+                    _ => Err(
+                        "this `match` answers with nothing, so there is no value here"
+                            .to_string(),
+                    ),
+                }
+            }
             Expression::Call(callee, arguments) => {
                 let Expression::Identifier(name) = ast.expr(*callee) else {
                     return Err(
@@ -695,6 +834,55 @@ fn builtin(name: &str, given: &[Value]) -> Result<Option<Value>, String> {
         "wrap_sub" => left.wrapping_sub(*right),
         _ => left.wrapping_mul(*right),
     })))
+}
+
+// Whether an arm's pattern covers the value the subject worked out to. A
+// compile-time value is a whole number, a yes or no, or a run of bytes, so a
+// pattern naming a variant or a tuple has nothing here to stand against.
+fn covers(
+    ast: &Ast,
+    pattern: PatternId,
+    held: &Value,
+) -> Result<bool, String> {
+    match ast.pattern(pattern) {
+        Pattern::Wildcard => Ok(true),
+        Pattern::Or(alternatives) => {
+            for alternative in ast.patterns_in(*alternatives) {
+                if covers(ast, *alternative, held)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Pattern::Range {
+            low,
+            high,
+            inclusive,
+        } => match held {
+            Value::Integer(value) => Ok(value >= low
+                && (value < high || (*inclusive && value == high))),
+            held => Err(format!(
+                "a span of whole numbers covers whole numbers, and this is {}",
+                held.describe()
+            )),
+        },
+        Pattern::Literal(Literal::Integer(written)) => {
+            Ok(matches!(held, Value::Integer(value) if value == written))
+        }
+        Pattern::Literal(Literal::Boolean(written)) => {
+            Ok(matches!(held, Value::Boolean(value) if value == written))
+        }
+        Pattern::Literal(Literal::String(written)) => {
+            Ok(matches!(held, Value::Text(value) if value.as_str() == written))
+        }
+        Pattern::Literal(Literal::Float(_) | Literal::Float32(_)) => {
+            Err(FRACTION.to_string())
+        }
+        _ => Err(
+            "a compile-time `match` reads a whole number, a yes or no, or a run of bytes, and this arm names something else"
+                .to_string(),
+        ),
+    }
 }
 
 // Where an index lands, or what is wrong with it. Bounds are decided here,
@@ -797,7 +985,6 @@ fn integers(
 
 fn describe_statement(statement: &Statement) -> &'static str {
     match statement {
-        Statement::For(..) => "a `for`",
         Statement::With(..) => "a `with`",
         Statement::Defer(_) => "a `defer`",
         Statement::ErrDefer(_) => "an `errdefer`",
@@ -817,7 +1004,6 @@ fn describe_expression(expression: &Expression) -> &'static str {
         Expression::EnumVariantInit(..) => "an enum value",
         Expression::AddressOf(_) | Expression::Dereference(_) => "a pointer",
         Expression::Unsafe(_) | Expression::UnsafeFn(_) => "an `unsafe` block",
-        Expression::Switch(..) => "a `match`",
         Expression::Try(_) => "a `?`",
         Expression::ArrayRepeat(..) => "an array",
         Expression::Function(..) | Expression::Proc(..) => "a function value",

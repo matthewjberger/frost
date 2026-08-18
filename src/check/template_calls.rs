@@ -27,6 +27,7 @@ const ANSWERED_BY_THE_COMPILER: &[&str] = &[
     "is_slice",
     "is_struct",
     "live",
+    "name_of",
     "offset_of",
     "slab_zeroed",
 ];
