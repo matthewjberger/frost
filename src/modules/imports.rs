@@ -121,8 +121,15 @@ fn locate_import(
         let key = neighbour
             .canonicalize()
             .unwrap_or_else(|_| neighbour.clone());
+        // Both sides in the same form, since one is what stripping the other
+        // reads. A canonical path on Windows carries a verbatim prefix that a
+        // written one does not, so stripping left the whole path in place and
+        // the name a report showed was `\?\C:/\/Users/...`.
+        let root = project_root
+            .canonicalize()
+            .unwrap_or_else(|_| project_root.to_path_buf());
         return Some(Found {
-            module: relative_module_name(&key, project_root),
+            module: relative_module_name(&key, &root),
             path: neighbour,
         });
     }
@@ -700,7 +707,17 @@ pub fn resolve_imports_cached(
     // The directory of the file named on the command line is the project root,
     // and a module's identity is its path relative to that, which is the
     // smallest thing that can answer what a project root is.
-    let root = base_dir.canonicalize().unwrap_or_else(|_| base_dir.into());
+    // A file named on the command line with no directory in front of it has
+    // the empty path for a parent, and the empty path canonicalizes to
+    // nothing, so the root every module is named relative to was nothing and a
+    // module's name came out as its whole canonical path. Where the parent is
+    // empty the directory the build was started from is the root, which is
+    // what the reader typed the name relative to.
+    let named = match base_dir.as_os_str().is_empty() {
+        true => std::env::current_dir().unwrap_or_else(|_| base_dir.into()),
+        false => base_dir.to_path_buf(),
+    };
+    let root = named.canonicalize().unwrap_or(named);
 
     // Deciding whether a module can be skipped needs the interfaces of
     // everything below it, so the graph is walked bottom up before anything is
