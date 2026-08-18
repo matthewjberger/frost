@@ -2092,6 +2092,9 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
             if (is_struct_ty(struct_ty)) {
                 wanted := field_type(p, struct_ty, field_off, field_len)
                 want_single(p, value, wanted)
+                // `columns_zeroed()` stands for a zeroed container rather than
+                // a call, so it has no declaration to answer with a type and
+                // takes the one the field says, the way a binding lets it.
                 // A field holds what its declaration says, the way a binding
                 // does. Nothing asked here, so a narrower field took a wider
                 // value and said nothing about the loss, and a field of one
@@ -2099,7 +2102,8 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
                 // reported by the asking, which leaves only the values that
                 // stand for nothing the field can hold.
                 value_ty := type_of(p, value)
-                if (value_fits(p, value, value_ty, wanted) == false) {
+                if (value_fits(p, value, value_ty, wanted) == false
+                    && is_columns_zeroed_call(p, value) == false) {
                     vnode := arena_at(p.arena, value)
                     report_where(p.modules, p.src, vnode.pos)
                     report_fmt(

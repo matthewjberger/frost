@@ -581,9 +581,13 @@ fn collect_bound_functions(
         let [only] = written else {
             continue;
         };
-        if !is_type_parameter(ast, only) {
+        // The name the body writes, which is the one the annotation carries. A
+        // parameter's own name crosses an import under the rename every private
+        // name gets, and the annotation does not, so the two are the same word
+        // only in the file the function was declared in.
+        let Some(Type::TypeParam(bound_name)) = &only.type_annotation else {
             continue;
-        }
+        };
         let statements = ast.stmts_in(*body);
         let [held] = statements else {
             continue;
@@ -593,10 +597,16 @@ fn collect_bound_functions(
         else {
             continue;
         };
-        found.insert(
-            ast.name(*name).to_string(),
-            (ast.name(only.name).to_string(), *answer),
-        );
+        let declared = ast.name(*name).to_string();
+        // Also under the name a reader wrote. A private declaration crosses an
+        // import under a rename, and a bound written in the importing file
+        // names it the way the export line does.
+        let written =
+            crate::modules::imports::demangle_private_names(&declared);
+        if written != declared {
+            found.insert(written, (bound_name.clone(), *answer));
+        }
+        found.insert(declared, (bound_name.clone(), *answer));
     }
     found
 }
