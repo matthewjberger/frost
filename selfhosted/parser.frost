@@ -3650,7 +3650,40 @@ parse_struct_fields :: fn(mut p: Parser, packed: i64) -> i64 {
         }
     }
     advance(p)
+    refuse_repeated_field(p, head)
     head
+}
+
+// A field is reached by its name, so two under one name are two things a reader
+// cannot tell apart and one of them is unreachable. A walk writes a field per
+// field of what it walks, so two walks over one type write every name twice.
+refuse_repeated_field :: fn(mut p: Parser, head: i64) {
+    mut outer := head
+    while (outer != (-1)) {
+        one := arena_at(p.fields, outer)
+        mut inner := one.next
+        while (inner != (-1)) {
+            two := arena_at(p.fields, inner)
+            if (two.name_len == one.name_len
+                && bytes_equal(
+                    p.src,
+                    two.name_off,
+                    one.name_off,
+                    one.name_len
+                )) {
+                if (already_said(p, p.stmt_at) == false) {
+                    report_where(p.modules, p.src, p.stmt_at)
+                    report("'")
+                    report_src(p.src, two.name_off, two.name_len)
+                    report("' is declared twice here, and a field is reached ")
+                    report("by its name")
+                }
+                frost_rt_recover_escape()
+            }
+            inner = two.next
+        }
+        outer = one.next
+    }
 }
 
 // Read a generic's body once where it is declared, for what its fields say
@@ -3714,7 +3747,15 @@ parse_field_walk :: fn(
         skip_walk_body(p, packed)
         return
     }
-    if (is_struct_ty(walked) == false) {
+    // An enum is laid out as a tag beside the active variant's payload, so one
+    // array per field of one would be one array per piece of the compiler's own
+    // layout. A walk in a struct body walks a struct.
+    mut walks_a_struct := is_struct_ty(walked)
+    if (walks_a_struct) {
+        def := arena_at(p.structs, struct_index_of(walked))
+        walks_a_struct = def.is_enum == 0
+    }
+    if (walks_a_struct == false) {
         // Said once. The instance is read again where it is written again, and
         // the declaration is the same one each time, so a second reading is a
         // second copy of one thing wrong rather than a second thing.

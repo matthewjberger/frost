@@ -68,7 +68,10 @@ pointer.
 
 - Structs `Name`, declared `Name :: struct { field: T, ... }`, are exactly
   their fields in declaration order, with natural alignment. A declaration may
-  state the layout instead of taking it (3.2a).
+  state the layout instead of taking it (3.2a). Two fields under one name are
+  refused: a field is reached by its name, so one of them could never be read.
+  A walk (11.1d.1) writes a field per field of what it walks, so two walks over
+  one type are refused for the same reason.
 - Enums `Name`, declared `Name :: enum { Variant, Variant { f: T }, ... }`,
   are a discriminant plus the active variant's payload. Variants may be unit or
   carry named fields, and one enum may mix both. An enum takes type parameters
@@ -113,7 +116,9 @@ Uniform :: struct { time: f32, view: Matrix4 align(16) }
 ```
 
 `packed struct` puts every field at the next byte and gives the type an
-alignment of one. `Header` above is nine bytes, at offsets 0, 4 and 5.
+alignment of one. `Header` above is nine bytes, at offsets 0, 4 and 5. A generic
+declared this way lays every instance out the same, since how a type is laid out
+is part of its declaration rather than of one instance of it.
 
 `align(N)` after a field's type is the multiple that field starts at, in place
 of what its type would ask for. A struct's own alignment is the widest any of

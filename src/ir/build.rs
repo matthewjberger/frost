@@ -5043,6 +5043,15 @@ fn expand_generic_structs(
     // Where each instance was asked for, so a fault about the arguments lands
     // on the line that wrote them rather than nowhere.
     let asked = crate::check::linear_instances::locate_instances(ast, roots);
+    // Every enum this program declares, so a walk given one is told what it
+    // was given rather than left to find no layout later.
+    let enums_declared: std::collections::HashSet<String> = roots
+        .iter()
+        .filter_map(|statement| match ast.stmt(*statement) {
+            Statement::Enum(name, ..) => Some(ast.name(*name).to_string()),
+            _ => None,
+        })
+        .collect();
     let mut done: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     let mut synthetic = Vec::new();
@@ -5156,6 +5165,18 @@ fn expand_generic_structs(
                     asked.get(&instance).copied().unwrap_or_default(),
                 );
             };
+            // An enum is laid out as a tag beside the active variant's
+            // payload, so one array per field of one would be one array per
+            // piece of the compiler's own layout. A walk in a struct body
+            // walks a struct.
+            if enums_declared.contains(element.as_str()) {
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "a `for` in a struct body walks a struct's fields, and '{element}' is not a struct"
+                    )),
+                    asked.get(&instance).copied().unwrap_or_default(),
+                );
+            }
             let Some(element_fields) = concrete_structs.get(element) else {
                 // The template form, where T is still a parameter and there is
                 // nothing to walk. It is monomorphized to a concrete instance
@@ -5176,6 +5197,21 @@ fn expand_generic_structs(
         if deferred {
             continue;
         }
+        // A field is reached by its name, so two under one name are two things
+        // a reader cannot tell apart. A walk writes a field per field of what
+        // it walks, so two walks over one type write every name twice.
+        let mut seen: std::collections::HashSet<&str> =
+            std::collections::HashSet::new();
+        for (field_name, _, _) in &concrete_fields {
+            if !seen.insert(field_name.as_str()) {
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "'{field_name}' is declared twice here, and a field is reached by its name"
+                    )),
+                    asked.get(&instance).copied().unwrap_or_default(),
+                );
+            }
+        }
         for (_, field_type, _) in &concrete_fields {
             collect_instances_in_type(field_type, &mut queue);
         }
@@ -5190,6 +5226,14 @@ fn expand_generic_structs(
             })
             .collect();
         let name = ast.intern(&instance);
+        // A `packed struct` says how it is laid out, and that is part of the
+        // declaration rather than of one instance of it. Left behind, an
+        // instance of a packed generic was padded while the template it came
+        // from was not.
+        let template = ast.intern(&base);
+        if ast.packed_structs.contains(&template) {
+            ast.packed_structs.push(name);
+        }
         let fields = ast.add_struct_fields(entries);
         synthetic.push(ast.push_stmt(
             Statement::Struct(name, Range32::EMPTY, fields),

@@ -482,13 +482,24 @@ pub fn scan_generic_types(tokens: &[Token]) -> GenericDefaults {
         if !matches!(tokens.get(index + 1), Some(Token::DoubleColon)) {
             continue;
         }
-        if !matches!(tokens.get(index + 2), Some(Token::Struct | Token::Enum)) {
+        // The words a declaration may put between `::` and `struct`. Read as
+        // part of the head rather than looked for after it, so a `linear`
+        // generic is a generic here the way it is everywhere else: left out, a
+        // literal of one read as a name and a comparison, and a reader was told
+        // the name was a variable nothing declares.
+        let mut head = index + 2;
+        while matches!(tokens.get(head), Some(Token::Linear))
+            || matches!(tokens.get(head), Some(Token::Identifier(word)) if word == "packed")
+        {
+            head += 1;
+        }
+        if !matches!(tokens.get(head), Some(Token::Struct | Token::Enum)) {
             continue;
         }
-        if !matches!(tokens.get(index + 3), Some(Token::LeftParentheses)) {
+        if !matches!(tokens.get(head + 1), Some(Token::LeftParentheses)) {
             continue;
         }
-        names.insert(name.clone(), scan_parameter_defaults(tokens, index + 4));
+        names.insert(name.clone(), scan_parameter_defaults(tokens, head + 2));
     }
     names
 }
@@ -2424,6 +2435,22 @@ impl<'a> Parser<'a> {
                 }
             }
             self.read_token();
+            // A field is reached by its name, so two under one name are two
+            // things a reader cannot tell apart and one of them is
+            // unreachable.
+            let mut seen: std::collections::HashSet<crate::ast::Symbol> =
+                std::collections::HashSet::new();
+            for field in &fields {
+                if !seen.insert(field.name) {
+                    let named = self.ast.name(field.name).to_string();
+                    return Err(self.at_mark(
+                        start,
+                        format!(
+                            "'{named}' is declared twice here, and a field is reached by its name"
+                        ),
+                    ));
+                }
+            }
             self.parse_values_under(&identifier, &[], !type_params.is_empty())?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
