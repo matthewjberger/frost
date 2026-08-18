@@ -892,6 +892,7 @@ main :: fn() -> i64 {
         const_depth = 0,
         const_args = arena_make($ConstValue, 256),
         const_items = arena_make($ConstItem, 65536),
+        const_scratch = arena_make($ConstItem, 256),
         const_records = arena_make($ConstRecord, 1024),
         when_lifted = arena_make($LocalVar, 256),
         bound_sub_off = 0,

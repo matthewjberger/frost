@@ -152,6 +152,10 @@ pub struct Folder<'a> {
     // than pointed at.
     imported: HashMap<String, Rc<Vec<Token>>>,
     parsed: HashMap<String, Option<Rc<Body>>>,
+    // The constants settled so far. A body may name one, and a call binds its
+    // parameters rather than carrying the caller's names, so what a body can
+    // read is held here rather than passed down with the locals.
+    constants: HashMap<String, Value>,
     steps: u64,
 }
 
@@ -166,6 +170,7 @@ impl<'a> Folder<'a> {
             bodies,
             imported,
             parsed: HashMap::new(),
+            constants: HashMap::new(),
             steps: 0,
         }
     }
@@ -205,6 +210,7 @@ impl<'a> Folder<'a> {
             bodies: HashMap::new(),
             imported: HashMap::new(),
             parsed,
+            constants: HashMap::new(),
             steps: 0,
         }
     }
@@ -224,6 +230,7 @@ impl<'a> Folder<'a> {
         known: &HashMap<String, Value>,
     ) -> Result<Value, String> {
         self.steps = 0;
+        self.constants = known.clone();
         self.value(ast, expression, known, &mut Vec::new())
     }
 
@@ -555,10 +562,13 @@ impl<'a> Folder<'a> {
                 return self.block(ast, case.body, locals, stack);
             }
         }
-        Err(format!(
-            "no arm of this `match` covers what its subject worked out to, which is {}",
-            held.describe()
-        ))
+        // No arm taken, so the `match` answered nothing and the body it stands
+        // in reaches its end without a value. A `match` over a whole number
+        // covers every one of them or the exhaustiveness rule has already
+        // refused it, so this is only reached for a program that is refused
+        // anyway, and what a reader is told is that the constant has nothing
+        // to be.
+        Ok(Flow::Ran)
     }
 
     fn value(
@@ -690,11 +700,18 @@ impl<'a> Folder<'a> {
                     "false" => return Ok(Value::Boolean(false)),
                     _ => {}
                 }
-                locals.get(name).cloned().ok_or_else(|| {
-                    format!(
-                        "'{name}' has no value at compile time, so this cannot be worked out before the program runs"
-                    )
-                })
+                // A name this call bound first, then a constant settled
+                // before this one. A parameter of the same name is the one in
+                // hand, which is what a name means anywhere else.
+                locals
+                    .get(name)
+                    .or_else(|| self.constants.get(name))
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "'{name}' has no value at compile time, so this cannot be worked out before the program runs"
+                        )
+                    })
             }
             Expression::Prefix(Operator::Negate, inner) => {
                 match self.value(ast, *inner, locals, stack)? {
@@ -837,8 +854,9 @@ fn builtin(name: &str, given: &[Value]) -> Result<Option<Value>, String> {
 }
 
 // Whether an arm's pattern covers the value the subject worked out to. A
-// compile-time value is a whole number, a yes or no, or a run of bytes, so a
-// pattern naming a variant or a tuple has nothing here to stand against.
+// pattern is a whole number, a yes or no, a span of them, or `_`, which is what
+// a `case` may name anywhere: text belongs in an `if` and a variant is not a
+// compile-time value.
 fn covers(
     ast: &Ast,
     pattern: PatternId,
@@ -872,16 +890,10 @@ fn covers(
         Pattern::Literal(Literal::Boolean(written)) => {
             Ok(matches!(held, Value::Boolean(value) if value == written))
         }
-        Pattern::Literal(Literal::String(written)) => {
-            Ok(matches!(held, Value::Text(value) if value.as_str() == written))
-        }
         Pattern::Literal(Literal::Float(_) | Literal::Float32(_)) => {
             Err(FRACTION.to_string())
         }
-        _ => Err(
-            "a compile-time `match` reads a whole number, a yes or no, or a run of bytes, and this arm names something else"
-                .to_string(),
-        ),
+        _ => Ok(false),
     }
 }
 

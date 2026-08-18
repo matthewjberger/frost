@@ -1760,6 +1760,11 @@ Parser :: struct {
     // Every item of every aggregate the evaluator has worked out. A value
     // names its own run by where it starts and how many there are.
     const_items: Arena<ConstItem>,
+    // Where an aggregate's items are gathered while it is being worked out.
+    // An element may itself be an aggregate, and working one out pushes to
+    // `const_items`, so gathering there directly left a run whose items were
+    // not the ones beside each other. Copied across once the run is complete.
+    const_scratch: Arena<ConstItem>,
     // Every set of named values the evaluator has worked out, each naming the
     // type it was written as.
     const_records: Arena<ConstRecord>,

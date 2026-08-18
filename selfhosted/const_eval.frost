@@ -1019,12 +1019,11 @@ const_match :: fn(mut p: Parser, at: i64) -> ConstFlow {
         }
     }
     advance(p)
-    if (taken == false) {
-        const_fault(p, at)
-        creport(p, "no arm of this `match` covers what its subject worked ")
-        creport(p, "out to")
-        const_stop(p)
-    }
+    // No arm taken, so the `match` answered nothing and the body it stands in
+    // reaches its end without a value. A `match` over a whole number covers
+    // every one of them or the exhaustiveness rule has already refused it, so
+    // this is only reached for a program that is refused anyway, and what a
+    // reader is told is that the constant has nothing to be.
     answered
 }
 
@@ -1073,9 +1072,9 @@ const_pattern :: fn(mut p: Parser, at: i64, subject: ConstValue) -> bool {
     covers
 }
 
-// One alternative: a whole number, a yes or no, a run of bytes, a span of whole
-// numbers, or `_`. A compile-time value is one of those, so a pattern naming a
-// variant has nothing here to stand against.
+// One alternative: a whole number, a yes or no, a span of whole numbers, or
+// `_`, which is what a `case` may name anywhere. Text belongs in an `if` and a
+// variant is not a compile-time value, so neither covers anything here.
 const_pattern_one :: fn(mut p: Parser, at: i64, subject: ConstValue) -> bool {
     if (cur(p) == TokenKind::Underscore) {
         advance(p)
@@ -1083,10 +1082,13 @@ const_pattern_one :: fn(mut p: Parser, at: i64, subject: ConstValue) -> bool {
     }
     if (cur(p) == TokenKind::Ident
         && peek_kind(p, 1) == TokenKind::Coloncolon) {
-        const_fault(p, at)
-        creport(p, "a compile-time `match` reads a whole number, a yes or ")
-        creport(p, "no, or a run of bytes, and this arm names a variant")
-        const_stop(p)
+        advance(p)
+        advance(p)
+        advance(p)
+        return false
+    }
+    if (cur(p) == TokenKind::Str) {
+        advance(p)
         return false
     }
     low := const_unary(p, at)
@@ -1111,12 +1113,6 @@ const_pattern_one :: fn(mut p: Parser, at: i64, subject: ConstValue) -> bool {
     }
     if (low.kind != subject.kind) {
         return false
-    }
-    if (low.kind == CONST_TEXT) {
-        if (low.count != subject.count) {
-            return false
-        }
-        return bytes_equal(p.src, low.value, subject.value, low.count)
     }
     low.value == subject.value
 }
@@ -1281,12 +1277,15 @@ const_unary :: fn(mut p: Parser, at: i64) -> ConstValue {
 // and reading the run again would run it again.
 const_array :: fn(mut p: Parser, at: i64) -> ConstValue {
     advance(p)
-    start := p.const_items.count
+    // Gathered aside rather than straight into `const_items`: an element may
+    // itself be an aggregate, and working one out pushes there too, so a run
+    // gathered in place is not the items beside each other.
+    mark := p.const_scratch.count
     mut count: i64 = 0
     while (cur(p) != TokenKind::Rbracket && cur(p) != TokenKind::Eof) {
         held := const_expr(p, at)
         arena_push(
-            p.const_items,
+            p.const_scratch,
             ConstItem {
                 name_off = 0,
                 name_len = 0,
@@ -1310,7 +1309,7 @@ const_array :: fn(mut p: Parser, at: i64) -> ConstValue {
             while (count < total.value) {
                 const_spend(p, at)
                 arena_push(
-                    p.const_items,
+                    p.const_scratch,
                     ConstItem {
                         name_off = 0,
                         name_len = 0,
@@ -1327,7 +1326,31 @@ const_array :: fn(mut p: Parser, at: i64) -> ConstValue {
         }
     }
     advance(p)
+    start := const_gather(p, mark)
     ConstValue { kind = CONST_ARRAY, value = start, count = count }
+}
+
+// The run gathered since this mark, copied into `const_items` so its items are
+// the ones beside each other, and the scratch cut back to where it was.
+const_gather :: fn(mut p: Parser, mark: i64) -> i64 {
+    start := p.const_items.count
+    mut i := mark
+    while (i < p.const_scratch.count) {
+        held := arena_at(p.const_scratch, i)
+        arena_push(
+            p.const_items,
+            ConstItem {
+                name_off = held.name_off,
+                name_len = held.name_len,
+                kind = held.kind,
+                value = held.value,
+                count = held.count
+            }
+        )
+        i = i + 1
+    }
+    p.const_scratch.count = mark
+    start
 }
 
 // One `Name { field = value, ... }`, with the cursor on the `{` and the type's
@@ -1341,7 +1364,9 @@ const_record :: fn(
     type_len: i64
 ) -> ConstValue {
     advance(p)
-    start := p.const_items.count
+    // Gathered aside for the reason a run is: a field may itself be an
+    // aggregate, and working one out pushes to `const_items` too.
+    mark := p.const_scratch.count
     mut count: i64 = 0
     while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         name_off := cur_off(p)
@@ -1350,7 +1375,7 @@ const_record :: fn(
         advance(p)
         held := const_expr(p, at)
         arena_push(
-            p.const_items,
+            p.const_scratch,
             ConstItem {
                 name_off = name_off,
                 name_len = name_len,
@@ -1365,6 +1390,7 @@ const_record :: fn(
         }
     }
     advance(p)
+    start := const_gather(p, mark)
     held := p.const_records.count
     arena_push(
         p.const_records,
