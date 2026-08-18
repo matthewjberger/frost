@@ -4874,7 +4874,7 @@ fn native_backend_covers_the_language() {
         ),
         (
             "match",
-            "import \"io.frost\"\nclassify :: fn(n: i64) -> i64 {\n    mut r : i64 = 0\n    match n {\n        case 0: r = 100\n        case 1: r = 200\n        case _: r = 300\n    }\n    return r\n}\nmain :: fn() -> i64 {\n    print(\"{}\\n\", classify(0))\n    print(\"{}\\n\", classify(1))\n    print(\"{}\\n\", classify(9))\n    0\n}\n",
+            "import \"io.frost\"\nclassify :: fn(n: i64) -> i64 {\n    mut r : i64 = 0\n    match n {\n        case 0: { r = 100 }\n        case 1: { r = 200 }\n        case _: { r = 300 }\n    }\n    return r\n}\nmain :: fn() -> i64 {\n    print(\"{}\\n\", classify(0))\n    print(\"{}\\n\", classify(1))\n    print(\"{}\\n\", classify(9))\n    0\n}\n",
             "100\n200\n300\n",
         ),
         (

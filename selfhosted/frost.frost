@@ -813,9 +813,9 @@ main :: fn() -> i64 {
         classify :: fn(n: i64) -> i64 {
             mut result : i64 = 0
             match n {
-                case 0: result = 100
-                case 1: result = 200
-                case _: result = 999
+                case 0: { result = 100 }
+                case 1: { result = 200 }
+                case _: { result = 999 }
             }
             return result
         }
@@ -927,7 +927,7 @@ main :: fn() -> i64 {
         emit_module = -1,
         asm_used = arena_make($AsmUse, 1),
         field_bindings = arena_make($WalkedField, 64),
-        walk_refused = 0,
+        said_at = -1,
         parse_locals = arena_make($LocalVar, 4096),
         parse_local_values = arena_make($BoundValue, 4096),
         parse_param_start = 0,

@@ -806,8 +806,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             held := field_binding_of(p, peek_off(p, 1), peek_len(p, 1))
             if (held >= 0) {
                 entry := arena_at(p.field_bindings, held)
-                if (entry.is_variant == 1 && p.walk_refused == 0) {
-                    p.walk_refused = 1
+                if (entry.is_variant == 1 && already_said(p, offset) == false) {
                     report_where(p.modules, p.src, offset)
                     report("'")
                     report_src(p.src, entry.field_off, entry.field_len)
@@ -3706,24 +3705,36 @@ parse_field_walk :: fn(
         frost_rt_recover_escape()
     }
     body_at := p.ti
-    if (is_struct_ty(walked) == false) {
-        // Nothing is bound to the loop's name here, so a name inside the body
-        // is not a name anything can resolve yet. The body is read for its
-        // length and said nothing about, and the instance is where it is read
-        // again with the binding in hand.
-        held_check := p.type_check_names
-        pending_mark := p.pending_type_names.count
-        p.type_check_names = 0
-        advance(p)
-        parse_type(p)
-        parse_field_alignment(p, packed)
-        advance(p)
-        p.type_check_names = held_check
-        p.pending_type_names.count = pending_mark
+    // A template read with nothing bound to its parameter has no type to walk.
+    // Nothing is bound to the loop's name either, so a name inside the body is
+    // not one anything can resolve yet: the body is read for its length and
+    // said nothing about, and the instance is where it is read again with the
+    // binding in hand.
+    if (walked == TY_PARAM) {
+        skip_walk_body(p, packed)
         return
+    }
+    if (is_struct_ty(walked) == false) {
+        // Said once. The instance is read again where it is written again, and
+        // the declaration is the same one each time, so a second reading is a
+        // second copy of one thing wrong rather than a second thing.
+        if (already_said(p, p.stmt_at) == false) {
+            report_where(p.modules, p.src, p.stmt_at)
+            report("a `for` in a struct body walks a struct's fields, and '")
+            report_type_name(p, walked)
+            report("' is not a struct")
+        }
+        frost_rt_recover_escape()
     }
     def := arena_at(p.structs, struct_index_of(walked))
     mut fid := def.field_head
+    // A struct with no fields writes no field here, and the body still has to
+    // be read: left where it was, its tokens are read again as fields of the
+    // declaration the walk sits in.
+    if (fid == (-1)) {
+        skip_walk_body(p, packed)
+        return
+    }
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         field_name_off := field.name_off
@@ -3765,6 +3776,20 @@ parse_field_walk :: fn(
         }
         fid = next_field
     }
+}
+
+// Past the one type a walk's body writes, saying nothing about the names in it.
+// The cursor is on the `{`.
+skip_walk_body :: fn(mut p: Parser, packed: i64) {
+    held_check := p.type_check_names
+    pending_mark := p.pending_type_names.count
+    p.type_check_names = 0
+    advance(p)
+    parse_type(p)
+    parse_field_alignment(p, packed)
+    advance(p)
+    p.type_check_names = held_check
+    p.pending_type_names.count = pending_mark
 }
 
 read_template_fields :: fn(mut p: Parser, field_token: i64, packed: i64) {
@@ -6405,8 +6430,24 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             walk_at := cur_off(p)
             advance(p)
             advance(p)
+            // A template's own reading has nothing bound to the name a list
+            // element is reached under, so there is no type to walk and no name
+            // to say anything about. That reading is thrown away and done again
+            // per element, where the name is a type.
+            held_check := p.type_check_names
+            pending_mark := p.pending_type_names.count
+            if (unbound_template(p)) {
+                p.type_check_names = 0
+            }
             walked := parse_type(p)
+            p.type_check_names = held_check
+            unknown := p.pending_type_names.count > pending_mark
+            p.pending_type_names.count = pending_mark
             advance(p)
+            if (unknown) {
+                parse_block(p)
+                return nothing_statement(p)
+            }
             return unroll_fields(p, item_off, item_len, walked, walk_at)
         }
         // `for slot in live_slots(c)` walks the slots of a generational container
@@ -6728,9 +6769,57 @@ parse_arm :: fn(mut p: Parser) -> i64 {
     if (cur(p) == TokenKind::Lbrace) {
         return parse_block(p)
     }
+    // An arm answers with a value or runs a block. A statement written bare
+    // after the colon is neither, and what it wants is the braces the block
+    // form already has.
+    if (cur(p) == TokenKind::KwReturn || cur(p) == TokenKind::KwBreak
+        || cur(p) == TokenKind::KwContinue || at_arm_assignment(p)) {
+        if (already_said(p, cur_off(p)) == false) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("an arm of a `match` is an expression or a block, and this ")
+            report("is a statement")
+        }
+        frost_rt_recover_escape()
+    }
     mark := p.pending.count
     statement := parse_stmt(p)
     flush_pending(p, mark, statement)
+}
+
+// Whether an assignment stands where the cursor is: a name, whatever indices
+// and fields follow it, and an `=` behind those.
+at_arm_assignment :: fn(mut p: Parser) -> bool {
+    if (cur(p) != TokenKind::Ident) {
+        return false
+    }
+    mut ahead: i64 = 1
+    mut depth: i64 = 0
+    while (peek_kind(p, ahead) != TokenKind::Eof) {
+        kind := peek_kind(p, ahead)
+        if (kind == TokenKind::Lbracket) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rbracket) {
+            depth = depth - 1
+        } else if (depth == 0 && kind == TokenKind::Assign) {
+            return true
+        } else if (depth == 0 && kind != TokenKind::Dot
+            && kind != TokenKind::Ident) {
+            return false
+        }
+        ahead = ahead + 1
+    }
+    false
+}
+
+// Whether this fault has already been said at this place. A template's body is
+// read once for the declaration and again for each instance, and a walk's body
+// once per field, so one mistake reaches a reader once per reading.
+already_said :: fn(mut p: Parser, at: i64) -> bool {
+    if (p.said_at == at) {
+        return true
+    }
+    p.said_at = at
+    false
 }
 
 // A statement that opens with `-` where another statement came before it.
@@ -7148,10 +7237,9 @@ refuse_variant_question :: fn(
     word_len: i64
 ) {
     entry := arena_at(p.field_bindings, held)
-    if (entry.is_variant == 0 || p.walk_refused == 1) {
+    if (entry.is_variant == 0 || already_said(p, word_off)) {
         return
     }
-    p.walk_refused = 1
     report_where(p.modules, p.src, word_off)
     report("'")
     report_src(p.src, entry.field_off, entry.field_len)
@@ -7226,9 +7314,11 @@ unroll_fields :: fn(
             parse_block(p)
             return nothing_statement(p)
         }
-        report_where(p.modules, p.src, walk_at)
-        report("a `for` over `fields(T)` walks a struct's fields or an enum's ")
-        report("variants, and this is neither")
+        if (already_said(p, walk_at) == false) {
+            report_where(p.modules, p.src, walk_at)
+            report("a `for` over `fields(T)` walks a struct's fields or an ")
+            report("enum's variants, and this is neither")
+        }
         frost_rt_recover_escape()
     }
     body_start := p.ti
@@ -7300,7 +7390,6 @@ unroll_variants :: fn(
     walked: i64
 ) -> i64 {
     body_start := p.ti
-    p.walk_refused = 0
     mut head: i64 = -1
     mut tail: i64 = -1
     mut any: i64 = 0

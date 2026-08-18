@@ -171,8 +171,10 @@ match Scrutinee {
 
 An arm is `case`, a pattern, `:`, then an expression or block. A `{` after the
 colon opens a block, so an arm that answers with an unnamed struct literal names
-its type. There is no separator between arms. An arm ends where the next `case`
-or the closing `}` begins. Patterns:
+its type. A statement written bare after the colon is refused, and what it wants
+is the braces the block form already has: `case 0: { r = 100 }`. There is no
+separator between arms. An arm ends where the next `case` or the closing `}`
+begins. Patterns:
 
 - Variant, `Enum::Variant` or `Enum::Variant { field, field }`, binding each
   named field to a same-named local.

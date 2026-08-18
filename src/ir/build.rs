@@ -3447,7 +3447,12 @@ impl Expansion<'_> {
             Expression::TypeValue(Type::Struct(named)) => named.clone(),
             _ => return None,
         };
-        match self.subst.get(&named) {
+        // The type arguments this specialization was made for, then the names
+        // a `for` over a list of types bound. A list element is a type in the
+        // body it was bound in, so a walk over one reads it the way `sizeof`
+        // already does.
+        let held = self.subst.get(&named).or_else(|| self.types.get(&named));
+        match held {
             Some(Type::Struct(concrete)) => Some(concrete.clone()),
             Some(_) => None,
             None => Some(named),
@@ -5035,6 +5040,9 @@ fn expand_generic_structs(
         })
         .collect();
 
+    // Where each instance was asked for, so a fault about the arguments lands
+    // on the line that wrote them rather than nowhere.
+    let asked = crate::check::linear_instances::locate_instances(ast, roots);
     let mut done: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     let mut synthetic = Vec::new();
@@ -5134,9 +5142,19 @@ fn expand_generic_structs(
             // gave it. The loop's name stands for what that field holds, so the
             // type the body wrote is substituted with it bound.
             let Some(Type::Struct(element)) = subst.get(walked) else {
-                bail!(
-                    "'{instance}' walks the fields of '{walked}', and what it was given is not a struct"
-                )
+                let given = match subst.get(walked) {
+                    Some(ty) => ty.to_string(),
+                    None => walked.clone(),
+                };
+                // At the line that asked for the instance. The declaration is
+                // fine and it is the arguments that are not, so the caret goes
+                // where a reader wrote them.
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "a `for` in a struct body walks a struct's fields, and '{given}' is not a struct"
+                    )),
+                    asked.get(&instance).copied().unwrap_or_default(),
+                );
             };
             let Some(element_fields) = concrete_structs.get(element) else {
                 // The template form, where T is still a parameter and there is

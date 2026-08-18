@@ -1903,10 +1903,12 @@ Parser :: struct {
     // them per copy of the body. `ty` is what the field holds and `slot` is
     // where it sits, which is every question that may be asked of one.
     field_bindings: Arena<WalkedField>,
-    // Whether the walk being read has already refused a question asked of a
-    // variant. The body is read once per variant, so without this one mistake
-    // is said once per variant rather than once.
-    walk_refused: i64,
+    // Where the last fault that can be met twice was said, as an offset into
+    // the source. A template's body is read once for the declaration and again
+    // for each instance, and a walk's body once per field, so one mistake meets
+    // a reader once per reading. A repeat at the same offset is that same
+    // mistake being read again rather than a second one.
+    said_at: i64,
     // What each name binds while the declaration around it is being parsed.
     // Only what a compile-time list is given is read from here, and only at the
     // call that gives it, since that is the one question whose answer has to be

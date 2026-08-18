@@ -4076,6 +4076,20 @@ impl<'a> Parser<'a> {
             let body = if matches!(self.peek_nth(0), Token::LeftBrace) {
                 self.parse_block()?
             } else {
+                // An arm answers with a value or runs a block. A statement
+                // written bare after the colon is neither, and what it wants is
+                // the braces the block form already has.
+                if matches!(
+                    self.peek_nth(0),
+                    Token::Return | Token::Break | Token::Continue
+                ) || self.at_arm_assignment()
+                {
+                    return Err(self.at_mark(
+                        self.mark(),
+                        "an arm of a `match` is an expression or a block, and this is a statement"
+                            .to_string(),
+                    ));
+                }
                 let arm_start = self.mark();
                 let expr = self.parse_expression(Precedence::Lowest)?;
                 let statement = self.ast.push_stmt(
@@ -4092,6 +4106,28 @@ impl<'a> Parser<'a> {
             Expression::Switch(scrutinee, cases),
             self.span_from(start),
         ))
+    }
+
+    // Whether an assignment stands where the cursor is: a name, whatever
+    // indices and fields follow it, and an `=` behind those.
+    fn at_arm_assignment(&self) -> bool {
+        if !matches!(self.peek_nth(0), Token::Identifier(_)) {
+            return false;
+        }
+        let mut ahead = 1;
+        let mut depth = 0;
+        loop {
+            match self.peek_nth(ahead) {
+                Token::LeftBracket => depth += 1,
+                Token::RightBracket => depth -= 1,
+                Token::Assign if depth == 0 => return true,
+                Token::Dot | Token::Identifier(_) => {}
+                Token::EndOfFile => return false,
+                _ if depth == 0 => return false,
+                _ => {}
+            }
+            ahead += 1;
+        }
     }
 
     fn parse_pattern_bindings(&mut self) -> Result<Range32> {
