@@ -7810,6 +7810,20 @@ parse_params :: fn(mut p: Parser) -> i64 {
     // compile-time list starts taking arguments at a call.
     mut fixed: i64 = 0
     while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
+        // A parameter list holds parameters and the commas between them, so a
+        // token that begins neither is a list the reader did not close. Read
+        // on, `fn(a: i64 { a }` took the brace for a parameter's name and the
+        // one closing the body for its type, and every declaration below it
+        // was read as more of this one.
+        if (cur(p) != TokenKind::Ident && cur(p) != TokenKind::KwMut
+            && cur(p) != TokenKind::KwMove
+            && cur(p) != TokenKind::Dollar) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("Expected a parameter name in parameter list, found '")
+            report_src(p.src, cur_off(p), cur_len(p))
+            report("'")
+            frost_rt_recover_escape()
+        }
         // Capture the parameter mode. `mut` (write) is 1, `move` is 2, and an
         // unmarked read is 0.
         mut mode: i64 = 0

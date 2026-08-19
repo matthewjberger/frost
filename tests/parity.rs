@@ -57,6 +57,20 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A parameter list the reader did not close. The list holds parameters and
+    // the commas between them, and the self-hosted compiler's loop ran to the
+    // `)` or the end of the file: the brace was taken for a parameter's name
+    // and the one closing the body for its type, and every declaration below
+    // read as more of this one. The bootstrap said it and then walked over
+    // `second`, since a declaration refused with a bracket still open is one
+    // whose bracket is never closed and the count never came back to nothing.
+    (
+        "a_parameter_list_the_reader_did_not_close",
+        "first :: fn(a: i64 { a }\n\
+         second :: fn() -> i64 { 7 }\n\
+         main :: fn() -> i64 { second() }\n",
+        "Expected a parameter name in parameter list, found '{'",
+    ),
     // A name written where a compile-time number is read that the program binds
     // to no number. Left to stand, `[Nope]i64` was a type carrying a length
     // nothing could ever give it, and what a reader was told came from
