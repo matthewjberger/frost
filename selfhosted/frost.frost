@@ -1168,6 +1168,11 @@ main :: fn() -> i64 {
     // a name lookup has to be. Known from the export lines alone, so it is
     // answered before anything is parsed.
     check_export_collisions(parser)
+    // What a file wrote that belongs to a module it did not import, said for
+    // the whole program before any of it is parsed. One missing import usually
+    // accounts for several names, and a check that runs during the parse hands
+    // the reader whichever one it reached first.
+    check_unimported_names(parser)
     mut program := parse_program(parser)
     // The parser kept reading past its faults so every one of them is on
     // stderr, and a program that faulted at all is still refused, here, once

@@ -5144,8 +5144,8 @@ fn a_file_may_only_name_what_it_imported() {
         "the bootstrap let a file name what it did not import:\n{message}"
     );
 
-    // The same program through the self-hosted compiler, which rejects it by
-    // never finding the name rather than by comparing lists.
+    // The same program through the self-hosted compiler, word for word. Both
+    // answer this before anything is parsed, so both say every name at once.
     if let Some(compiler) = build_self_hosted_compiler("visibility") {
         let run = Command::new(&compiler)
             .env("FROST_INPUT", &entry)
@@ -5156,19 +5156,10 @@ fn a_file_may_only_name_what_it_imported() {
             String::from_utf8_lossy(&run.stdout),
             String::from_utf8_lossy(&run.stderr)
         );
-        assert!(
-            said.contains("undefined function 'deep'"),
-            "the self-hosted compiler let a file name what it did not import:\n{said}"
-        );
-        // Which file the reader has to open. `deep` is on deep.frost's export
-        // line already, and the hint used to send them there to add it again.
-        assert!(
-            said.contains("which this file does not import"),
-            "the self-hosted compiler did not say the import is what is missing:\n{said}"
-        );
-        assert!(
-            !said.contains("add it to the export line"),
-            "the self-hosted compiler sent the reader to the wrong file:\n{said}"
+        assert_eq!(
+            said.replace("\r\n", "\n"),
+            message.replace("\r\n", "\n"),
+            "the two compilers refuse an unimported name differently"
         );
     }
 

@@ -1633,9 +1633,35 @@ const_factor :: fn(mut p: Parser, at: i64) -> ConstValue {
     if (p.const_quiet > 0) {
         return const_int(0)
     }
-    report("this is not something a compile-time call may do")
+    report(names_what_was_met(kind))
+    report(" is not something a compile-time call may do")
     frost_rt_recover_escape()
     const_int(0)
+}
+
+// What the reader met, for the sentence saying it has no answer before the
+// program runs. Naming it is the difference between a reader who knows which
+// line to change and one who reads the whole constant again.
+names_what_was_met :: fn(kind: TokenKind) -> str {
+    if (kind == TokenKind::KwUnsafe) {
+        return "an `unsafe` block"
+    }
+    if (kind == TokenKind::Str) {
+        return "a string"
+    }
+    if (kind == TokenKind::Lbracket) {
+        return "an array"
+    }
+    if (kind == TokenKind::Amp || kind == TokenKind::Caret) {
+        return "a pointer"
+    }
+    if (kind == TokenKind::Question) {
+        return "a `?`"
+    }
+    if (kind == TokenKind::KwFn) {
+        return "a function value"
+    }
+    "this"
 }
 
 const_named_call :: fn(

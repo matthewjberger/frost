@@ -1505,7 +1505,12 @@ check_name_known :: fn(mut p: Parser, off: i64, len: i64) {
     report("unknown variable '")
     report_src(p.src, off, len)
     report("'")
-    report_nearest_name(p, off, len)
+    // A name the program declares and this file cannot reach is not a name
+    // nothing declares, and the nearest one to it is itself. Saying where it
+    // stands is the whole of what the reader needs.
+    if (report_declared_elsewhere(p, off, len) == false) {
+        report_nearest_name(p, off, len)
+    }
     frost_rt_recover_escape()
 }
 

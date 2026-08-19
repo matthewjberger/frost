@@ -2674,6 +2674,7 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     (
         "a_constant_that_cannot_be_worked_out_ends_one_declaration",
         "import \"io.frost\"\n\
+         import \"mem.frost\"\n\
          nope :: fn() -> i64 { heap_bytes(4)[0] }\n\
          MADE :: nope()\n\
          main :: fn() -> i64 {\n\

@@ -1254,9 +1254,21 @@ emit_arg_value :: fn(mut p: Parser, value: i64, plan: ArgPlan) {
         // callee is handed the address of.
         want := pointee(p, plan.param_ty)
         if (is_array_ty(want) && is_slice_ty(p, want)) {
-            emit_text("(&")
-            emit_coerced(p, value, want)
-            emit_text(")")
+            // A slice a call answered has nowhere to point at, the same as any
+            // other value with no storage of its own. A place and a literal
+            // each have somewhere; a call does not, and C refuses `&f()`.
+            if (is_place_node(p, value)
+                || arena_at(p.arena, value).kind == NodeKind::StrLit) {
+                emit_text("(&")
+                emit_coerced(p, value, want)
+                emit_text(")")
+            } else {
+                emit_text("(&((")
+                emit_ctype(p, want)
+                emit_text("[1]){ ")
+                emit_coerced(p, value, want)
+                emit_text(" })[0])")
+            }
         } else if (is_place_node(p, value)) {
             emit_text("(&(")
             emit_expr(p, value)
