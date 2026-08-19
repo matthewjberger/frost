@@ -1033,7 +1033,7 @@ ARITH_SLOTS :: 256
 next_slot :: fn(mut p: Parser, wanted: i64) -> i64 {
     slot := p.arith_site
     if (slot + wanted > ARITH_SLOTS) {
-        report("frost: this function reads more values into slots ahead of ")
+        report_command("this function reads more values into slots ahead of ")
         report("the rest of their expressions than there are slots\n")
         frost_rt_die()
     }

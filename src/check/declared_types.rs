@@ -158,8 +158,17 @@ fn declared<'a>(ast: &'a Ast, roots: &[StmtId]) -> HashSet<&'a str> {
 fn valued<'a>(ast: &'a Ast, roots: &[StmtId]) -> HashSet<&'a str> {
     let mut held = HashSet::new();
     for statement in roots {
-        if let Statement::Constant(name, _) = ast.stmt(*statement) {
-            held.insert(ast.name(*name));
+        // A module whose object is being linked rather than rebuilt
+        // contributes an ordinary function as its signature alone, and that
+        // still binds the name to a value: a caller may hand it over as a
+        // compile-time argument the way it hands over one it can see the body
+        // of.
+        match ast.stmt(*statement) {
+            Statement::Constant(name, _)
+            | Statement::Declared { name, .. } => {
+                held.insert(ast.name(*name));
+            }
+            _ => {}
         }
     }
     held
@@ -316,6 +325,19 @@ fn report_unknown_in_expression(
             }
             report_unknown(ty, known, ast.expr_position(value), found);
         }
+        // The type a literal is written under. `Alias { v = 1 }` names one the
+        // same way a declared type does, and read only where a type is written
+        // out it went unasked: what the reader was told came from lowering,
+        // which asks for a layout rather than for the name.
+        Expression::StructInit(name, fields) => {
+            let named = Type::Struct(ast.name(*name).to_string());
+            report_unknown(&named, known, ast.expr_position(value), found);
+            for field in ast.named_in(*fields).to_vec() {
+                report_unknown_in_expression(
+                    ast, field.value, known, values, found,
+                );
+            }
+        }
         _ => {}
     }
 }
@@ -332,7 +354,11 @@ fn report_unknown(
     found: &mut Vec<Diagnostic>,
 ) {
     match ty {
-        Type::Struct(name) | Type::Enum(name) => {
+        // A `$T` naming nothing. Read as a type parameter and left unasked,
+        // `sizeof($Nope)` measured a name the program does not have and
+        // answered zero without a word; the same call written without the
+        // sigil was refused.
+        Type::Struct(name) | Type::Enum(name) | Type::TypeParam(name) => {
             if name.contains('<') || name.is_empty() {
                 return;
             }

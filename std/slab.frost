@@ -92,8 +92,7 @@ slab_full :: fn($T: Type, $N: usize, s: Slab<T, N>) -> bool {
 slab_insert :: fn(
     $T: Type,
     $N: usize,
-    mut s: Slab<T,
-    N>,
+    mut s: Slab<T, N>,
     move value: $T
 ) -> Handle<T> {
     s.free_count = s.free_count - 1
@@ -108,8 +107,7 @@ slab_insert :: fn(
 slab_alive :: fn(
     $T: Type,
     $N: usize,
-    s: Slab<T,
-    N>,
+    s: Slab<T, N>,
     handle: Handle<T>
 ) -> bool {
     raw: i64 = handle
@@ -156,8 +154,7 @@ slab_slot :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> i64 {
 slab_release :: fn(
     $T: Type,
     $N: usize,
-    mut s: Slab<T,
-    N>,
+    mut s: Slab<T, N>,
     handle: Handle<T>
 ) -> bool {
     raw: i64 = handle

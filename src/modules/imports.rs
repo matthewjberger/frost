@@ -110,6 +110,40 @@ fn find_import(
     Ok(Some(found))
 }
 
+// What to call a file the walk found beside the one that imported it. A library
+// module importing its own neighbour is found this way, and naming it relative
+// to the project root leaves the whole path in place because the library sits
+// somewhere else entirely: what a report showed was `\?\C:/\/Users/...`.
+//
+// The project root is asked first, so a file the reader wrote is named the way
+// they wrote it, and each search root after that, so a library's own module is
+// named the way an importer of it would be. Both sides are canonicalized before
+// stripping, since a canonical path on Windows carries a verbatim prefix that a
+// written one does not.
+fn name_under(key: &Path, roots: &[SearchRoot], project_root: &Path) -> String {
+    let here = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    if let Ok(under) = key.strip_prefix(&here) {
+        return relative_module_name(under, Path::new(""));
+    }
+    for root in roots {
+        let directory = root
+            .directory
+            .canonicalize()
+            .unwrap_or_else(|_| root.directory.clone());
+        let Ok(under) = key.strip_prefix(&directory) else {
+            continue;
+        };
+        let relative = relative_module_name(under, Path::new(""));
+        return match root.label.is_empty() {
+            true => relative,
+            false => format!("{}/{relative}", root.label),
+        };
+    }
+    relative_module_name(key, &here)
+}
+
 fn locate_import(
     importing_dir: &Path,
     path: &str,
@@ -121,15 +155,8 @@ fn locate_import(
         let key = neighbour
             .canonicalize()
             .unwrap_or_else(|_| neighbour.clone());
-        // Both sides in the same form, since one is what stripping the other
-        // reads. A canonical path on Windows carries a verbatim prefix that a
-        // written one does not, so stripping left the whole path in place and
-        // the name a report showed was `\?\C:/\/Users/...`.
-        let root = project_root
-            .canonicalize()
-            .unwrap_or_else(|_| project_root.to_path_buf());
         return Some(Found {
-            module: relative_module_name(&key, &root),
+            module: name_under(&key, roots, project_root),
             path: neighbour,
         });
     }

@@ -1120,7 +1120,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
 }
 
 asm_unsupported :: fn(what: ^i8) {
-    report("frost: the native backend does not handle ")
+    report_command("the native backend does not handle ")
     report_cstr(what)
     report(" yet")
     frost_rt_die()

@@ -408,11 +408,21 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
                 push_token(tokens, TokenKind::Int, start, i - start, value)
                 continue
             }
+            // A decimal literal says the number its digits spell, so one past
+            // what sixty-four bits hold is refused rather than wrapped. A
+            // radix literal above is the other way round on purpose: `0xFF..`
+            // is a bit pattern and wraps into the signed range.
+            mut too_large: bool = false
             while (is_digit(byte_of(src, i, len))
                 || byte_of(src, i, len) == CH_UNDERSCORE) {
                 held := byte_of(src, i, len)
                 if (held != CH_UNDERSCORE) {
-                    value = wrap_add(wrap_mul(value, 10), held - CH_0)
+                    digit := held - CH_0
+                    if (value > 922337203685477580
+                        || (value == 922337203685477580 && digit > 7)) {
+                        too_large = true
+                    }
+                    value = wrap_add(wrap_mul(value, 10), digit)
                 }
                 i = i + 1
             }
@@ -446,6 +456,8 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
             }
             if (is_float) {
                 push_token(tokens, TokenKind::Float, start, i - start, 0)
+            } else if (too_large) {
+                push_token(tokens, TokenKind::BigInt, start, i - start, value)
             } else {
                 push_token(tokens, TokenKind::Int, start, i - start, value)
             }

@@ -103,6 +103,17 @@ element_count :: fn(mut tokens: Arena<Token>, open: i64, close: i64) -> i64 {
     mut depth: i64 = 0
     mut index := open + 1
     while (index < close) {
+        // A generic's arguments are one type, so the commas between them are
+        // not the commas of the list this walks. Counted by brackets alone, a
+        // parameter written `m: Map<K, V, ops>` was broken at them and read as
+        // three parameters, two of them named for the arguments.
+        if (kind_at(tokens, index) == TokenKind::Lt) {
+            shut := type_arguments_close(tokens, index)
+            if (shut >= 0 && shut < close) {
+                index = shut + 1
+                continue
+            }
+        }
         depth = depth + nesting_of(kind_at(tokens, index))
         if (depth == 0 && kind_at(tokens, index) == TokenKind::Comma) {
             held = held + 1
@@ -137,6 +148,13 @@ holds_fields :: fn(mut tokens: Arena<Token>, open: i64, close: i64) -> bool {
     mut depth: i64 = 0
     mut index := open + 1
     while (index <= close) {
+        if (index < close && kind_at(tokens, index) == TokenKind::Lt) {
+            shut := type_arguments_close(tokens, index)
+            if (shut >= 0 && shut < close) {
+                index = shut + 1
+                continue
+            }
+        }
         if (index == close
             || (depth == 0 && kind_at(tokens, index) == TokenKind::Comma)) {
             if (start < index) {
@@ -922,6 +940,17 @@ write_run :: fn(
     mut depth: i64 = 0
     mut index := open + 1
     while (index < close) {
+        // A generic's arguments are one type, so the commas between them are
+        // not the commas of the list this walks. Counted by brackets alone, a
+        // parameter written `m: Map<K, V, ops>` was broken at them and read as
+        // three parameters, two of them named for the arguments.
+        if (kind_at(tokens, index) == TokenKind::Lt) {
+            shut := type_arguments_close(tokens, index)
+            if (shut >= 0 && shut < close) {
+                index = shut + 1
+                continue
+            }
+        }
         depth = depth + nesting_of(kind_at(tokens, index))
         if (depth == 0 && kind_at(tokens, index) == TokenKind::Comma) {
             write_run(src, tokens, roles, joined, start, index + 1, indent + 4)

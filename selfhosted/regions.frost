@@ -14,7 +14,7 @@ import "layout.frost"
 import "const_eval.frost"
 
 export check_borrow_exclusivity, check_calls, check_entry_point,
-    check_export_collisions,
+    check_export_collisions, flush_held_calls,
     check_frame_escapes, check_moves, check_pooled_resources, flush_unconsumed,
     check_reference_fields, check_regions, check_types, check_types_in,
     check_recursive_structs, check_unsafety, find_indirect_calls,
@@ -911,9 +911,22 @@ check_types :: fn(mut p: Parser, head: i64) {
             // fault above the call is said in its place, and a call above a
             // fault is said in place of the fault.
             pending := earliest_indirect_call(p, sym.off, node.pos)
+            // A call the call walk refused is held the same way and weighed
+            // against the same body, so the type walk stops at whichever of
+            // the two is written first and the one that survives is said.
+            wrong := earliest_held_call(p, sym.off, node.pos)
             p.halt_at = -1
+            p.halt_node = -1
+            p.halted = 0
             if (pending >= 0) {
                 p.halt_at = arena_at(p.indirect_calls, pending).at
+            }
+            if (wrong >= 0) {
+                entry := arena_at(p.held_calls, wrong)
+                if (p.halt_at < 0 || entry.at <= p.halt_at) {
+                    p.halt_at = entry.at
+                    p.halt_node = entry.node
+                }
             }
             faulted := check_types_one(
                 p,
@@ -924,13 +937,30 @@ check_types :: fn(mut p: Parser, head: i64) {
                 0
             )
             p.halt_at = -1
+            p.halt_node = -1
+            p.halted = 0
             settle_indirect_calls(p, sym.off, node.pos)
+            settle_held_calls(p, sym.off, node.pos)
+            if (wrong >= 0 && faulted == 0
+                && (pending < 0
+                    || arena_at(p.held_calls, wrong).at
+                    <= arena_at(p.indirect_calls, pending).at)) {
+                report_held_call(p, wrong)
+                id = next_id
+                continue
+            }
             if (pending >= 0 && faulted == 0) {
                 report_indirect_call(p, pending)
             }
         }
         id = next_id
     }
+    // Every held call left, said before the gate below reads what the program
+    // has to say. A call in a body no function above holds is written in a
+    // generic's own copy or in the room a compiler-made node carries, and it is
+    // a fault of the program like any other: counted after this point, it left
+    // the instance walk reading bodies under a call already refused.
+    flush_held_calls(p)
     // An instance exists because a call asked for it, so a program that already
     // has something wrong with it anywhere has no instance worth reading: this
     // is the last of the checks, so whatever any of them found is a thing to fix
@@ -1203,13 +1233,40 @@ mark_single :: fn(mut p: Parser, id: i64) {
     }
 }
 
+// Whether this statement's whole value is that node. A binding, a bare
+// expression and a `return` each hold one, and a call the walk refused standing
+// there is the fault of the statement rather than one thing among several in
+// it.
+statement_value_is :: fn(mut p: Parser, id: i64, wanted: i64) -> bool {
+    if (wanted < 0) {
+        return false
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Let || kind == NodeKind::ExprStmt
+        || kind == NodeKind::Return) {
+        return node.a == wanted
+    }
+    false
+}
+
 check_types_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
     // Below the call this function is refused at. The other compiler reaches
     // that call while lowering the body and stops there, so what is written
     // under it is weighed by neither.
-    if (p.halt_at >= 0 && node.pos > p.halt_at) {
+    // Only what the reader wrote. A statement this compiler made carries a
+    // position in the room past the source, which is past every halt there is,
+    // so a `for` above the halt had its own `__for_at` declared in a statement
+    // skipped and read in one that was not, and the walk called that name
+    // unknown.
+    if (p.halted == 1) {
+        return
+    }
+    if (p.halt_at >= 0 && node.pos < p.synth_start
+        && (node.pos > p.halt_at || statement_value_is(p, id, p.halt_node))) {
+        p.halted = 1
         return
     }
     // Where this statement is written, for a report made while it is weighed.
@@ -2157,7 +2214,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
                 }
                 report_where(p.modules, p.src, node.pos)
                 report("struct '")
-                report_src(p.src, def.name_off, def.name_len)
+                report_type_name(p, struct_ty)
                 report("' is missing field")
                 if (absent > 1) {
                     report("s")
@@ -2366,6 +2423,19 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
                 through = pointee(p, through)
             }
             if (is_struct_ty(through) == false) {
+                // A value under a type is reached with `::`, and a `.` in its
+                // place reads a field out of a value that is not there. Said
+                // where the enum and the name after the dot are both in hand,
+                // rather than as a field of whatever a name nothing declares
+                // came back as.
+                base := arena_at(p.arena, node.a)
+                if (base.kind == NodeKind::Var
+                    && local_exists(p, base.val, base.c) == false) {
+                    named := type_named(p, base.val, base.c)
+                    if (named >= 0) {
+                        refuse_dot_value(p, named, node.val, node.c, base.pos)
+                    }
+                }
                 report_where(p.modules, p.src, arena_at(p.arena, node.a).pos)
                 report("a field is read out of a struct, and this is ")
                 report_type_name(p, through)
@@ -9558,6 +9628,126 @@ call_is_unemitted :: fn(mut p: Parser, id: i64) -> bool {
     false
 }
 
+// One call the call walk refused, kept until the body holding it has been
+// weighed. Answers where it was put, so a caller with more to record reaches
+// the entry rather than a copy of it.
+hold_call :: fn(
+    mut p: Parser,
+    at: i64,
+    node: i64,
+    kind: i64,
+    name_off: i64,
+    name_len: i64,
+    expected: i64,
+    got: i64
+) -> i64 {
+    arena_push(
+        p.held_calls,
+        HeldCall {
+            at = at,
+            node = node,
+            kind = kind,
+            name_off = name_off,
+            name_len = name_len,
+            expected = expected,
+            got = got,
+            param_off = 0,
+            param_len = 0,
+            settler_off = 0,
+            settler_len = 0,
+            decided = 0,
+        }
+    )
+}
+
+// One held call, said now that the body it stands in has answered for the
+// types written above it.
+report_held_call :: fn(mut p: Parser, index: i64) {
+    held := arena_at(p.held_calls, index)
+    kind := held.kind
+    name_off := held.name_off
+    name_len := held.name_len
+    report_where(p.modules, p.src, held.at)
+    if (kind == 0) {
+        report("call to undefined function '")
+        report_src(p.src, name_off, name_len)
+        report("'")
+        if (report_declared_elsewhere(p, name_off, name_len) == false) {
+            report_nearest_name(p, name_off, name_len)
+        }
+        frost_rt_recover_note()
+        return
+    }
+    if (kind == 1) {
+        report("'")
+        report_src(p.src, held.param_off, held.param_len)
+        report("' of '")
+        report_src(p.src, name_off, name_len)
+        report("' is settled by the type of '")
+        report_src(p.src, held.settler_off, held.settler_len)
+        report("', so it is not written at the call")
+        frost_rt_recover_note()
+        return
+    }
+    if (kind == 2) {
+        report("generic function '")
+    } else {
+        report("function '")
+    }
+    report_src(p.src, name_off, name_len)
+    report("' expects ")
+    frost_rt_error_int(held.expected)
+    report(" argument(s) but ")
+    frost_rt_error_int(held.got)
+    report(" were given")
+    frost_rt_recover_note()
+}
+
+// The earliest call held in a run of source, which is the one its body says.
+earliest_held_call :: fn(mut p: Parser, start: i64, end: i64) -> i64 {
+    mut found: i64 = -1
+    mut i: i64 = 0
+    while (i < p.held_calls.count) {
+        held := arena_at(p.held_calls, i)
+        if (held.decided == 0 && held.at >= start && held.at < end) {
+            if (found < 0 || held.at < arena_at(p.held_calls, found).at) {
+                found = i
+            }
+        }
+        i = i + 1
+    }
+    found
+}
+
+// Every call held in a run marked as answered, the way the indirect ones are:
+// a body says one thing, and what is written below the one it said is written
+// under a call already refused.
+settle_held_calls :: fn(mut p: Parser, start: i64, end: i64) {
+    mut i: i64 = 0
+    while (i < p.held_calls.count) {
+        mut held := arena_at(p.held_calls, i)
+        if (held.at >= start && held.at < end) {
+            held.decided = 1
+        }
+        i = i + 1
+    }
+}
+
+// The held calls left once every function has been weighed: those written
+// where no function the type walk reads holds them, which is a generic's own
+// body and the room a compiler-made node carries.
+flush_held_calls :: fn(mut p: Parser) {
+    mut i: i64 = 0
+    while (i < p.held_calls.count) {
+        mut held := arena_at(p.held_calls, i)
+        if (held.decided == 0) {
+            held.decided = 1
+            report_held_call(p, i)
+        }
+        i = i + 1
+    }
+}
+
 check_calls :: fn(mut p: Parser) {
     mut i: i64 = 0
     while (i < p.arena.count) {
@@ -9619,15 +9809,7 @@ check_calls :: fn(mut p: Parser) {
             if (defined == 0 && callee_proc < 0 && is_columns_zeroed == false
                 && is_supplied == false) {
                 if (call_fault_is_a_repeat(p, node.pos) == false) {
-                    report_where(p.modules, p.src, node.pos)
-                    report("call to undefined function '")
-                    report_src(p.src, name_off, name_len)
-                    report("'")
-                    if (report_declared_elsewhere(p, name_off, name_len)
-                        == false) {
-                        report_nearest_name(p, name_off, name_len)
-                    }
-                    frost_rt_recover_note()
+                    hold_call(p, node.pos, i, 0, name_off, name_len, 0, 0)
                 }
                 // Nothing declares the callee, so nothing says how many
                 // arguments it takes. Counting them against the zero a symbol
@@ -9668,23 +9850,21 @@ check_calls :: fn(mut p: Parser) {
                     // written rather than how many.
                     if (written > declared && first_settled_gparam(p, gi)) {
                         if (call_fault_is_a_repeat(p, node.pos) == false) {
-                            report_where(p.modules, p.src, node.pos)
-                            report("'")
-                            report_src(
-                                p.src,
-                                p.gparam_name_off,
-                                p.gparam_name_len
+                            index := hold_call(
+                                p,
+                                node.pos,
+                                i,
+                                1,
+                                name_off,
+                                name_len,
+                                0,
+                                0
                             )
-                            report("' of '")
-                            report_src(p.src, name_off, name_len)
-                            report("' is settled by the type of '")
-                            report_src(
-                                p.src,
-                                p.gparam_settler_off,
-                                p.gparam_settler_len
-                            )
-                            report("', so it is not written at the call")
-                            frost_rt_recover_note()
+                            mut entry := arena_at(p.held_calls, index)
+                            entry.param_off = p.gparam_name_off
+                            entry.param_len = p.gparam_name_len
+                            entry.settler_off = p.gparam_settler_off
+                            entry.settler_len = p.gparam_settler_len
                         }
                         i = i + 1
                         continue
@@ -9703,15 +9883,16 @@ check_calls :: fn(mut p: Parser) {
             }
             if (generic && expected != got && is_supplied == false) {
                 if (call_fault_is_a_repeat(p, node.pos) == false) {
-                    report_where(p.modules, p.src, node.pos)
-                    report("generic function '")
-                    report_src(p.src, name_off, name_len)
-                    report("' expects ")
-                    frost_rt_error_int(expected)
-                    report(" argument(s) but ")
-                    frost_rt_error_int(got)
-                    report(" were given")
-                    frost_rt_recover_note()
+                    hold_call(
+                        p,
+                        node.pos,
+                        i,
+                        2,
+                        name_off,
+                        name_len,
+                        expected,
+                        got
+                    )
                 }
                 i = i + 1
                 continue
@@ -9728,15 +9909,16 @@ check_calls :: fn(mut p: Parser) {
             // wrong.
             if (expected != got && is_supplied == false) {
                 if (call_fault_is_a_repeat(p, node.pos) == false) {
-                    report_where(p.modules, p.src, node.pos)
-                    report("function '")
-                    report_src(p.src, name_off, name_len)
-                    report("' expects ")
-                    frost_rt_error_int(expected)
-                    report(" argument(s) but ")
-                    frost_rt_error_int(got)
-                    report(" were given")
-                    frost_rt_recover_note()
+                    hold_call(
+                        p,
+                        node.pos,
+                        i,
+                        3,
+                        name_off,
+                        name_len,
+                        expected,
+                        got
+                    )
                 }
             }
         }

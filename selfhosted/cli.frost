@@ -236,7 +236,7 @@ stored_checksum :: fn(path: ^i8) -> i64 {
 
 write_checksum :: fn(path: ^i8, value: i64) {
     if (unsafe { frost_rt_emit_open(path) } == 0) {
-        report("frost: cannot write '")
+        report_command("cannot write '")
         report_cstr(path)
         report("'")
         frost_rt_die()
@@ -371,7 +371,7 @@ cached_runtime_object :: fn(mark: ^i8) -> ^i8 {
     // saying which path was looked at beats letting the C compiler report a
     // file it was handed and letting the cache key collide meanwhile.
     if (unsafe { frost_rt_file_exists(runtime) } == 0) {
-        report("frost: cannot find the runtime at '")
+        report_command("cannot find the runtime at '")
         report_cstr(runtime)
         report("'. FROST_RUNTIME names it, or install it beside the compiler\n")
         frost_rt_die()
@@ -399,7 +399,7 @@ cached_runtime_object :: fn(mark: ^i8) -> ^i8 {
         pending
     )
     if (unsafe { frost_rt_run_command(build) } != 0) {
-        report("frost: the runtime did not compile: ")
+        report_command("the runtime did not compile: ")
         report_cstr(build)
         report("\n")
         frost_rt_die()
@@ -419,7 +419,7 @@ cached_runtime_object :: fn(mark: ^i8) -> ^i8 {
 cached_frost_runtime_object :: fn(mark: ^i8) -> ^i8 {
     runtime := frost_runtime_source()
     if (unsafe { frost_rt_file_exists(runtime) } == 0) {
-        report("frost: cannot find the runtime at '")
+        report_command("cannot find the runtime at '")
         report_cstr(runtime)
         report("'. FROST_RUNTIME_FROST names it, or install it beside the ")
         report("compiler\n")
@@ -451,7 +451,7 @@ cached_frost_runtime_object :: fn(mark: ^i8) -> ^i8 {
         runtime
     )
     if (unsafe { frost_rt_run_command(build) } != 0) {
-        report("frost: the runtime did not compile: ")
+        report_command("the runtime did not compile: ")
         report_cstr(build)
         report("\n")
         frost_rt_die()
@@ -808,7 +808,7 @@ options_from_command_line :: fn() -> Options {
         } else if (cstr_eq(argument, "--libs")) {
             index = index + 1
             if (index >= count) {
-                report("frost: --libs needs an object file or library")
+                report_command("--libs needs an object file or library")
                 options.ok = 0
                 return options
             }
@@ -835,7 +835,7 @@ options_from_command_line :: fn() -> Options {
             // interpreter and a libc-free runtime, and this compiler carries
             // neither. Saying so beats reporting the option as unknown, which
             // reads as a spelling mistake.
-            report("frost: '")
+            report_command("'")
             report_cstr(argument)
             report("' is a bootstrap option, and this compiler has no such path")
             options.ok = 0
@@ -851,7 +851,7 @@ options_from_command_line :: fn() -> Options {
         } else if (cstr_eq(argument, "--build-dir")) {
             index = index + 1
             if (index >= count) {
-                report("frost: --build-dir needs a directory")
+                report_command("--build-dir needs a directory")
                 options.ok = 0
                 return options
             }
@@ -868,7 +868,7 @@ options_from_command_line :: fn() -> Options {
         } else if (cstr_eq(argument, "-L")) {
             index = index + 1
             if (index >= count) {
-                report("frost: -L needs a directory")
+                report_command("-L needs a directory")
                 options.ok = 0
                 return options
             }
@@ -876,13 +876,13 @@ options_from_command_line :: fn() -> Options {
         } else if (cstr_eq(argument, "-o")) {
             index = index + 1
             if (index >= count) {
-                report("frost: -o needs a path")
+                report_command("-o needs a path")
                 options.ok = 0
                 return options
             }
             options.output = frost_rt_arg_at(index)
         } else if (looks_like_a_flag(argument)) {
-            report("frost: unknown option '")
+            report_command("unknown option '")
             report_cstr(argument)
             report("'")
             options.ok = 0

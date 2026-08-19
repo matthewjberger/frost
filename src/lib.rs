@@ -4,6 +4,8 @@ mod c_abi;
 mod const_eval;
 mod diagnostic;
 pub use check::constant_arithmetic::check_constant_arithmetic;
+pub use check::constant_names::{NOT_A_CONSTANT, check_constant_names};
+pub use check::regions::REGION_ESCAPE;
 pub use check::declared_types::{UNDECLARED_TYPE, check_declared_types};
 pub use check::entry::check_entry_point;
 pub use check::linear_instances::pooled_instance_names;

@@ -172,9 +172,7 @@ map_find :: fn(
     $K: Type,
     $V: Type,
     $ops: Hashing<K>,
-    m: Map<K,
-    V,
-    ops>,
+    m: Map<K, V, ops>,
     key: $K
 ) -> i64 {
     mut i := ops.hash(key) % m.cap
@@ -201,9 +199,7 @@ map_insert :: fn(
     $K: Type,
     $V: Type,
     $ops: Hashing<K>,
-    mut m: Map<K,
-    V,
-    ops>,
+    mut m: Map<K, V, ops>,
     key: $K,
     move value: $V
 ) {
@@ -257,9 +253,7 @@ map_put :: fn(
     $K: Type,
     $V: Type,
     $ops: Hashing<K>,
-    mut m: Map<K,
-    V,
-    ops>,
+    mut m: Map<K, V, ops>,
     key: $K,
     move value: $V
 ) where !is_linear(K) && !is_linear(V) {
@@ -273,9 +267,7 @@ map_has :: fn(
     $K: Type,
     $V: Type,
     $ops: Hashing<K>,
-    m: Map<K,
-    V,
-    ops>,
+    m: Map<K, V, ops>,
     key: $K
 ) -> bool {
     slot := map_find(m, key)
@@ -294,9 +286,7 @@ map_get :: fn(
     $K: Type,
     $V: Type,
     $ops: Hashing<K>,
-    m: Map<K,
-    V,
-    ops>,
+    m: Map<K, V, ops>,
     key: $K,
     move fallback: $V
 ) -> $V where !is_linear(V) {
@@ -313,9 +303,7 @@ map_remove :: fn(
     $K: Type,
     $V: Type,
     $ops: Hashing<K>,
-    mut m: Map<K,
-    V,
-    ops>,
+    mut m: Map<K, V, ops>,
     key: $K
 ) -> bool {
     slot := map_find(m, key)
@@ -335,9 +323,7 @@ map_clear :: fn(
     $K: Type,
     $V: Type,
     $ops: Hashing<K>,
-    mut m: Map<K,
-    V,
-    ops>
+    mut m: Map<K, V, ops>
 ) where !is_linear(K) && !is_linear(V) {
     mut state := m.state
     mut i: i64 = 0

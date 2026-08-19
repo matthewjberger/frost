@@ -6916,7 +6916,7 @@ impl<'a> FunctionLowering<'a> {
             };
             (words.offset, *count)
         };
-        let (struct_address, _) = self.struct_place(container)?;
+        let (struct_address, _) = self.struct_place(container, self.at_expression(container))?;
 
         // With two names the first counts the elements and the second is the
         // slot, which is the order `for index, name in` already reads in.
@@ -7426,7 +7426,7 @@ impl<'a> FunctionLowering<'a> {
             Expression::Unsafe(body) => self.lower_block(body, expected),
             Expression::FieldAccess(base, field) => {
                 let field = self.ast.name(field).to_string();
-                self.lower_field_read(base, &field)
+                self.lower_field_read(base, &field, self.at_field(expression))
             }
             Expression::Index(base, index) => {
                 let (address, element_type) =
@@ -7615,7 +7615,7 @@ impl<'a> FunctionLowering<'a> {
                 if !fits_in(*value, &ty) {
                     let (low, high) = range_of(&ty).expect("integer type");
                     bail!(
-                        "{value} does not fit in a {ty}, which holds {low} to {high}"
+                        "{value} does not fit in a '{ty}', which holds {low} to {high}"
                     );
                 }
                 Ok((
@@ -10351,8 +10351,9 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         base: ExprId,
         field: &str,
+        at: Position,
     ) -> Result<(IrOperand, Type)> {
-        let (address, field_type) = self.field_address(base, field)?;
+        let (address, field_type) = self.field_address(base, field, at)?;
         self.load_from(address, field_type)
     }
 
@@ -11228,7 +11229,7 @@ impl<'a> FunctionLowering<'a> {
             }
             Expression::FieldAccess(base, field) => {
                 let field = self.ast.name(field).to_string();
-                self.field_address(base, &field)
+                self.field_address(base, &field, self.at_field(place))
             }
             Expression::Index(base, index) => self.element_address(base, index),
             Expression::Dereference(pointer) => {
@@ -11500,7 +11501,7 @@ impl<'a> FunctionLowering<'a> {
             )
         };
 
-        let (struct_address, _) = self.struct_place(base)?;
+        let (struct_address, _) = self.struct_place(base, self.at_expression(base))?;
 
         // The handle is a `Handle<T>`, opaque and non-numeric. Reinterpret it as
         // the i64 it is at the ABI before taking it apart.
@@ -11638,7 +11639,7 @@ impl<'a> FunctionLowering<'a> {
             )
         };
 
-        let (struct_address, _) = self.struct_place(base)?;
+        let (struct_address, _) = self.struct_place(base, self.at_expression(base))?;
 
         let raw_handle = self.fresh_local(Type::I64, None);
         self.emit(IrStatement::Assign(raw_handle, IrRvalue::Use(handle)));
@@ -11914,7 +11915,7 @@ impl<'a> FunctionLowering<'a> {
             Expression::FieldAccess(inner, field) => {
                 let field = self.ast.name(field).to_string();
                 let (address, field_type) =
-                    self.field_address(inner, &field)?;
+                    self.field_address(inner, &field, self.at_field(base))?;
                 let Type::Array(element, count) = field_type else {
                     bail!("field '{field}' is not an array");
                 };
@@ -12025,10 +12026,18 @@ impl<'a> FunctionLowering<'a> {
         Ok((pointer_operand, pointee))
     }
 
+    // Where the field a `.` names is written. The access is one expression
+    // whose last token is the field, and a report about the field belongs on
+    // the word the reader changes rather than on the statement it sits in.
+    fn at_field(&self, access: ExprId) -> Position {
+        self.ast.end_position_of(self.ast.expr_span(access))
+    }
+
     fn field_address(
         &mut self,
         base: ExprId,
         field: &str,
+        at: Position,
     ) -> Result<(IrOperand, Type)> {
         // A columns element field `c[h].field`: the field selects a column, the
         // handle a validated slot in it.
@@ -12047,17 +12056,42 @@ impl<'a> FunctionLowering<'a> {
                 );
             }
         }
-        let (base_pointer, struct_name) = self.struct_place(base)?;
-        let layout =
+        // A value under a type is reached with `::`, and a `.` in its place
+        // names a field of a value that is not there. Said here, where the
+        // enum and the variant are both in hand, rather than as an unknown
+        // variable, which tells the reader to go and export a name they
+        // already exported.
+        if let Expression::Identifier(name) = self.ast.expr(base) {
+            let name = self.ast.name(*name).to_string();
+            if self.resolve_variable(&name).is_none()
+                && (self.builder.enum_layout(&name).is_some()
+                    || self.builder.struct_layout(&name).is_some())
+            {
+                let readable = readable_type_name(&name);
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "a value named under a type is written with the type in front of it, so this one is written `{readable}::{field}`"
+                    )),
+                    self.at_expression(base),
+                );
+            }
+        }
+        let (base_pointer, struct_name) = self.struct_place(base, at)?;
+        let layout = locate(
             self.builder.struct_layout(&struct_name).ok_or_else(|| {
                 anyhow::anyhow!(
                     "'{struct_name}' {}",
                     crate::check::declared_types::UNDECLARED_TYPE
                 )
-            })?;
-        let field_layout = layout.field(field).ok_or_else(|| {
-            anyhow::anyhow!("struct '{struct_name}' has no field '{field}'")
-        })?;
+            }),
+            at,
+        )?;
+        let field_layout = locate(
+            layout.field(field).ok_or_else(|| {
+                anyhow::anyhow!("struct '{struct_name}' has no field '{field}'")
+            }),
+            at,
+        )?;
         let field_type = field_layout.ty.clone();
         let offset = field_layout.offset;
         let result =
@@ -12072,7 +12106,14 @@ impl<'a> FunctionLowering<'a> {
         Ok((IrOperand::Local(result), field_type))
     }
 
-    fn struct_place(&mut self, base: ExprId) -> Result<(IrOperand, String)> {
+    // `at` is where the field a `.` names is written, which is where the one
+    // report here that names the field belongs. Everything else this answers
+    // with is about the base and keeps the place the caller's statement has.
+    fn struct_place(
+        &mut self,
+        base: ExprId,
+        at: Position,
+    ) -> Result<(IrOperand, String)> {
         match self.ast.expr(base).clone() {
             Expression::Identifier(name) => {
                 let name = self.ast.name(name).to_string();
@@ -12082,7 +12123,7 @@ impl<'a> FunctionLowering<'a> {
                     if let Some(value) =
                         self.builder.constants.get(&name).copied()
                     {
-                        return self.struct_place(value);
+                        return self.struct_place(value, at);
                     }
                     return locate(
                         Err(anyhow::anyhow!("unknown variable '{name}'")),
@@ -12114,6 +12155,18 @@ impl<'a> FunctionLowering<'a> {
                         };
                         Ok((IrOperand::Local(local), struct_name))
                     }
+                    // An enum holds one variant's fields at a time, and which
+                    // one it holds is what a `match` answers, so there is no
+                    // field to read out of one from here.
+                    Type::Enum(name) => {
+                        let name = readable_type_name(&name);
+                        locate(
+                            Err(anyhow::anyhow!(
+                                "a variant's fields are reached by matching on the enum, and this is a `{name}`"
+                            )),
+                            at,
+                        )
+                    }
                     other => bail!(
                         "a field is read out of a struct, and this is {other}"
                     ),
@@ -12122,7 +12175,7 @@ impl<'a> FunctionLowering<'a> {
             Expression::FieldAccess(inner, field) => {
                 let field = self.ast.name(field).to_string();
                 let (address, field_type) =
-                    self.field_address(inner, &field)?;
+                    self.field_address(inner, &field, self.at_field(base))?;
                 let Type::Struct(struct_name) = field_type else {
                     bail!("field '{field}' is not a struct");
                 };
@@ -13518,7 +13571,7 @@ impl<'a> FunctionLowering<'a> {
                 if !fits_in(*value, to) {
                     let (low, high) = range_of(to).expect("integer type");
                     bail!(
-                        "{value} does not fit in a {to}, which holds {low} to {high}"
+                        "{value} does not fit in a '{to}', which holds {low} to {high}"
                     );
                 }
                 IrOperand::Constant(IrConstant::Integer(*value, to.clone()))
@@ -13920,6 +13973,15 @@ fn unify(left: &Type, right: &Type) -> Type {
             wide.clone()
         }
         (Type::F64, Type::F32) | (Type::F32, Type::F64) => Type::F64,
+        // A whole number beside a float is read at the float, which is what
+        // mixed arithmetic rests on. Left to the fallback below, the answer was
+        // whichever side happened to be written first, so `a + b` with an i64
+        // on the left was refused for losing the fraction and `b + a` was not.
+        (float, whole) | (whole, float)
+            if float.is_float() && whole.is_integer() =>
+        {
+            float.clone()
+        }
         (Type::Unknown, other) | (other, Type::Unknown) => other.clone(),
         _ => left.clone(),
     }

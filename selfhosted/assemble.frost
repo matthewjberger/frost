@@ -755,7 +755,7 @@ parse_operand :: fn(mut unit: Assembly, at: i64) -> Operand {
 // fault in the backend or in this file, and the byte offset is what locates it
 // in the text that was handed over.
 assemble_fail :: fn(mut unit: Assembly, what: str, at: i64) {
-    report("frost: assembling: ")
+    report_command("assembling: ")
     report(what)
     report(" at byte ")
     frost_rt_error_int(at)
@@ -765,7 +765,7 @@ assemble_fail :: fn(mut unit: Assembly, what: str, at: i64) {
 
 text_byte :: fn(mut unit: Assembly, value: i64) {
     if (unit.text_count >= str_len(unit.text)) {
-        report("frost: the assembled code outgrew its buffer\n")
+        report_command("the assembled code outgrew its buffer\n")
         frost_rt_die()
     }
     unit.text[unit.text_count] = cast($u8, value & 255)
@@ -774,7 +774,7 @@ text_byte :: fn(mut unit: Assembly, value: i64) {
 
 data_byte :: fn(mut unit: Assembly, value: i64) {
     if (unit.data_count >= str_len(unit.data)) {
-        report("frost: the assembled data outgrew its buffer\n")
+        report_command("the assembled data outgrew its buffer\n")
         frost_rt_die()
     }
     unit.data[unit.data_count] = cast($u8, value & 255)
@@ -2076,7 +2076,7 @@ big_zero :: fn() -> Big {
 // which is a number no program means and no reader can be asked to guess at.
 big_push :: fn(mut x: Big, value: i64) {
     if (x.count >= BIG_LIMBS) {
-        report("frost: assembling: this float literal has more digits than ")
+        report_command("assembling: this float literal has more digits than ")
         report("the assembler converts\n")
         frost_rt_die()
     }
@@ -2345,7 +2345,7 @@ read_double :: fn(mut unit: Assembly, at: i64) -> i64 {
     if (i < str_len(src) && is_name_byte(src[i])) {
         // Anything still attached to the number is a shape this reader was not
         // written for rather than a literal it could work harder at.
-        report("frost: assembling: this is not a float literal this ")
+        report_command("assembling: this is not a float literal this ")
         report("assembler reads: ")
         report_src(src, at, i - at)
         report("\n")
@@ -2716,7 +2716,7 @@ settle_jump_widths :: fn(mut unit: Assembly) {
         }
         passes = passes + 1
         if (passes > 200) {
-            report("frost: the assembler could not settle the jump widths\n")
+            report_command("the assembler could not settle the jump widths\n")
             frost_rt_die()
         }
     }

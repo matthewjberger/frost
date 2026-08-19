@@ -408,7 +408,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         if (assembles) {
             emit_to_memory()
         } else if (unsafe { frost_rt_emit_open(source) } == 0) {
-            report("frost: cannot write '")
+            report_command("cannot write '")
             report_cstr(source)
             report("'")
             frost_rt_die()
@@ -505,7 +505,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     while (checked < jobs.count) {
         job := arena_at(jobs, checked)
         if (job.status != 0) {
-            report("frost: the assembler failed: ")
+            report_command("the assembler failed: ")
             report_cstr(job.command)
             report("\n")
             frost_rt_die()
@@ -542,10 +542,10 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         command = join_two(command, " -lm")
     }
     if (unsafe { frost_rt_run_command(command) } != 0) {
-        report("frost: the linker failed: ")
+        report_command("the linker failed: ")
         report_cstr(command)
         report("\n")
-        report("frost: the runtime linked was ")
+        report_command("the runtime linked was ")
         report_cstr(runtime_source())
         report(" and ")
         report_cstr(frost_runtime_source())
@@ -650,7 +650,7 @@ link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
         // Name the command, since a failing link is nearly always the toolchain
         // being absent or a path it could not read, and neither is guessable
         // from the bare word "failed".
-        report("frost: the linker failed: ")
+        report_command("the linker failed: ")
         report_cstr(command)
         report("\n")
         // And name the runtime, because the other way a link fails is a symbol
@@ -658,7 +658,7 @@ link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
         // on what that file holds, which cannot tell "the runtime changed"
         // apart from "a different runtime is being read", so the resolved path
         // is the thing that distinguishes them and the linker never says it.
-        report("frost: the runtime linked was ")
+        report_command("the runtime linked was ")
         report_cstr(runtime_source())
         report(" and ")
         report_cstr(frost_runtime_source())
@@ -681,12 +681,12 @@ link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
 // same code.
 assemble_file :: fn(input: ^i8, output: ^i8) -> i64 {
     if (cstr_len(input) == 0 || cstr_len(output) == 0) {
-        report("frost: --assemble needs an input file and -o\n")
+        report_command("--assemble needs an input file and -o\n")
         frost_rt_die()
     }
     raw := unsafe { frost_rt_read_file(input) }
     if (cstr_len(raw) == 0) {
-        report("frost: cannot read ")
+        report_command("cannot read ")
         report_cstr(input)
         report("\n")
         frost_rt_die()
@@ -906,6 +906,10 @@ main :: fn() -> i64 {
         const_aggregates = arena_make($ConstDef, 1024),
         const_steps = 0,
         const_quiet = 0,
+        const_pending = arena_make($i64, 32),
+        held_calls = arena_make($HeldCall, 16),
+        halt_node = -1,
+        halted = 0,
         const_failed = 0,
         value_consts = arena_make($ConstDef, 4096),
         instances = arena_make($Instance, 4096),
@@ -1306,7 +1310,7 @@ main :: fn() -> i64 {
     // a program's worth of assembly followed by a complaint.
     if (options.object == 1 && options.link == 0
         && cstr_len(options.output) == 0) {
-        report("frost: --native writes an object, so it needs -o <path>\n")
+        report_command("--native writes an object, so it needs -o <path>\n")
         frost_rt_die()
     }
 
@@ -1350,7 +1354,7 @@ main :: fn() -> i64 {
     }
     if (cstr_len(emit_path) != 0) {
         if (unsafe { frost_rt_emit_open(emit_path) } == 0) {
-            report("frost: cannot write '")
+            report_command("cannot write '")
             report_cstr(emit_path)
             report("'")
             frost_rt_die()
@@ -1381,7 +1385,7 @@ main :: fn() -> i64 {
         status := unsafe { frost_rt_run_command(build) }
         unsafe { frost_rt_remove_file(emit_path) }
         if (status != 0) {
-            report("frost: the assembler failed: ")
+            report_command("the assembler failed: ")
             report_cstr(build)
             report("\n")
             frost_rt_die()

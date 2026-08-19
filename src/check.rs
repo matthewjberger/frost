@@ -2,6 +2,7 @@
 // anything: what each answers is a list of diagnostics, so a program that
 // passes them all is the program the front end parsed.
 pub(crate) mod constant_arithmetic;
+pub(crate) mod constant_names;
 pub(crate) mod declared_types;
 pub(crate) mod entry;
 pub(crate) mod linear_instances;

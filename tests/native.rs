@@ -5201,8 +5201,10 @@ fn self_hosted_rejects_an_unsupported_declaration() {
         return;
     };
     assert!(
-        message.contains(":1:1:")
-            && message.contains("^ this declaration is not supported yet"),
+        message.contains(":1:14:")
+            && message.contains(
+                "^ expected a declaration head, `import`, `export`, or `test`, found 'i64'"
+            ),
         "expected a located unsupported-declaration error, got:\n{message}"
     );
     assert!(

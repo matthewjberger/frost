@@ -617,16 +617,23 @@ void frost_rt_json_close(void) {
     }
     frost_rt_json_open = 0;
     frost_rt_report_begin(frost_rt_json_offset);
-    frost_rt_json_put("{\"file\":\"");
-    for (const char *at = frost_rt_json_file; *at; at++) {
-        if (*at == '\\' || *at == '\"') {
-            frost_rt_json_putc('\\');
+    /* A record with no place has no file, and `null` is what says so: an empty
+       string reads as a file whose name is nothing. */
+    if (frost_rt_json_file[0] == 0) {
+        frost_rt_json_put("{\"file\":null");
+    } else {
+        frost_rt_json_put("{\"file\":\"");
+        for (const char *at = frost_rt_json_file; *at; at++) {
+            if (*at == '\\' || *at == '\"') {
+                frost_rt_json_putc('\\');
+            }
+            frost_rt_json_putc(*at);
         }
-        frost_rt_json_putc(*at);
+        frost_rt_json_put("\"");
     }
     char numbers[128];
     int written = snprintf(numbers, sizeof(numbers),
-                           "\",\"line\":%lld,\"column\":%lld,"
+                           ",\"line\":%lld,\"column\":%lld,"
                            "\"span\":[%lld,%lld],\"severity\":\"error\","
                            "\"message\":\"",
                            (long long)frost_rt_json_line,

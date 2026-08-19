@@ -58,7 +58,7 @@ synth_room_for :: fn(mut p: Parser, wanted: i64) {
     if (p.synth_next + wanted < str_len(p.src)) {
         return
     }
-    report("frost: the compiler ran out of room for the names it makes up")
+    report_command("the compiler ran out of room for the names it makes up")
     frost_rt_die()
 }
 

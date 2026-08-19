@@ -169,6 +169,122 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "cannot dereference a value of type i8",
     ),
+    // A `for` written above the call a body is refused at.
+    //
+    // A `for` becomes statements this compiler made, which carry positions in
+    // the room past the source. Weighed against the point the body is read to,
+    // the declaration of the loop's own cursor was skipped and its use was not,
+    // and the walk called a name it wrote itself unknown.
+    (
+        "a_for_above_the_call_a_body_is_refused_at",
+        "main :: fn() -> i64 {
+             xs: [3]i64 = [1, 2, 3]
+             n: i64 = 0
+             for b in xs { n = n + b }
+             n + nope(1)
+         }
+        ",
+        "call to undefined function 'nope'",
+    ),
+    // A `$T` in a measurement, naming nothing.
+    //
+    // Read as a type parameter and never asked about, `sizeof($Nope)` measured
+    // a name the program does not have and answered zero. The same call written
+    // without the sigil was refused.
+    (
+        "a_measurement_of_a_dollar_name_nothing_binds",
+        "main :: fn() -> i64 { sizeof($Nope) }
+        ",
+        "'Nope' is not a type this program declares",
+    ),
+    // A compile-time answer written with the sigil.
+    //
+    // `field_count($T)` read the sigil as the type in the self-hosted compiler,
+    // answered `i64`, and the function holding the call was dropped without a
+    // word: a `main` written that way linked with no `main` in it.
+    (
+        "field_count_of_a_type_that_has_none",
+        "main :: fn() -> i64 { field_count($i64) }
+        ",
+        "`field_count` counts the fields of a struct or the variants of an enum",
+    ),
+    // A wrong call that is the whole value of the statement holding it.
+    //
+    // The statement is the fault, so nothing else about it is asked. Told the
+    // count and then told that a `void` is not what the binding declared, the
+    // reader had two things to read and one to do.
+    (
+        "a_wrong_call_that_is_a_bindings_whole_value",
+        "Item :: struct { v: i64 }
+         make :: fn(n: i64) -> Item { Item { v = n } }
+         main :: fn() -> i64 {
+             held: Item = make()
+             held.v
+         }
+        ",
+        "expects 1 argument(s) but 0 were given",
+    ),
+    // A wrong call written inside a larger expression.
+    //
+    // The other side of the same rule: here the outer expression is what the
+    // reader is told about, since the call is one thing among several in it.
+    (
+        "a_wrong_call_inside_a_larger_expression",
+        "Thing :: struct { v: i64 }
+         takes :: fn(t: Thing) -> i64 { t.v }
+         two :: fn(a: i64, b: i64) -> i64 { a + b }
+         main :: fn() -> i64 { takes(two(1)) }
+        ",
+        "this argument is a 'i64' and a 'Thing' is what is wanted here",
+    ),
+    // A field report about a generic instance.
+    //
+    // The self-hosted compiler named the template the instance was stamped
+    // from, so a program holding `Pair<i64>` and `Pair<f64>` was told about
+    // `Pair` and left to work out which.
+    (
+        "a_field_report_about_a_generic_instance",
+        "Pair :: struct($A: Type) { a: A, b: i64 }
+         main :: fn() -> i64 {
+             p: Pair<i64> = Pair<i64> { a = 1 }
+             p.b
+         }
+        ",
+        "struct 'Pair<i64>' is missing field 'b'",
+    ),
+    // A bit refused inside a `flags` block.
+    //
+    // The block stayed open, so recovery read the bit below it as the next
+    // declaration and the one below that as another, and one fault reached the
+    // reader as three.
+    (
+        "a_bit_that_follows_another_on_one_line",
+        "Bits :: flags u32 { Read :: 1, Write :: 2, Exec :: 4 }
+         main :: fn() -> i64 { 0 }
+        ",
+        "a set of bits names each of them on a line of its own",
+    ),
+    // An arena pointer that outlives its region, stored in a place whose type
+    // is also wrong.
+    //
+    // The region is the fault; what the value was stored in follows from the
+    // same line. The bootstrap said both and the self-hosted compiler said the
+    // first, so a reader was handed two things to read and one to do.
+    (
+        "a_region_escape_is_the_whole_of_what_a_line_says",
+        "import \"arena.frost\"
+         main :: fn() -> i64 {
+             room: [64]u8 = [0; 64]
+             a := arena_over(room)
+             escaped: []u8 = [0; 0]
+             with a {
+                 escaped = arena_take(a, 8, 8)
+             }
+             cast($i64, escaped[0])
+         }
+        ",
+        "escapes its region by being stored outside it",
+    ),
     // A generic named with fewer type arguments than it binds.
     //
     // The self-hosted compiler read the bindings past their end and died on the
@@ -198,34 +314,114 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         ",
         "is settled by the type of 'v', so it is not written at the call",
     ),
-    // A generic named with fewer type arguments than it binds.
+    // A number with a fraction handed to a parameter that holds whole ones.
     //
-    // The self-hosted compiler read the bindings past their end and died on the
-    // arena rather than on the program.
+    // An untyped literal takes the type the context wants, and the exemption
+    // was read as covering a float where an integer is wanted: the self-hosted
+    // compiler accepted `takes(1.5)` against `fn(v: i64)` and truncated it.
     (
-        "a_generic_named_with_too_few_type_arguments",
-        "Pair :: struct($A: Type, $B: Type) { a: A, b: B }
-         main :: fn() -> i64 {
-             p: Pair<i64> = Pair { a = 1, b = 2 }
-             p.a
-         }
+        "a_float_literal_where_a_whole_number_is_wanted",
+        "takes :: fn(v: i64) -> i64 { v }
+         main :: fn() -> i64 { takes(1.5) }
         ",
-        "expects 2 type argument(s) but 1 were given",
+        "this is a 'f64' and a 'i64' is wanted",
     ),
-    // A `where` bound weighed against a call already refused.
+    // A decimal literal past what sixty-four bits hold.
     //
-    // `keep($i64, 3)` was told that `T` is settled by the value and may not be
-    // written at the call, and then that the bound does not hold for the `T` it
-    // was told not to write.
+    // The self-hosted lexer wrapped the digits the way it wraps a radix
+    // literal, and `-9223372036854775808 / -1` then trapped inside the compiler
+    // rather than being refused.
     (
-        "a_where_bound_is_not_weighed_against_a_call_already_refused",
-        "Session :: linear struct { id: i64 }
-         keep :: fn($T: Type, v: T) -> i64 where is_linear(T) { 1 }
+        "a_decimal_literal_past_sixty_four_bits",
+        "main :: fn() -> i64 { 9223372036854775808 }
+        ",
+        "does not fit in sixty-four bits",
+    ),
+    // A name a constant may not read.
+    //
+    // `Alias :: Target` declares a value constant holding a type's name, which
+    // is not a value. The bootstrap read it as one, and what the reader was
+    // told came from wherever the name was used.
+    (
+        "a_constant_whose_value_names_a_type",
+        "Target :: struct { v: i64 }
+         Alias :: Target
+         main :: fn() -> i64 { 0 }
+        ",
+        "'Target' is not a constant, so it cannot appear in a constant",
+    ),
+    // A value under a type reached with a dot.
+    //
+    // One compiler reported an unknown variable with a hint to export a name
+    // the file declares three lines up; the other said the base was not a
+    // struct.
+    (
+        "a_value_under_a_type_reached_with_a_dot",
+        "Kind :: enum { First, Second }
          main :: fn() -> i64 {
-             keep($i64, 3)
+             k: Kind = Kind.Second
+             0
          }
         ",
-        "is settled by the type of 'v', so it is not written at the call",
+        "so this one is written `Kind::Second`",
+    ),
+    // A field read out of an enum value.
+    //
+    // An enum holds one variant's fields at a time, so there is no field to
+    // read out of one from outside a `match`.
+    (
+        "a_field_read_out_of_an_enum_value",
+        "Kind :: enum { A { v: i64 }, B }
+         main :: fn() -> i64 {
+             k := Kind::A { v = 1 }
+             k.v
+         }
+        ",
+        "a variant's fields are reached by matching on the enum",
+    ),
+    // A word after `::` that opens neither a value nor a declaration head.
+    //
+    // The bootstrap read it as an expression, failed somewhere inside, and
+    // recovery named the declaration's own name as the token no declaration
+    // starts with.
+    (
+        "a_declaration_head_that_is_neither_a_value_nor_a_form",
+        "Id :: ref i64
+         main :: fn() -> i64 { 0 }
+        ",
+        "a declaration is a value or one of `fn`, `struct`, `enum`, `distinct`, `flags`, `extern`, and this is 'ref'",
+    ),
+    // A call the walk refuses, written below a type fault in the same body.
+    //
+    // A body says the earliest thing wrong with it. The self-hosted compiler
+    // said the call fault where the bootstrap said the type fault, because the
+    // call walk runs first and reported as it went.
+    (
+        "a_wrong_call_below_a_type_fault_in_one_body",
+        "Thing :: struct { v: i64 }
+         takes :: fn(t: Thing) -> i64 { t.v }
+         main :: fn() -> i64 {
+             a := takes(7)
+             b := nope(1)
+             a + b
+         }
+        ",
+        "this argument is a 'i64' and a 'Thing' is what is wanted here",
+    ),
+    // A call the walk refuses, written above a type fault in the same body.
+    //
+    // The other order of the same pair: here the call fault is the earliest and
+    // the value bound from it carries no type worth weighing.
+    (
+        "a_wrong_call_above_a_type_fault_in_one_body",
+        "Thing :: struct { v: i64 }
+         takes :: fn(t: Thing) -> i64 { t.v }
+         main :: fn() -> i64 {
+             a := nope(1)
+             takes(a)
+         }
+        ",
+        "call to undefined function 'nope'",
     ),
     // A `defer` that leaves the function.
     //

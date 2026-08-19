@@ -72,6 +72,8 @@ A repeat literal takes one as its count, which is how a generic's backing array
 is filled without naming a size:
 
 ```frost
+Buffer :: struct($T: Type, $N: usize) { items: [N]T, count: i64 }
+
 filled :: fn($T: Type, $N: usize, value: $T) -> Buffer<T, N> {
     Buffer { items = [value; N], count = N }
 }
@@ -663,6 +665,11 @@ An implementation is a constant of it, and a constant is its value wherever it
 is named:
 
 ```frost
+Ordering :: struct($T: Type) {
+    less: fn(T, T) -> bool,
+    equal: fn(T, T) -> bool,
+}
+
 i64_less :: fn(a: i64, b: i64) -> bool { a < b }
 i64_equal :: fn(a: i64, b: i64) -> bool { a == b }
 
@@ -700,6 +707,14 @@ bundle type.
 Two orderings over one type are two constants:
 
 ```frost
+Ordering :: struct($T: Type) {
+    less: fn(T, T) -> bool,
+    equal: fn(T, T) -> bool,
+}
+
+i64_greater :: fn(a: i64, b: i64) -> bool { a > b }
+i64_equal :: fn(a: i64, b: i64) -> bool { a == b }
+
 i64_descending :: Ordering<i64> { less = i64_greater, equal = i64_equal }
 ```
 

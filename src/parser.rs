@@ -1235,6 +1235,10 @@ impl<'a> Parser<'a> {
         let mut roots = Vec::new();
         loop {
             let position = self.current_position().unwrap_or_default();
+            // Where the declaration began, so a fault inside it can be told
+            // what it had left open.
+            let began = self.tokens.clone();
+            let before = self.tokens.len();
             match self.parse_statement() {
                 Ok(Some(statement)) => {
                     roots.push(statement);
@@ -1242,7 +1246,8 @@ impl<'a> Parser<'a> {
                 Ok(None) => break,
                 Err(error) => {
                     self.record_error(position, &error);
-                    self.synchronize();
+                    let read = before - self.tokens.len();
+                    self.synchronize(left_open(began, read));
                     if matches!(self.peek_nth(0), Token::EndOfFile) {
                         break;
                     }
@@ -1471,14 +1476,22 @@ impl<'a> Parser<'a> {
     /// After a top-level error, skip tokens until the next token begins a
     /// top-level item (a `name ::` declaration, or an `import`, `export`, or
     /// `test`). At least one token is always consumed so recovery cannot loop.
-    fn synchronize(&mut self) {
+    /// `open` is how many brackets the declaration had opened and not closed
+    /// when it failed, which the walk has to come back out of before a name
+    /// with a `::` after it means the next declaration. A bit refused inside a
+    /// `flags` block left that block open, and the bit below it read as a
+    /// declaration head, so one fault was reported as three.
+    fn synchronize(&mut self, open: u32) {
+        let mut depth = open;
         if !matches!(self.peek_nth(0), Token::EndOfFile) {
+            depth = counted(depth, self.peek_nth(0));
             self.read_token();
         }
         while !matches!(self.peek_nth(0), Token::EndOfFile) {
-            if self.at_statement_boundary() {
+            if depth == 0 && self.at_statement_boundary() {
                 return;
             }
+            depth = counted(depth, self.peek_nth(0));
             self.read_token();
         }
     }
@@ -1814,9 +1827,7 @@ impl<'a> Parser<'a> {
                             | Token::StringLiteral(_)
                             | Token::Function
                             | Token::Inline
-                            | Token::Unsafe
                             | Token::LeftBracket
-                            | Token::LeftBrace
                             | Token::Minus
                             | Token::Bang
                             | Token::LeftParentheses
@@ -1832,6 +1843,18 @@ impl<'a> Parser<'a> {
                 // an expression is refused along with everything else: only a
                 // declaration can stand there.
                 if self.block_depth == 0 {
+                    // A name with a `::` after it opens a declaration, so what
+                    // is wrong is the word after the `::` rather than the name.
+                    // Read as a token no declaration starts with, the report
+                    // named the declaration's own name and the reader was sent
+                    // to the word that is fine.
+                    if matches!(self.peek_nth(0), Token::Identifier(_))
+                        && matches!(self.peek_nth(1), Token::DoubleColon)
+                    {
+                        self.read_token();
+                        self.read_token();
+                        self.refuse_unknown_declaration_head()?;
+                    }
                     let written = self.peek_nth(0).to_string();
                     return Err(self.here(format!(
                         "expected a declaration head, `import`, `export`, or `test`, found '{written}'"
@@ -2376,6 +2399,27 @@ impl<'a> Parser<'a> {
             bail!("Expected '::'");
         }
 
+        // `Type::NAME :: value` written at the top level. A value under a type
+        // is declared in that type's own block, and read from out here this is
+        // the type's own name declared a second time, which is what the reader
+        // was told before.
+        if matches!(self.peek_nth(0), Token::Identifier(_))
+            && matches!(self.peek_nth(1), Token::DoubleColon)
+        {
+            let message = "a value under a type is declared in that type's own block, as in `Name :: struct { .. } { VALUE :: .. }`".to_string();
+            // At the type's own name, which is the word the whole declaration
+            // moves under, rather than at the value's.
+            return Err(match self.position_at(start) {
+                Some(position) => {
+                    anyhow::Error::new(crate::diagnostic::LocatedError {
+                        position,
+                        message,
+                    })
+                }
+                None => anyhow::anyhow!("{message}"),
+            });
+        }
+
         if matches!(self.peek_nth(0), Token::Linear) {
             self.read_token();
             self.linear_types.insert(identifier.clone());
@@ -2826,6 +2870,12 @@ impl<'a> Parser<'a> {
                 self.span_from(start),
             ))
         } else {
+            // A declaration is a value or one of the heads above, and a word
+            // that opens neither is neither. Read as an expression it went to
+            // whatever `while` or `ref` parses as, failed somewhere inside,
+            // and recovery named the declaration's own name as the token no
+            // declaration starts with.
+            self.refuse_unknown_declaration_head()?;
             let mut expression = self.parse_expression(Precedence::Lowest)?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
@@ -2847,6 +2897,33 @@ impl<'a> Parser<'a> {
                 self.span_from(start),
             ))
         }
+    }
+
+    /// What follows `::` where it opens neither a value nor a declaration head.
+    ///
+    /// Named where it is written. A declaration's value is an expression, so
+    /// what may stand there is what may open one; anything else is a token the
+    /// reader has to replace, and read as an expression it went to whatever
+    /// `while` or `ref` parses as and failed somewhere inside.
+    fn refuse_unknown_declaration_head(&mut self) -> Result<()> {
+        if Self::can_begin_expression(self.peek_nth(0)) {
+            return Ok(());
+        }
+        let written = self.peek_nth(0).to_string();
+        let message = format!(
+            "a declaration is a value or one of `fn`, `struct`, `enum`, `distinct`, `flags`, `extern`, and this is '{written}'"
+        );
+        // At the token, which is the word the reader replaces, rather than at
+        // the `::` the read has just been over.
+        Err(match self.current_position() {
+            Some(position) => {
+                anyhow::Error::new(crate::diagnostic::LocatedError {
+                    position,
+                    message,
+                })
+            }
+            None => anyhow::anyhow!("{message}"),
+        })
     }
 
     /// The name of a type's answer standing where the cursor is: one of the
@@ -3086,7 +3163,13 @@ impl<'a> Parser<'a> {
                 // nothing declares says it where the reader wrote it, and this
                 // span reaching back to `sizeof` put the caret on the word that
                 // is fine.
-                let at_type = self.mark();
+                // The name, not the sigil. `sizeof` and `alignof` leave the
+                // `$` for the type parse to read, and a report about the type
+                // belongs on the word the reader has to change.
+                let at_type = match self.peek_nth(0) {
+                    Token::Dollar => self.mark() + 1,
+                    _ => self.mark(),
+                };
                 let held = self.parse_type()?;
                 if !matches!(self.read_token(), Token::RightParentheses) {
                     bail!("Expected ')' after the type in {word}");

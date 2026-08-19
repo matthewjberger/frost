@@ -210,6 +210,17 @@ lookup_local :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 // what makes `m : Meters = 3` read the way it should. An arithmetic expression
 // built only out of literals is still one, so `m : Meters = 60 * 60` reads the
 // same way.
+// Whether a literal is written with a point in it. An untyped whole number
+// takes the type the context wants, and a number with a fraction cannot take an
+// integer one: the fraction is what a conversion loses, so it is a narrowing
+// like any other and the reader says so with a `cast`.
+float_literal :: fn(mut p: Parser, id: i64) -> bool {
+    if (id < 0) {
+        return false
+    }
+    arena_at(p.arena, constant_node(p, id)).kind == NodeKind::Float
+}
+
 untyped_literal :: fn(mut p: Parser, id: i64) -> bool {
     if (id < 0) {
         return false
@@ -425,7 +436,9 @@ value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
     // compared through whatever the two stand for: a distinct type over an i64
     // read at an i32 loses the same half a bare i64 does.
     if (from == to || is_distinct(to) == false) {
-        if (is_narrowing(from, to) && untyped_literal(p, value) == false) {
+        if (is_narrowing(from, to)
+            && (untyped_literal(p, value) == false
+                || (float_literal(p, value) && is_integer(distinct_repr(to))))) {
             report_where(p.modules, p.src, arena_at(p.arena, value).pos)
             report("this is a '")
             report_type_name(p, from)
@@ -759,11 +772,26 @@ field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
         }
         fid = field.next
     }
+    // An enum holds one variant's fields at a time, and which one it holds is
+    // what a `match` answers, so there is no field to read out of one from
+    // here. Said before the struct sentence below, which would name the enum
+    // as a struct and send the reader looking for a field to add.
+    if (def.is_enum == 1) {
+        report_where(p.modules, p.src, off)
+        report("a variant's fields are reached by matching on the enum, and this is a `")
+        report_src(p.src, struct_off, struct_len)
+        report("`")
+        frost_rt_recover_escape()
+    }
     // The base is a struct but carries no such field. Emitting the access
     // verbatim would leave it for whatever compiles the output to notice.
+    //
+    // The instance, not the template it was stamped from. `Pair<i64>` is what
+    // the reader wrote and what tells one instance from another; the
+    // declaration's own name is `Pair` for every one of them.
     report_where(p.modules, p.src, off)
     report("struct '")
-    report_src(p.src, struct_off, struct_len)
+    report_type_name(p, struct_ty)
     report("' has no field '")
     report_src(p.src, off, len)
     report("'")
@@ -2892,11 +2920,35 @@ gparam_position :: fn(
 // How many of a generic's compile-time parameters a call writes. One a value
 // parameter settles is read off the argument, so writing it says twice what
 // the argument says once.
+// Whether a compile-time parameter is the one a `uses` clause names. A call
+// writes nothing for it: what it stands for is drawn from the block or the
+// caller, so counting it against what a call gives refuses every call to a
+// function that draws one.
+names_a_capability :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    off: i64,
+    len: i64
+) -> bool {
+    mut index: i64 = 0
+    while (index < cap_count_of(p, fn_index)) {
+        held := cap_at(p, fn_index, index)
+        if (held.len == len && bytes_equal(p.src, held.off, off, len)) {
+            return true
+        }
+        index = index + 1
+    }
+    false
+}
+
 written_gparam_count :: fn(mut p: Parser, gfn_index: i64) -> i64 {
     gfn := arena_at(p.generic_fns, gfn_index)
+    owner := gfn.fn_index
     mut count: i64 = 0
     if (gfn.tparam_len > 0 && gfn.tparam_is_slot == 1
-        && gfn.tparam_fallback < 0) {
+        && gfn.tparam_fallback < 0
+        && names_a_capability(p, owner, gfn.tparam_off, gfn.tparam_len)
+        == false) {
         gparam_position(p, gfn.token_start, gfn.tparam_off, gfn.tparam_len)
         if (p.gparam_settled == 0) {
             count = count + 1
@@ -2905,7 +2957,9 @@ written_gparam_count :: fn(mut p: Parser, gfn_index: i64) -> i64 {
     mut index: i64 = 0
     while (index < gfn.xparam_count) {
         param := arena_at(p.gparams, gfn.xparam_start + index)
-        if (param.fallback < 0) {
+        if (param.fallback < 0
+            && names_a_capability(p, owner, param.name_off, param.name_len)
+            == false) {
             gparam_position(p, gfn.token_start, param.name_off, param.name_len)
             if (p.gparam_settled == 0) {
                 count = count + 1

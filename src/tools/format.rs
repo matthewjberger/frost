@@ -669,12 +669,25 @@ fn elements_of(
     let mut held = Vec::new();
     let mut start = open + 1;
     let mut depth = 0i32;
-    for (index, token) in tokens.iter().enumerate().take(close).skip(open + 1) {
-        depth += nesting(token);
-        if depth == 0 && matches!(token, Token::Comma) {
+    let mut index = open + 1;
+    while index < close {
+        // A generic's arguments are one type, so the commas between them are
+        // not the commas of the list this walks. Counted by brackets alone, a
+        // parameter written `m: Map<K, V, ops>` was broken at them and read as
+        // three parameters, two of them named for the arguments.
+        if matches!(tokens[index], Token::LessThan)
+            && let Some(shut) = type_arguments_close(tokens, index)
+            && shut < close
+        {
+            index = shut + 1;
+            continue;
+        }
+        depth += nesting(&tokens[index]);
+        if depth == 0 && matches!(tokens[index], Token::Comma) {
             held.push(start..index + 1);
             start = index + 1;
         }
+        index += 1;
     }
     if start < close {
         held.push(start..close);

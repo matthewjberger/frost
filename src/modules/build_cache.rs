@@ -174,7 +174,7 @@ fn blank_ordinary_body(ast: &mut Ast, statement: StmtId) {
     if ast
         .params_in(params)
         .iter()
-        .any(|parameter| is_compile_time(ast, parameter))
+        .any(|parameter| stamped_by_the_caller(ast, parameter))
     {
         return;
     }
@@ -213,7 +213,7 @@ pub fn push_as_declaration(
     if source
         .params_in(*params)
         .iter()
-        .any(|parameter| is_compile_time(source, parameter))
+        .any(|parameter| stamped_by_the_caller(source, parameter))
     {
         return None;
     }
@@ -234,8 +234,14 @@ pub fn push_as_declaration(
     ))
 }
 
-fn is_compile_time(ast: &Ast, parameter: &Parameter) -> bool {
+// Whether this parameter makes the caller the one that stamps the body out. A
+// `$T` is one, and so is a `$...` list: the elements a call writes decide how
+// many times the body's `for` runs and what each turn stands for, so the body
+// has to cross with the declaration and a change to it changes what every
+// caller emits.
+fn stamped_by_the_caller(ast: &Ast, parameter: &Parameter) -> bool {
     parameter.compile_time_signature.is_some()
+        || parameter.pack
         || matches!(
             &parameter.type_annotation,
             Some(Type::TypeParam(name)) if name == ast.name(parameter.name)

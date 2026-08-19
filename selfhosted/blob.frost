@@ -29,7 +29,7 @@ blob_room :: fn(mut b: Blob, room: i64) {
 
 blob_byte :: fn(mut b: Blob, value: i64) {
     if (b.count >= str_len(b.bytes)) {
-        report("frost: the object outgrew its buffer\n")
+        report_command("the object outgrew its buffer\n")
         frost_rt_die()
     }
     b.bytes[b.count] = cast($u8, value & 255)
@@ -100,7 +100,7 @@ blob_write :: fn(mut b: Blob, path: ^i8) {
         opened = frost_rt_emit_open(path)
     }
     if (opened == 0) {
-        report("frost: cannot write the object\n")
+        report_command("cannot write the object\n")
         frost_rt_die()
     }
     // The live prefix of the run, which is the shape `slice_prefix` has in the

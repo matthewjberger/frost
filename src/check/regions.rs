@@ -1224,6 +1224,12 @@ fn container_sources(
 /// compiler holds the same table as one mask per parameter, so the width is
 /// written here rather than left to differ: a function with more parameters
 /// than this records nothing, in both compilers alike.
+/// The phrase every report about an arena pointer outliving its region opens
+/// with. Named here so the driver, which holds a body's lowering back on it,
+/// reads the words the check writes rather than a copy that a rewording leaves
+/// behind.
+pub const REGION_ESCAPE: &str = "region: a pointer into arena";
+
 pub const KEPT_PARAMETERS: usize = 16;
 
 /// Which parameters a call keeps a hold of. `kept[name][i]` is the set of

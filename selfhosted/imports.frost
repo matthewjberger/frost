@@ -4,7 +4,8 @@ import "core.frost"
 import "json.frost"
 import "lexer.frost"
 
-export json_reports, SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
+export SOURCE_ROOM, SYNTH_ROOM, copy_name,
+    directory_part, emit_position,
     file_name,
     joined_path, join_path, module_at, report_where, report_note_where,
     line_of, column_of, file_of,
@@ -308,7 +309,7 @@ refuse_upward :: fn(parent: ^i8, found: ^i8, mut layers: Arena<Layer>) {
     if (from < 0 || into < 0 || into <= from) {
         return
     }
-    report("frost: layer: '")
+    report_command("layer: '")
     report_cstr(arena_at(layers, from).name)
     report("' may not reach '")
     report_cstr(arena_at(layers, into).name)
@@ -403,7 +404,7 @@ place_module :: fn(
     // pointer.
     text := cstr_slice(raw)
     if (str_len(text) == 0) {
-        report("frost: cannot read '")
+        report_command("cannot read '")
         report_cstr(path)
         report("'")
         frost_rt_die()
@@ -593,7 +594,13 @@ report_place :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     // A caller reading JSON gets the place as fields and the message as one
     // string, so the record opens here and whatever ends the report closes it.
     if (json_reports()) {
-        unsafe { frost_rt_json_place(entry.name, line, column, offset) }
+        // Into the file, not into the buffer every module was spliced into. A
+        // reader of the JSON opens the file this names and looks at the bytes
+        // the span gives, and the buffer's own offset points past the end of a
+        // file the imports were laid down before.
+        unsafe {
+            frost_rt_json_place(entry.name, line, column, offset - entry.start)
+        }
         return
     }
     report_cstr(entry.name)
@@ -612,25 +619,6 @@ report_place :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
         space = space + 1
     }
     report("^ ")
-}
-
-// Whether this run writes its reports as JSON, asked of the command line
-// directly because a report may be raised before the arguments are read.
-json_reports :: fn() -> bool {
-    mut index: i64 = 1
-    mut count := frost_rt_arg_count()
-    while (index < count) {
-        argument := frost_rt_arg_at(index)
-        if (cstr_eq(argument, "--diagnostics=json")) {
-            return true
-        }
-        if (cstr_eq(argument, "--diagnostics") && index + 1 < count
-            && cstr_eq(frost_rt_arg_at(index + 1), "json")) {
-            return true
-        }
-        index = index + 1
-    }
-    false
 }
 
 // The same position, written into the emitted program rather than to stderr,
@@ -826,7 +814,7 @@ manifest_roots :: fn(
     root := json_root(document)
     if (root < 0 || json_kind(document, root) != JsonKind::Object) {
         // Nothing is given back here, since the next thing this does is stop.
-        report("frost: cannot read '")
+        report_command("cannot read '")
         report_cstr(path)
         report("' as a manifest")
         frost_rt_die()
@@ -882,7 +870,7 @@ manifest_generators :: fn(entry: ^i8, mut into: Arena<Generator>) {
     mut document := json_parse(text)
     root := json_root(document)
     if (root < 0 || json_kind(document, root) != JsonKind::Object) {
-        report("frost: cannot read '")
+        report_command("cannot read '")
         report_cstr(path)
         report("' as a manifest")
         frost_rt_die()

@@ -33,6 +33,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     CONST_INT, CONST_BOOL, CONST_ARRAY, CONST_RECORD, CONST_TEXT, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, FormatCall,
+    HeldCall,
     TypeCacheEntry, UnsafeSpan, IndirectCall,
     Variant, WalkedField, GfnTemplate,
     add_root, add_layer, Layer, Generator, layer_of, path_under,
@@ -55,6 +56,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     frost_rt_recover_run, frost_rt_recover_escape, frost_rt_recover_note,
     frost_rt_end_line,
     frost_rt_json_reports, frost_rt_json_place, frost_rt_json_close,
+    json_reports, report_command,
     frost_rt_report_open, frost_rt_report_note,
     frost_rt_recover_failures
 
@@ -151,6 +153,35 @@ frost_rt_setenv :: extern fn(name: ^i8, value: ^i8) -> i64
 // a source range by the length it is given, and a C string by the length up to
 // its terminator. Each confines its one unchecked step to itself, so the code
 // that reports an error calls them without an `unsafe` block of its own.
+// A line about the command rather than about the program. The `frost: ` in
+// front of it is what the reader sees at a terminal; a run writing JSON gets
+// the message alone, since the record around it says what it is.
+report_command :: fn(s: str) {
+    if (json_reports() == false) {
+        report("frost: ")
+    }
+    report(s)
+}
+
+// Whether this run writes its reports as JSON, asked of the command line
+// directly because a report may be raised before the arguments are read.
+json_reports :: fn() -> bool {
+    mut index: i64 = 1
+    mut count := frost_rt_arg_count()
+    while (index < count) {
+        argument := frost_rt_arg_at(index)
+        if (cstr_eq(argument, "--diagnostics=json")) {
+            return true
+        }
+        if (cstr_eq(argument, "--diagnostics") && index + 1 < count
+            && cstr_eq(frost_rt_arg_at(index + 1), "json")) {
+            return true
+        }
+        index = index + 1
+    }
+    false
+}
+
 report :: fn(s: str) {
     length := str_len(s)
     if (length == 0) {
@@ -596,6 +627,11 @@ TokenKind :: enum {
     // binding list reads it as a value the caller wants no name for, and
     // `_ := 5` has nowhere to parse.
     Underscore,
+    // A decimal literal whose digits spell a number sixty-four bits cannot
+    // hold. Its own kind rather than an `Int` carrying whatever the digits
+    // wrapped to, because the wrapped value is a number the file does not
+    // say and every pass downstream would read it as one it does.
+    BigInt,
     Illegal,
 }
 
@@ -1496,6 +1532,35 @@ IndirectCall :: struct {
     decided: i64,
 }
 
+// A call the call walk refused, held until the types have been weighed. The
+// body it stands in says the earliest thing wrong with it, and a type fault
+// above the call is earlier than the call, so which of the two reaches the
+// reader is not settled where either is found.
+HeldCall :: struct {
+    // Where the call is written, which is where the report is placed and what
+    // orders it against the rest of the body.
+    at: i64,
+    // The call's own node, for the statement whose whole value it is.
+    node: i64,
+    // Which of the four the call walk found: 0 undefined, 1 a compile-time
+    // parameter the signature settles, 2 a generic's argument count, 3 an
+    // ordinary argument count.
+    kind: i64,
+    // The callee's name.
+    name_off: i64,
+    name_len: i64,
+    // The counts the two length reports name.
+    expected: i64,
+    got: i64,
+    // The parameter the signature settles, and the argument that settles it.
+    param_off: i64,
+    param_len: i64,
+    settler_off: i64,
+    settler_len: i64,
+    // Whether the body holding it has been weighed and this answered.
+    decided: i64,
+}
+
 UnsafeSpan :: struct {
     start: i64,
     end: i64,
@@ -1578,7 +1643,7 @@ arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
             // The element type says which arena this is. The capacity alone
             // said nothing a reader could act on: a dozen of them are made with
             // the same size, so the number named every one and none of them.
-            report("frost: the ")
+            report_command("the ")
             report(typename($T))
             report(" arena is full at ")
             frost_rt_error_int(a.limit)
@@ -1600,7 +1665,7 @@ arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
 // the other. Answer for it here instead.
 arena_at :: fn(a: Arena<$T>, id: i64) -> ref T {
     if (id < 0 || id >= a.count) {
-        report("frost: an arena was indexed out of range: ")
+        report_command("an arena was indexed out of range: ")
         frost_rt_error_int(id)
         frost_rt_die()
     }
@@ -1797,6 +1862,11 @@ Parser :: struct {
     // nothing is worked out.
     const_steps: i64,
     const_quiet: i64,
+    // The token a `Name :: OtherName` was written at, for each one whose other
+    // name was no constant when the pass reached it. It may be one written
+    // further down, so these are read again once the pass has been over the
+    // whole file.
+    const_pending: Arena<i64>,
     // Whether the fold under way ran into something it could not work out. A
     // constant that asked to be folded is refused where it is written; one
     // that only might be foldable is tried quietly, and this is what says the
@@ -2276,6 +2346,22 @@ Parser :: struct {
     // Every call that goes to a value, found before the types are weighed and
     // said after them, so the earliest fault in a function is the one it says.
     indirect_calls: Arena<IndirectCall>,
+    // Every call the call walk refused, held for the same reason and answered
+    // in the same place.
+    held_calls: Arena<HeldCall>,
+    // The call the body is refused at, where that call is the whole value of
+    // the statement holding it. Such a statement is the fault, so nothing more
+    // is asked about it: `s : Slab<Item, 4> = slab_reset()` against a
+    // one-argument `slab_reset` was told the count and then told that a `void`
+    // is not a `Slab`. A call written inside a larger expression is not this:
+    // there the outer expression is what the reader is told about.
+    halt_node: i64,
+    // Whether the walk has reached the statement it halts at. Everything after
+    // it is written under a call already refused, and skipping the statement
+    // alone left the name it binds unbound for the lines below: `m :=
+    // map_new(..)` against the wrong count was told the count and then that `m`
+    // is a name nothing declares.
+    halted: i64,
     // Where the call the function being weighed is refused at is written, so
     // the type walk stops there rather than reading statements the other
     // compiler never reaches. -1 where the function holds no such call.

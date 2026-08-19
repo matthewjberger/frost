@@ -13,11 +13,11 @@ import "lint.frost"
 
 export expand_includes, instance_fits_kind, tuple_is_first_for,
     mark_first_instances, instance_hash,
-    check_discarded_resources,
+    check_discarded_resources, type_named,
     instance_params,
     parse_generic_instance, parse_program, join_synth_fns,
     function_literal_follows_at,
-    record_mono_rets,
+    record_mono_rets, refuse_dot_value,
     resolve_variant_fixups, struct_field_count, written_at
 
 // The code a compile-time argument carries, with the cursor on the token after
@@ -770,6 +770,13 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // them fills.
         if (str_range_eq(p.src, offset, length, "field_count")) {
             advance(p)
+            // A type argument is written with the sigil the way it is anywhere
+            // else, and `sizeof` and `alignof` read past one here. Left in
+            // place, `field_count($T)` read the sigil as the type, answered
+            // `i64`, and the function holding it was dropped without a word.
+            if (cur(p) == TokenKind::Dollar) {
+                advance(p)
+            }
             ty := parse_type(p)
             advance(p)
             // A type with no fields has no count. An enum is laid out as a
@@ -1979,10 +1986,9 @@ parse_field_inits :: fn(mut p: Parser, struct_ty: i64) -> i64 {
         // unwinding, since the parse is refused as a whole once it is done.
         if (is_struct_ty(struct_ty)
             && struct_has_field(p, struct_ty, offset, length) == false) {
-            def := arena_at(p.structs, struct_index_of(struct_ty))
             report_where(p.modules, p.src, offset)
             report("struct '")
-            report_src(p.src, def.name_off, def.name_len)
+            report_type_name(p, struct_ty)
             report("' has no field '")
             report_src(p.src, offset, length)
             report("'")
@@ -4190,7 +4196,7 @@ instantiate :: fn(
     // read past their end and the compiler died on the arena rather than on the
     // program.
     if (xparam_count != xarg_count) {
-        report("frost: generic ")
+        report_command("generic ")
         if (is_enum == 1) {
             report("enum '")
         } else {
@@ -8460,6 +8466,23 @@ holds_linear :: fn(mut p: Parser, field_head: i64, declared: i64) -> i64 {
 // names no enum, so a variant is found by its own name. Two enums that each
 // carry a variant of the same name are told apart by the scrutinee's type when
 // there is one.
+// The type a name stands for, or -1 where it stands for something else. Asked
+// where a `.` follows a name, so nothing is reported: a name that is no type at
+// all is a different fault and is already said elsewhere.
+type_named :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i: i64 = 0
+    while (i < p.structs.count) {
+        entry := arena_at(p.structs, i)
+        if (entry.is_generic == 0 && entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)
+            && name_visible(p, entry.name_off, entry.name_len, off)) {
+            return STRUCT_BASE + i
+        }
+        i = i + 1
+    }
+    -1
+}
+
 find_variant :: fn(mut p: Parser, enum_ty: i64, off: i64, len: i64) -> i64 {
     mut i: i64 = 0
     while (i < p.variants.count) {
@@ -10727,6 +10750,14 @@ skip_declaration :: fn(mut p: Parser) {
 
 // Every compile-time integer constant, before the types that may size an array
 // by one.
+//
+// A constant may name one written below it, the way a function may call one and
+// a struct may hold one. A `Name :: OtherName` whose other name is not a
+// constant yet is set aside rather than read here, and the ones set aside are
+// worked out again while each round settles something new, so which of the two
+// is written first stops mattering. One that never settles is left alone: the
+// declaration pass refuses it where it is written, which is where the reader
+// has to change it.
 parse_constant_declarations :: fn(mut p: Parser) {
     while (cur(p) != TokenKind::Eof) {
         if (at_const_declaration(p) || at_folded_declaration(p)) {
@@ -10756,7 +10787,48 @@ parse_constant_declarations :: fn(mut p: Parser) {
                 skip_declaration(p)
             }
         } else {
+            // A `Name :: OtherName` at the top level, where the other name is
+            // no constant yet. It may be one written further down, so the
+            // declaration's own token is kept and read again below.
+            if (cur(p) == TokenKind::Ident
+                && peek_kind(p, 1) == TokenKind::Coloncolon
+                && peek_kind(p, 2) == TokenKind::Ident
+                && peek_kind(p, 3) != TokenKind::Coloncolon) {
+                arena_push(p.const_pending, p.ti)
+            }
             skip_declaration(p)
+        }
+    }
+    settle_pending_constants(p)
+}
+
+// The constants set aside for naming one that had not been read yet. Each round
+// reads every one still unsettled, and the rounds go on while one of them
+// settles, so a chain of names settles from its end. Nothing is reported here:
+// one that never settles is refused where it is written, by the pass that reads
+// the declaration.
+settle_pending_constants :: fn(mut p: Parser) {
+    mut settled: i64 = -1
+    while (p.consts.count != settled) {
+        settled = p.consts.count
+        mut i: i64 = 0
+        while (i < p.const_pending.count) {
+            p.ti = arena_at(p.const_pending, i)
+            name_off := cur_off(p)
+            name_len := cur_len(p)
+            value_off := peek_off(p, 2)
+            value_len := peek_len(p, 2)
+            if (is_const(p, name_off, name_len) == false
+                && is_const(p, value_off, value_len)) {
+                check_name_is_free(p, name_off, name_len)
+                register_const(
+                    p,
+                    name_off,
+                    name_len,
+                    const_value(p, value_off, value_len)
+                )
+            }
+            i = i + 1
         }
     }
 }
@@ -10925,6 +10997,18 @@ parse_type_declarations :: fn(mut p: Parser) {
 // pre-passes, or a generic recorded for monomorphization. Split out so the
 // loop can run it with an escape armed and a fault ends this declaration
 // rather than the compile.
+// Whether a `Name :: OtherName` is the whole declaration, which is what the
+// token after the other name says: the end of the file, or the head of the
+// next declaration.
+bare_name_ends_declaration :: fn(mut p: Parser) -> bool {
+    after := peek_kind(p, 3)
+    if (after == TokenKind::Eof || after == TokenKind::KwTest
+        || after == TokenKind::KwImport || after == TokenKind::KwExport) {
+        return true
+    }
+    (after == TokenKind::Ident && peek_kind(p, 4) == TokenKind::Coloncolon)
+}
+
 parse_one_declaration :: fn(mut p: Parser) -> i64 {
     if ((cur(p) != TokenKind::Ident
             || peek_kind(p, 1) != TokenKind::Coloncolon)
@@ -10961,6 +11045,13 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
         skip_declaration(p)
         return -1
     }
+    // A constant whose value is a boolean. The words are names rather than
+    // keywords, so they are told apart here instead of by their token kind.
+    if (third == TokenKind::Ident
+        && (peek_is_word(p, 2, "true") || peek_is_word(p, 2, "false"))) {
+        parse_value_const(p)
+        return -1
+    }
     if (third == TokenKind::Ident
         && (peek_kind(p, 3) == TokenKind::Lbrace
             || peek_kind(p, 3) == TokenKind::Lt)) {
@@ -10988,13 +11079,55 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
         parse_value_const(p)
         return -1
     }
-    if (third != TokenKind::KwFn && third != TokenKind::KwInline) {
-        // Everything above is a form this compiler knows. Anything else
-        // would be read as a function and misparse into a crash far from
-        // here, so name it where it is written instead. A declaration the
-        // language has and this compiler has not yet reaches this.
+    // `Type::NAME :: value` written at the top level. A value under a type is
+    // declared in that type's own block, and read from the outside this is one
+    // name declared twice, which is what the reader was told before.
+    if (third == TokenKind::Ident && peek_kind(p, 3) == TokenKind::Coloncolon) {
         report_where(p.modules, p.src, cur_off(p))
-        report("this declaration is not supported yet")
+        report(
+            "a value under a type is declared in that type's own block, as in `Name :: struct { .. } { VALUE :: .. }`"
+        )
+        frost_rt_recover_escape()
+    }
+    // `Name :: OtherName`. The constant pass has settled it where the other
+    // name is a constant, and where it is not the value is no value: a type's
+    // name or a function's has none before the program runs, so this constant
+    // has none either. Said at the name, which is the word that has to change.
+    //
+    // Only where the declaration ends there. `Id :: opaque i64` reads as this
+    // shape and then runs on, and what runs on is a token no declaration
+    // starts, which is what the loop below says about it.
+    if (third == TokenKind::Ident) {
+        if (bare_name_ends_declaration(p)) {
+            report_where(p.modules, p.src, peek_off(p, 2))
+            report("'")
+            report_src(p.src, peek_off(p, 2), peek_len(p, 2))
+            report("' is not a constant, so it cannot appear in a constant")
+            frost_rt_recover_escape()
+        }
+        advance(p)
+        advance(p)
+        advance(p)
+        return -1
+    }
+    if (third != TokenKind::KwFn && third != TokenKind::KwInline) {
+        // Everything above is a form the language has. What follows the `::`
+        // opens neither one of them nor a value, so it is named where it is
+        // written: read as a function instead, it misparsed into a crash far
+        // from the text that caused it.
+        report_where(p.modules, p.src, peek_off(p, 2))
+        if (can_begin_expression(third)) {
+            report("expected a declaration head, `import`, `export`, or `test`,")
+            report(" found '")
+            report_src(p.src, peek_off(p, 2), peek_len(p, 2))
+            report("'")
+            frost_rt_recover_escape()
+        }
+        report(
+            "a declaration is a value or one of `fn`, `struct`, `enum`, `distinct`, `flags`, `extern`, and this is '"
+        )
+        report_src(p.src, peek_off(p, 2), peek_len(p, 2))
+        report("'")
         frost_rt_recover_escape()
     }
     // A function. Reset the type-parameter state, remember where it
@@ -11368,7 +11501,25 @@ in_lifted :: fn(mut p: Parser, off: i64) -> bool {
     false
 }
 
+// Every decimal literal spelling a number sixty-four bits cannot hold. Read off
+// the tokens, before any pass reads one as a value, since a literal stands
+// wherever a number does and there is no one place a pass would meet them all.
+refuse_oversized_numbers :: fn(mut p: Parser) {
+    mut i: i64 = 0
+    while (i < p.tokens.count) {
+        held := arena_at(p.tokens, i)
+        if (held.kind == TokenKind::BigInt) {
+            report_where(p.modules, p.src, held.off)
+            report_src(p.src, held.off, held.len)
+            report(" does not fit in sixty-four bits")
+            frost_rt_recover_escape()
+        }
+        i = i + 1
+    }
+}
+
 parse_program :: fn(mut p: Parser) -> i64 {
+    refuse_oversized_numbers(p)
     predeclare_target(p)
     resolve_when(p)
     predeclare_types(p)

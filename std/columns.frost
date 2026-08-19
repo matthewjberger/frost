@@ -88,8 +88,7 @@ columns_alive :: fn($T: Type, $N: usize, c: columns<T, N>, handle: Handle<T>)
 columns_release :: fn(
     $T: Type,
     $N: usize,
-    mut c: columns<T,
-    N>,
+    mut c: columns<T, N>,
     handle: Handle<T>
 ) -> bool {
     raw: i64 = handle

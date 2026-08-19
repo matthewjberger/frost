@@ -16,6 +16,11 @@ Ordering :: struct($T: Type) {
 An implementation is an ordinary constant of that struct:
 
 ```frost
+Ordering :: struct($T: Type) {
+    less: fn(T, T) -> bool,
+    equal: fn(T, T) -> bool,
+}
+
 i64_less :: fn(a: i64, b: i64) -> bool { a < b }
 i64_greater :: fn(a: i64, b: i64) -> bool { a > b }
 i64_equal :: fn(a: i64, b: i64) -> bool { a == b }

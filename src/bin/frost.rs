@@ -425,7 +425,14 @@ fn suggest_names(
         // declaration a second time instead of adding one word to an export
         // line. Answered before the nearest name, since the nearest name to a
         // name that exists is itself.
-        if let Some(file) = declares.get(&wanted) {
+        // In a different file. A name declared in the file the reader is
+        // looking at is one they can already reach, so the fault is something
+        // else about it and an export line is not the edit: `Alias :: Target`
+        // refused as a constant was told to export the `Alias` written three
+        // lines up.
+        if let Some(file) = declares.get(&wanted)
+            && report.position.file_name().as_deref() != Some(file.as_str())
+        {
             report.message = format!(
                 "{} (declared in {file}; add it to the export line there)",
                 report.message
@@ -558,6 +565,65 @@ fn refuse(collected: &[frost::Diagnostic]) -> Result<()> {
 /// The chain's innermost message is the one with something to say, which is
 /// also the one `render_diagnostic` prints, so joining that with the collected
 /// reports gives the same text either way.
+/// Whether a region check has already refused this body, at or above this
+/// place.
+///
+/// An arena pointer that outlives its region ends the reading of the body it is
+/// in, the way the other compiler's does: what a value is stored in and what
+/// its type is are two things to say about one line, and the region is the one
+/// that is wrong. A top-level declaration's own run of lines is what a body is
+/// here, so the two need not be on the same line. Above it, and the lowering
+/// has nothing to add; below it, and the lowering found the earlier fault.
+fn already_spoken(
+    program: &Module,
+    collected: &[frost::Diagnostic],
+    fault: &frost::Diagnostic,
+) -> bool {
+    let at = fault.position;
+    let here = spoken_place(fault);
+    let Some(held) = holding_declaration(program, at) else {
+        return false;
+    };
+    collected.iter().any(|other| {
+        other.message.contains(frost::REGION_ESCAPE)
+            && holding_declaration(program, other.position) == Some(held)
+            && spoken_place(other) <= here
+    })
+}
+
+/// The line and column a report names, which is where the reader looks.
+///
+/// A pass that locates its own fault writes the place into the message and
+/// leaves the report at the declaration, so the report's own position says
+/// which declaration and the message says where inside it.
+fn spoken_place(held: &frost::Diagnostic) -> (usize, usize) {
+    let written = held
+        .message
+        .strip_prefix("at ")
+        .and_then(|rest| rest.split_once(": "))
+        .map(|(named, _)| named)
+        .and_then(|named| {
+            let mut parts = named.rsplit(':');
+            let column = parts.next()?.parse::<usize>().ok()?;
+            let line = parts.next()?.parse::<usize>().ok()?;
+            Some((line, column))
+        });
+    written.unwrap_or((held.position.line, held.position.column))
+}
+
+/// The top-level declaration a place is written inside, as its own index.
+fn holding_declaration(
+    program: &Module,
+    at: frost::Position,
+) -> Option<usize> {
+    program.roots.iter().position(|statement| {
+        let span = program.ast.stmt_span(*statement);
+        let start = program.ast.position_of(span);
+        let end = program.ast.end_position_of(span);
+        start.file == at.file && start.line <= at.line && at.line <= end.line
+    })
+}
+
 fn beside<T>(collected: &[frost::Diagnostic], outcome: Result<T>) -> Result<T> {
     let fault = match outcome {
         Ok(held) => return Ok(held),
@@ -639,10 +705,15 @@ fn lowered_and_checked(
     // Each phrase is the one the check itself writes rather than a copy of it,
     // so rewording a report carries its gate along instead of switching it off
     // quietly.
+    // A constant whose value reads a name that is not one stops it too: the
+    // constant has no value, and every use of it lowers to whatever the name it
+    // could not read turned into. `X :: NOPE + 1` reported the name and then
+    // reported `NOPE` again as an unknown variable.
     if collected.iter().any(|held| {
         held.message.contains(frost::UNDECLARED_TYPE)
             || held.message.contains(frost::NESTED_FUNCTION)
             || held.message.contains(frost::RECURSIVE_STRUCT)
+            || held.message.contains(frost::NOT_A_CONSTANT)
     }) {
         let mut faults = collected.to_vec();
         suggest_names(program, &program.roots.clone(), withheld, &mut faults);
@@ -659,7 +730,16 @@ fn lowered_and_checked(
         ),
     )?;
     let module = lowered.module;
-    let lowering = lowered.failures;
+    // A body is refused for the first thing wrong with it, whichever pass found
+    // it. The checks above and the lowering below both read the same bodies, so
+    // a body one of them has already spoken about is not described a second
+    // way: an arena pointer escaping its region was reported, and then the same
+    // line was reported again for the type of what it was stored in.
+    let lowering: Vec<frost::Diagnostic> = lowered
+        .failures
+        .into_iter()
+        .filter(|held| !already_spoken(program, collected, held))
+        .collect();
     let mut faults = collected.to_vec();
     faults.extend(lowering.iter().cloned());
 
@@ -1328,8 +1408,12 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         return test_directory(entry, &forwarded);
     }
 
-    let source = fs::read_to_string(&cli.file)
-        .with_context(|| format!("Failed to read file: {}", cli.file))?;
+    // Named, so the reader knows which file. The platform's own words say what
+    // went wrong and not what it went wrong on, and a run given several paths
+    // leaves the reader to guess which one this was.
+    let Ok(source) = fs::read_to_string(&cli.file) else {
+        anyhow::bail!("cannot read '{}'", cli.file);
+    };
 
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize().context("Lexer error")?;
@@ -1477,6 +1561,7 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
         &program.ast,
         &program.roots,
     ));
+    faults.extend(frost::check_constant_names(&program.ast, &program.roots));
     faults.extend(frost::check_declared_types(&program.ast, &program.roots));
     faults.extend(frost::check_template_calls(&program.ast, &program.roots));
     faults.extend(frost::check_recursive_structs(&program.ast, &program.roots));
