@@ -983,6 +983,11 @@ GParam :: struct {
     // type parameter and a number parameter both stand for something the call
     // site names rather than something the body reaches through.
     ty: i64,
+    // Where the name of the function declaring this parameter was written. The
+    // table holds every compile-time parameter in the program, so two functions
+    // writing `$source` under different types are told apart by which one a
+    // walk is standing in rather than by the name alone.
+    owner_off: i64,
 }
 
 // A call written before the function it names was declared, so nothing at the
@@ -2005,6 +2010,9 @@ Parser :: struct {
     // says which names are a function the caller supplies, and each instance
     // resolves them to the function it was actually given.
     cfn_params: Arena<GParam>,
+    // The name offset of the function whose parameters are being read, so each
+    // compile-time parameter is written down under the body that declares it.
+    params_owner_off: i64,
     gargs: Arena<GArg>,
     procs: Arena<ProcSig>,
     proc_params: Arena<GArg>,

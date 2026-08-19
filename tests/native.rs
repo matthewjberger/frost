@@ -5160,6 +5160,16 @@ fn a_file_may_only_name_what_it_imported() {
             said.contains("undefined function 'deep'"),
             "the self-hosted compiler let a file name what it did not import:\n{said}"
         );
+        // Which file the reader has to open. `deep` is on deep.frost's export
+        // line already, and the hint used to send them there to add it again.
+        assert!(
+            said.contains("which this file does not import"),
+            "the self-hosted compiler did not say the import is what is missing:\n{said}"
+        );
+        assert!(
+            !said.contains("add it to the export line"),
+            "the self-hosted compiler sent the reader to the wrong file:\n{said}"
+        );
     }
 
     // Adding the import is the whole fix, and then both compile it.

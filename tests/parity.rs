@@ -6074,6 +6074,30 @@ fn compile_and_run_unaudited_allowing_failure(
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A capability parameter spelled the way the standard library spells one.
+    //
+    // What a `$source` stands for was looked up by name across the whole
+    // program, so this declaration answered for `carve`'s own parameter of that
+    // name. Reading a bundle that has nothing to do with the body left the run
+    // `carve` hands back looking like frame storage, and the self-hosted
+    // compiler refused std/allocation.frost over a program that never calls it.
+    (
+        "a_capability_parameter_named_the_way_the_library_names_one",
+        "import \"io.frost\"
+         import \"allocation.frost\"
+         import \"mem.frost\"
+         hold :: fn($source: Allocation<i64>, n: i64) -> i64 { n }
+         main :: fn() -> i64 {
+             mut h := Heap {}
+             run := carve($i64, $heap_source, h, 4)
+             run[0] = 7
+             print(\"{}\\n\", run[0])
+             heap_give(h, as_bytes(run))
+             0
+         }
+        ",
+        "7\n",
+    ),
     // A compile-time parameter settled by an untyped literal.
     //
     // `fn($T: Type, v: T)` borrows `v` to read like every unmarked parameter,

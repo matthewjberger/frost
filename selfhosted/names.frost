@@ -191,12 +191,37 @@ bytes_equal :: fn(src: str, first: i64, second: i64, length: i64) -> bool {
     true
 }
 
+// Whether a module offers a name on its export line, so a file that imported it
+// would reach it.
+module_exports_name :: fn(
+    mut p: Parser,
+    module: i64,
+    off: i64,
+    len: i64
+) -> bool {
+    mut i: i64 = 0
+    while (i < p.exports.count) {
+        entry := arena_at(p.exports, i)
+        if (entry.module == module && entry.len == len
+            && bytes_equal_across(p.export_names, entry.off, p.src, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 // A name the program declares and the file naming it cannot reach.
 //
 // Saying such a name is not there is false, and a reader who believes it writes
 // the declaration a second time instead of adding one word to an export line.
 // Answered before the nearest name, since the nearest name to a name that
 // exists is itself.
+//
+// Two things keep a declared name out of reach and they are fixed in different
+// files: a module that does not offer the name, and a file that does not import
+// the module offering it. Telling a reader to add an export line for a name
+// already on one sends them to the wrong file.
 report_declared_elsewhere :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     mut i: i64 = 0
     while (i < p.declared.count) {
@@ -206,6 +231,12 @@ report_declared_elsewhere :: fn(mut p: Parser, off: i64, len: i64) -> bool {
             // By file name. What a module is called otherwise depends on where
             // the build was started from, and this sentence is compared word
             // for word.
+            if (module_exports_name(p, entry.module, off, len)) {
+                report(" (exported by ")
+                report_cstr(file_name(held.name))
+                report(", which this file does not import)")
+                return true
+            }
             report(" (declared in ")
             report_cstr(file_name(held.name))
             report("; add it to the export line there)")

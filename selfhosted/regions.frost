@@ -6828,18 +6828,23 @@ view_reaches :: fn(mut p: Parser, answer: i64, param: i64, depth: i64) -> bool {
     false
 }
 
-// What a compile-time parameter of this name was declared under. The table
-// holds every one in the program, since the call site rather than the
-// declaration is what binds them, so two functions writing `$f` under different
-// signatures answer with nothing rather than with either: a rule reading the
-// wrong signature is worse than one reading none.
+// What a compile-time parameter of this name was declared under, read off the
+// body the walk is standing in. The table holds every one in the program, so
+// the name alone does not say which declaration is meant: `carve` and a caller
+// each writing `$source` are two parameters, and answering `carve` with the
+// caller's type left the walk reading a bundle that has nothing to do with it.
+//
+// Two in one body writing the same name answer with nothing rather than with
+// either, since a rule reading the wrong signature is worse than one reading
+// none.
 cfn_param_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     mut held: i64 = -1
     mut seen: bool = false
     mut i: i64 = 0
     while (i < p.cfn_params.count) {
         entry := arena_at(p.cfn_params, i)
-        if (entry.ty >= 0 && entry.name_len == len
+        if (entry.ty >= 0 && entry.owner_off == p.current_fn_off
+            && entry.name_len == len
             && bytes_equal(p.src, entry.name_off, off, len)) {
             if (seen && entry.ty != held) {
                 return -1
