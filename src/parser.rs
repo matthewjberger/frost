@@ -1488,12 +1488,27 @@ impl<'a> Parser<'a> {
             self.read_token();
         }
         while !matches!(self.peek_nth(0), Token::EndOfFile) {
-            if depth == 0 && self.at_statement_boundary() {
+            if self.at_statement_boundary()
+                && (depth == 0 || self.at_left_margin())
+            {
                 return;
             }
             depth = counted(depth, self.peek_nth(0));
             self.read_token();
         }
+    }
+
+    /// Whether the token here is written flush left, which at the top level is
+    /// what a declaration of its own looks like.
+    ///
+    /// A declaration that failed with a bracket still open is a declaration
+    /// whose bracket is never closed, so counting down to nothing never
+    /// happens and every declaration below it is walked over. `flags u8 { A ::
+    /// 1` and `fn(a: i64 {` are the same count and different faults, and the
+    /// margin is what the reader wrote to tell them apart: a bit inside a body
+    /// is indented and the next declaration is not.
+    fn at_left_margin(&self) -> bool {
+        self.current_position().is_some_and(|held| held.column == 1)
     }
 
     fn at_statement_boundary(&self) -> bool {
