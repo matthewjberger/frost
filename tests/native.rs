@@ -5163,6 +5163,50 @@ fn a_file_may_only_name_what_it_imported() {
         );
     }
 
+    // The same program with a second fault in it, which is a different
+    // question: which of the two the reader is handed. A missing import is a
+    // fact about the program as a whole and the parse fault is about one line,
+    // so the import comes first, and the bootstrap used to stop at whatever the
+    // parse recovered from and never look.
+    std::fs::write(
+        &entry,
+        "import \"io.frost\"\nimport \"middle.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   var count := 3\n\
+         \x20   print(\"{}\\n\", deep())\n\
+         \x20   count\n\
+         }\n",
+    )
+    .unwrap();
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--native")
+        .arg("-o")
+        .arg(directory.join("app.o"))
+        .arg(&entry)
+        .output()
+        .unwrap();
+    let two = String::from_utf8_lossy(&built.stderr).to_string();
+    assert!(
+        two.contains("does not import"),
+        "a parse fault hid the missing import:\n{two}"
+    );
+    if let Some(compiler) = build_self_hosted_compiler("visibility") {
+        let run = Command::new(&compiler)
+            .env("FROST_INPUT", &entry)
+            .output()
+            .unwrap();
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(
+            said.replace("\r\n", "\n"),
+            two.replace("\r\n", "\n"),
+            "the two compilers order a missing import and a parse fault differently"
+        );
+    }
+
     // Adding the import is the whole fix, and then both compile it.
     std::fs::write(
         &entry,

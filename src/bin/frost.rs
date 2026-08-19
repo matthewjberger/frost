@@ -1481,7 +1481,6 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
     // and what the checks would say about it is about a program the reader did
     // not write.
     let (parsed, faulted) = parser.parse_recovering();
-    refuse(&faulted)?;
     // A module's object is only its own on the link path, so that is the only
     // place a cached one can be linked instead of built. `--test` needs every
     // module's `test` blocks, which a module answered for from the cache is
@@ -1512,8 +1511,20 @@ fn compile(parsed: Vec<String>, forwarded: Vec<String>) -> Result<()> {
             roots: &roots,
             layers: &layers,
         },
-    )
-    .context("Import error")?;
+    );
+    // A file naming what it did not import is said ahead of anything the parse
+    // recovered from: the import is a fact about the program as a whole, and a
+    // reader who adds it is often reading a different set of faults afterwards.
+    // Every other import fault waits its turn behind the parse, which is where
+    // it was.
+    if let Err(error) = &resolved
+        && let Some(unimported) =
+            error.downcast_ref::<frost::Unimported>()
+    {
+        bail!("{unimported}");
+    }
+    refuse(&faulted)?;
+    let resolved = resolved.context("Import error")?;
     let mut program = resolved.program;
     let mut linear_types = resolved.linear_types;
     let tests = resolved.tests;

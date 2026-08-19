@@ -2975,7 +2975,14 @@ name_is_read_here :: fn(
         before := arena_at(p.tokens, at - 1).kind
         // `h.n` names a field of whatever `h` is, and `Color::Red` a variant of
         // whatever `Color` is. Neither is a name the file has to reach.
-        if (before == TokenKind::Dot || before == TokenKind::Coloncolon) {
+        //
+        // The declaration's own `::` is the one exception: `MADE :: alpha()`
+        // wears the same three tokens and the name after it is the value, which
+        // is as much a use as anything further down.
+        if (before == TokenKind::Dot) {
+            return false
+        }
+        if (before == TokenKind::Coloncolon && at - 1 != start + 1) {
             return false
         }
     }

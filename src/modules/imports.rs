@@ -24,6 +24,21 @@ use crate::parser::Parser;
 use crate::parser::TEST_PREFIX;
 use crate::types::Type;
 
+// The fault of a file naming what it did not import, told apart from every
+// other import fault so the driver can say it ahead of what the parse recovered
+// from. A missing import is a fact about the program as a whole, and a reader
+// who adds it is often reading a different set of faults afterwards.
+#[derive(Debug)]
+pub struct Unimported(pub String);
+
+impl std::fmt::Display for Unimported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for Unimported {}
+
 // One place an import may be found, and the name that place gives a module.
 //
 // A module's identity has to be a property of the module, not of where the
@@ -798,10 +813,10 @@ pub fn resolve_imports_cached(
     walk.resolve_into(entry, base_dir, "the entry file")?;
     let reports = unimported_names(&walk.files, &walk.module_exports);
     if !reports.is_empty() {
-        bail!(
+        return Err(anyhow::anyhow!(Unimported(format!(
             "an import says what a file may name, and these name what they did not import:\n{}",
             reports.join("\n")
-        );
+        ))));
     }
     let reports = declared_compiler_names(&walk.files);
     if !reports.is_empty() {
