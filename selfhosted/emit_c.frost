@@ -545,6 +545,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             // whatever generics it calls and leaves their tuple here instead.
             xstart := p.call_xarg_start
             xcount := p.call_xarg_count
+            refuse_missing_instance(p, fn_index, arg, xstart, xcount, node.pos)
             base := emit_call_pins(p, args, fn_index, node.pos)
             emit_mono_name(p, fn_index, arg, xstart, xcount)
             emit_text("(")
@@ -2437,6 +2438,61 @@ emit_fn_symbol :: fn(mut p: Parser, fn_index: i64) {
 // The mangled name of a monomorphization: `mf_<index>` then every argument in
 // the tuple. A one-argument generic emits `mf_<index>_t<code>`, byte for byte
 // what it did before value and multi-parameter generics existed.
+// A call about to be written under the name of a specialization, against the
+// specializations this program made.
+//
+// The name a call is written under and the name a definition is written under
+// are worked out by two walks, and a key one of them builds differently is a
+// name nothing defines. That used to arrive as `undefined reference to
+// mf_48_t0_t14` from the linker, minutes into a build, with no file, no line,
+// and nothing tying it to what the reader wrote. Asked here, where the call's
+// own bindings are still in force, it is a place in the source.
+refuse_missing_instance :: fn(
+    mut p: Parser,
+    fn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
+    at: i64
+) {
+    gi := generic_fn_of(p, fn_index)
+    if (gi < 0 || arg < 0 || arg == TY_PARAM) {
+        return
+    }
+    mut i: i64 = 0
+    while (i < p.type_args.count) {
+        used := arena_at(p.type_args, i)
+        if (used.arg == arg && used.xarg_count == xarg_count
+            && gargs_equal(p, used.xarg_start, xarg_start, xarg_count)
+            && instance_fits_kind(
+                p,
+                gi,
+                used.arg,
+                used.xarg_start,
+                used.xarg_count,
+                used.is_pack,
+                used.owner
+            )) {
+            return
+        }
+        i = i + 1
+    }
+    sym := arena_at(p.fns, fn_index)
+    report_where(p.modules, p.src, at)
+    report("no instance of '")
+    report_src(p.src, sym.off, sym.len)
+    report("' was made for (")
+    report_type_name(p, arg)
+    mut k: i64 = 0
+    while (k < xarg_count) {
+        report(", ")
+        report_type_name(p, arena_at(p.gargs, xarg_start + k).value)
+        k = k + 1
+    }
+    report("), which this call names")
+    frost_rt_recover_escape()
+}
+
 emit_mono_name :: fn(
     mut p: Parser,
     fn_index: i64,

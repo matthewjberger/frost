@@ -1963,7 +1963,7 @@ emit_asm_simple_into_r11 :: fn(mut p: Parser, id: i64, kind: i64) {
     }
     emit_asm_load_into(
         p,
-        lookup_local(p, off, len),
+        local_word_type(p, off, len),
         local_slot(p, off, len),
         "(%rbp), ",
         "%r11",
@@ -2107,7 +2107,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         }
         // A struct is handled by its address, so naming one yields where it
         // lives rather than the first word inside it.
-        local_ty := lookup_local(p, off, len)
+        local_ty := local_word_type(p, off, len)
         if (is_aggregate(local_ty)) {
             asm_i("leaq ", local_slot(p, off, len), "(%rbp), %rax")
             return
@@ -3108,7 +3108,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
                 emit_asm_coerce(
                     p,
                     value,
-                    lookup_local(p, place_node.val, place_node.c)
+                    local_word_type(p, place_node.val, place_node.c)
                 )
                 emit_text("    movq %rax, ")
                 emit_asm_saved_reg(into - 1)

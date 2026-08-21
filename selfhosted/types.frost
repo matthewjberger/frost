@@ -11,7 +11,7 @@ import "layout.frost"
 export is_narrowing,
     call_ret_type, call_type_args, call_args_for, collect_type_args,
     settle_pack_args, tparam_position, gparam_position, word_is_gparam,
-    report_consumer_of,
+    report_consumer_of, local_word_type,
     written_gparam_count,
     first_settled_gparam, has_fallback_gparam, fallback_gparam_count,
     settled_type_args, nth_type_arg,
@@ -197,7 +197,22 @@ lookup_local :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
             return entry.ty
         }
     }
-    TY_I64
+    // A name this table does not hold is answered with nothing rather than
+    // with a number. Answering `i64` made every miss look like an ordinary
+    // scalar, and a walk reading the wrong type went on to a wrong instance,
+    // a wrong width and a wrong operator with nothing to say about any of it.
+    -1
+}
+
+// The same, for the two places that need a machine width whatever the table
+// says: a load and a store are emitted for a name the walk has already proved
+// is a local, and a word is what a scalar of unknown type is loaded as.
+local_word_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    held := lookup_local(p, off, len)
+    if (held < 0) {
+        return TY_I64
+    }
+    held
 }
 
 // Whether a name is in scope as a parameter or local. lookup_local answers with
@@ -858,8 +873,29 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
             if (value_node >= 0) {
                 return type_of(p, value_node)
             }
+            // A constant holding a number is that number wherever it is
+            // written, and a number is what it is worked out as.
+            if (is_const(p, node.val, node.c)) {
+                return TY_I64
+            }
         }
-        return lookup_local(p, node.val, node.c)
+        // Two tables hold what a name stands for: the one the walks build and
+        // the one the parse built. The walks run once every instance is
+        // settled and theirs is empty until then, so a name the first does not
+        // hold is asked of the second before the answer is nothing.
+        //
+        // A name no table holds is answered with nothing. What a walk does
+        // about that is its own question; a number here is an answer nobody
+        // asked for and every walk believed.
+        held := lookup_local(p, node.val, node.c)
+        if (held >= 0) {
+            return held
+        }
+        // The last guess this compiler makes, and the only one left. The table
+        // does not hold the name, and what reads this answer indexes tables
+        // with it, so a word is what it is given. Every walk that can say
+        // something about a name it cannot place says it before reaching here.
+        TY_I64
     }
     if (kind == NodeKind::Call) {
         // A call a template's own parse produced from a list that is not bound
@@ -2151,6 +2187,16 @@ bind_param_type :: fn(mut p: Parser, ty: i64, arg: i64) -> i64 {
             return ty
         }
         return pointer_to(p, bound)
+    }
+    // A borrow of the parameter itself. `-> ref T` is what a generic hands
+    // back where the caller keeps the storage, and left unbound the answer was
+    // the template's own `ref T` rather than the caller's `ref f64`.
+    //
+    // Only where the target is the parameter and nothing else. `arg` is the
+    // first of a tuple, so binding it into `ref Map<K, V, ops>` would read the
+    // map as a borrow of whatever K turned out to be.
+    if (is_borrow(ty) && pointee(p, ty) == TY_PARAM) {
+        return borrow_of(p, arg)
     }
     ty
 }
