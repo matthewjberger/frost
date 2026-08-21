@@ -52,11 +52,14 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     frost_rt_file_read, frost_rt_file_size,
     frost_rt_getenv, frost_rt_setenv, frost_rt_is_windows, frost_rt_target_os,
     frost_rt_read_file, frost_rt_read_stdin, frost_rt_remove_file,
+    frost_rt_dir_open, frost_rt_dir_next, frost_rt_dir_entry_is_dir,
+    frost_rt_dir_close,
     frost_rt_run_command,
     frost_rt_thread_spawn, frost_rt_thread_join,
     frost_rt_recover_run, frost_rt_recover_escape, frost_rt_recover_note,
     frost_rt_end_line,
     frost_rt_json_reports, frost_rt_json_place, frost_rt_json_close,
+    frost_rt_json_warn, report_warning_end,
     json_reports, report_command,
     frost_rt_report_open, frost_rt_report_note,
     frost_rt_recover_failures
@@ -99,6 +102,15 @@ frost_rt_read_file :: extern fn(path: ^i8) -> ^i8
 // file has no path to open: an editor formats what is on screen, which is not
 // what is on disk.
 frost_rt_read_stdin :: extern fn() -> ^i8
+
+// Walking a directory. One walk at a time, and what the last entry is asked
+// about after it is handed out, the way a file's length is. A tool asked about
+// a project reads every source under it, and their names are what the system
+// knows and the program does not.
+frost_rt_dir_open :: extern fn(path: ^i8) -> i64
+frost_rt_dir_next :: extern fn() -> ^i8
+frost_rt_dir_entry_is_dir :: safe extern fn() -> i64
+frost_rt_dir_close :: safe extern fn()
 frost_rt_byte_set :: extern fn(buffer: ^i8, index: i64, value: i64)
 
 // Emit a string. A `str` carries its own length, so this reads exactly that
@@ -159,6 +171,17 @@ frost_rt_setenv :: extern fn(name: ^i8, value: ^i8) -> i64
 // a source range by the length it is given, and a C string by the length up to
 // its terminator. Each confines its one unchecked step to itself, so the code
 // that reports an error calls them without an `unsafe` block of its own.
+// The end of a warning. At a terminal it is the line break that closes the
+// text; writing JSON it is what closes the record, since a warning carries on
+// where a refusal escapes and the escape is what closes a refusal's.
+report_warning_end :: fn() {
+    if (json_reports()) {
+        frost_rt_json_warn()
+        return
+    }
+    report("\n")
+}
+
 // A line about the command rather than about the program. The `frost: ` in
 // front of it is what the reader sees at a terminal; a run writing JSON gets
 // the message alone, since the record around it says what it is.
@@ -360,6 +383,11 @@ frost_rt_end_line :: safe extern fn()
 frost_rt_json_reports :: safe extern fn()
 frost_rt_json_place :: extern fn(path: ^i8, line: i64, column: i64, offset: i64)
 frost_rt_json_close :: safe extern fn()
+
+// Close the record being composed and say it is a warning. A refusal escapes,
+// and the escape closes the record it was composing; a warning carries on, so
+// nothing else would and every one of them was composed and dropped.
+frost_rt_json_warn :: safe extern fn()
 // Reports held until the run is over, so they go out in the order they are
 // written rather than the order the passes found them. A place opens one and
 // every piece written after it belongs to it; anything written with none open

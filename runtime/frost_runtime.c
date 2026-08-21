@@ -44,8 +44,10 @@
    that wants them. The handler is written further down than the first use of
    `write`, so including them there left that call with no declaration at all
    and the one the header then gave it conflicted with the guess. */
+#include <dirent.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #if defined(__has_include)
@@ -528,6 +530,84 @@ const char *frost_rt_read_file(const char *path) {
     return buffer;
 }
 
+/* Walking a directory. A tool asked about a project reads every source under
+   it, and the name of every one of them is what the system knows and the
+   program does not.
+
+   One walk at a time, and the entry just handed out says whether it is a
+   directory through a question of its own, the way a file's length is asked for
+   after it is read. That keeps the answer one pointer, which is what crosses to
+   Frost without a shape to agree on. */
+static int64_t frost_rt_walk_is_dir = 0;
+#if defined(_WIN32)
+static HANDLE frost_rt_walk_handle = INVALID_HANDLE_VALUE;
+static WIN32_FIND_DATAA frost_rt_walk_entry;
+static int64_t frost_rt_walk_first = 0;
+#else
+static DIR *frost_rt_walk_handle = 0;
+static char frost_rt_walk_root[4096];
+#endif
+
+int64_t frost_rt_dir_open(const char *path) {
+#if defined(_WIN32)
+    char pattern[4096];
+    snprintf(pattern, sizeof pattern, "%s/*", path);
+    frost_rt_walk_handle = FindFirstFileA(pattern, &frost_rt_walk_entry);
+    frost_rt_walk_first = 1;
+    return frost_rt_walk_handle != INVALID_HANDLE_VALUE;
+#else
+    snprintf(frost_rt_walk_root, sizeof frost_rt_walk_root, "%s", path);
+    frost_rt_walk_handle = opendir(path);
+    return frost_rt_walk_handle != 0;
+#endif
+}
+
+/* The next entry's name, or "" once there are none left. */
+const char *frost_rt_dir_next(void) {
+#if defined(_WIN32)
+    if (frost_rt_walk_handle == INVALID_HANDLE_VALUE) {
+        return "";
+    }
+    if (frost_rt_walk_first == 0
+        && FindNextFileA(frost_rt_walk_handle, &frost_rt_walk_entry) == 0) {
+        return "";
+    }
+    frost_rt_walk_first = 0;
+    frost_rt_walk_is_dir =
+        (frost_rt_walk_entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    return frost_rt_walk_entry.cFileName;
+#else
+    if (frost_rt_walk_handle == 0) {
+        return "";
+    }
+    struct dirent *entry = readdir(frost_rt_walk_handle);
+    if (entry == 0) {
+        return "";
+    }
+    char full[8192];
+    snprintf(full, sizeof full, "%s/%s", frost_rt_walk_root, entry->d_name);
+    struct stat held;
+    frost_rt_walk_is_dir = stat(full, &held) == 0 && S_ISDIR(held.st_mode);
+    return entry->d_name;
+#endif
+}
+
+int64_t frost_rt_dir_entry_is_dir(void) { return frost_rt_walk_is_dir; }
+
+void frost_rt_dir_close(void) {
+#if defined(_WIN32)
+    if (frost_rt_walk_handle != INVALID_HANDLE_VALUE) {
+        FindClose(frost_rt_walk_handle);
+        frost_rt_walk_handle = INVALID_HANDLE_VALUE;
+    }
+#else
+    if (frost_rt_walk_handle != 0) {
+        closedir(frost_rt_walk_handle);
+        frost_rt_walk_handle = 0;
+    }
+#endif
+}
+
 /* Everything on standard input, for a tool asked to read a buffer rather than a
    file. An editor formats what is on screen, which has not been written yet, so
    there is no path to hand over. The length is not known ahead of it, so the
@@ -646,6 +726,11 @@ static void frost_rt_json_putc(char byte) {
 }
 
 /* Holds the open record, if there is one, as one object on one line. */
+/* Which of the two the record being composed is. A refusal is what most of them
+   are, so that is what it says unless a warning said otherwise before closing
+   it, and the answer goes back to a refusal for the record after. */
+static int64_t frost_rt_json_is_warning = 0;
+
 void frost_rt_json_close(void) {
     if (!frost_rt_json_on || (!frost_rt_json_open && frost_rt_json_length == 0)) {
         return;
@@ -669,12 +754,14 @@ void frost_rt_json_close(void) {
     char numbers[128];
     int written = snprintf(numbers, sizeof(numbers),
                            ",\"line\":%lld,\"column\":%lld,"
-                           "\"span\":[%lld,%lld],\"severity\":\"error\","
+                           "\"span\":[%lld,%lld],\"severity\":\"%s\","
                            "\"message\":\"",
                            (long long)frost_rt_json_line,
                            (long long)frost_rt_json_column,
                            (long long)frost_rt_json_offset,
-                           (long long)frost_rt_json_offset);
+                           (long long)frost_rt_json_offset,
+                           frost_rt_json_is_warning ? "warning" : "error");
+    frost_rt_json_is_warning = 0;
     if (written > 0) {
         frost_rt_report_append(numbers, (size_t)written);
     }
@@ -700,6 +787,17 @@ void frost_rt_json_close(void) {
 }
 
 /* Opens a record. Everything written after this belongs to its message. */
+/* A warning closes its own record. A refusal escapes, and the escape is what
+   closes the record it was composing; a warning carries on, so nothing else
+   would, and every one of them was composed and dropped. */
+void frost_rt_json_warn(void) {
+    if (!frost_rt_json_on) {
+        return;
+    }
+    frost_rt_json_is_warning = 1;
+    frost_rt_json_close();
+}
+
 void frost_rt_json_place(const char *path, int64_t line, int64_t column,
                          int64_t offset) {
     if (!frost_rt_json_on) {

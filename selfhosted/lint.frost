@@ -31,7 +31,7 @@ lint_program :: fn(mut p: Parser) -> i64 {
                 report("'")
                 report_src(p.src, sym.off, sym.len)
                 report("' is never called, and nothing names it")
-                report("\n")
+                report_warning_end()
                 found = found + 1
             }
         }

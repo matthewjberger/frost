@@ -9336,7 +9336,10 @@ mark_span_used :: fn(mut p: Parser, pos: i64) {
 // A run listing findings says nothing, since a finding is advisory by what it
 // is and the listing says so once.
 report_warning_mark :: fn(mut p: Parser) {
-    if (p.linting == 0) {
+    // A run writing JSON gets the message alone, the way a line about the
+    // command does: the record around it carries the severity, so the word in
+    // front of the text would say it twice.
+    if (p.linting == 0 && json_reports() == false) {
         report("warning: ")
     }
 }
@@ -9376,13 +9379,15 @@ report_idle_unsafe :: fn(mut p: Parser) {
             report_where(p.modules, p.src, span.start)
             report_warning_mark(p)
             report("this `unsafe` block is inside another one, which ")
-            report("already vouches for what is in it\n")
+            report("already vouches for what is in it")
+            report_warning_end()
             found = 1
         } else if (first == 1 && used == 0) {
             report_where(p.modules, p.src, span.start)
             report_warning_mark(p)
             report("this `unsafe` block holds no unchecked operation, ")
-            report("so it vouches for nothing\n")
+            report("so it vouches for nothing")
+            report_warning_end()
             found = 1
         }
         i = i + 1
