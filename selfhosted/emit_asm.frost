@@ -2350,9 +2350,11 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         // `ptr_to` of a name that is already an address, a `mut` aggregate
         // parameter or a `ref` binding, answers the address it carries, which
         // is a load of the slot rather than the slot's own address.
-        inner_node := arena_at(p.arena, node.a)
-        if (kind == NodeKind::AddrOf && inner_node.kind == NodeKind::Var
-            && is_borrow(type_of(p, node.a))) {
+        // `ref x := e` where `e` already answers a borrow binds that borrow, so
+        // the address is the value rather than the slot it sits in. Read as a
+        // place, `ref r := q` handed out the address of `q` and a write through
+        // `r` landed in `q` instead of what `q` names.
+        if (is_borrow(type_of(p, node.a))) {
             emit_asm_expr(p, node.a)
             return
         }

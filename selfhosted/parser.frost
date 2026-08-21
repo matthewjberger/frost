@@ -1136,7 +1136,31 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     if (cur(p) == TokenKind::Lt && p.no_struct_lit == false
         && generic_index_for(p, offset, length) >= 0) {
         p.ti = p.ti - 1
+        start_ti := p.ti
         struct_ty := parse_type(p)
+        // `Held<i64>::None` writes the arguments on the value. They belong to
+        // the type the value is bound to, and the value names the enum alone.
+        // The type as it was written is read back from the tokens rather than
+        // from the source, so what this says does not depend on where the
+        // reader put a space.
+        if (cur(p) == TokenKind::Coloncolon) {
+            variant_off := peek_off(p, 1)
+            variant_len := peek_len(p, 1)
+            report_where(p.modules, p.src, offset)
+            report("a generic enum's arguments go on the type a value is bound to, so this is written '")
+            report_src(p.src, offset, length)
+            report("::")
+            report_src(p.src, variant_off, variant_len)
+            report("' with the binding typed '")
+            held_ti := p.ti
+            p.ti = start_ti
+            while (p.ti < held_ti) {
+                report_src(p.src, cur_off(p), cur_len(p))
+                advance(p)
+            }
+            report("'")
+            frost_rt_recover_escape()
+        }
         if (cur(p) != TokenKind::Lbrace) {
             report_where(p.modules, p.src, offset)
             report("a generic type named here is the type of a literal, so it is followed by its fields in braces")

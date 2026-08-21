@@ -815,9 +815,11 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         // `ptr_to` of a name that is already an address, a `mut` aggregate
         // parameter or a `ref` binding, answers the address it carries: the
         // caller's storage, not the cell the address sits in.
-        inner_node := arena_at(p.arena, inner)
-        if (kind == NodeKind::AddrOf && inner_node.kind == NodeKind::Var
-            && is_borrow(type_of(p, inner))) {
+        // `ref x := e` where `e` already answers a borrow binds that borrow.
+        // Taking the address again is a pointer to a pointer, and where `e` is
+        // a call C refuses it outright: `&(mf_0_pick(&xs, 2))` is not an
+        // lvalue.
+        if (is_borrow(type_of(p, inner))) {
             emit_text("(")
             emit_expr(p, inner)
             emit_text(")")

@@ -66,6 +66,24 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 { 0 }\n",
         "a handle into a pool, an index, or a `ref T` handed back rather than kept",
     ),
+    // A generic enum's arguments written on the value.
+    //
+    // Read as a name of its own, `Held<i64>` resolved against whatever instance
+    // some other function had already made, so the bootstrap took this spelling
+    // in a program that also declared `unwrap` over the same enum and refused it
+    // in one that did not. The self-hosted compiler read it as a struct literal
+    // and asked for braces.
+    (
+        "a_generic_enum_carries_its_arguments_on_the_value",
+        "Held :: enum($T: Type) { None, Some { value: i64 } }
+         main :: fn() -> i64 {
+             a := Held<i64>::Some { value = 5 }
+             0
+         }
+        ",
+        "a generic enum's arguments go on the type a value is bound to, so this \
+         is written 'Held::Some' with the binding typed 'Held<i64>'",
+    ),
     // An enum is laid out as a struct carrying every variant's fields, and the
     // self-hosted compiler reported the layout: 'struct Held (field
     // Some_seen)' where the reader wrote a variant and a field.
@@ -6345,6 +6363,69 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          }
         ",
         "16 8
+",
+    ),
+    // `slice_len` over a borrow of a run.
+    //
+    // A borrow of a slice holds the address of the slice, which is the thing
+    // the length is read from. The bootstrap read the parameter as the type it
+    // is rather than through it and refused it as not a slice, which is the one
+    // thing a borrow of a slice is.
+    (
+        "a_borrow_of_a_run_is_read_through_for_its_length",
+        "import \"io.frost\"
+         import \"mem.frost\"
+         count :: fn($T: Type, v: ref []T) -> i64 { slice_len(v) }
+         main :: fn() -> i64 {
+             xs: [3]i64 = [1, 2, 3]
+             ys: [2]f64 = [1.0, 2.0]
+             print(\"{} {}\n\", count(xs), count(ys))
+             0
+         }
+        ",
+        "3 2
+",
+    ),
+    // A borrow bound from a call that answers one.
+    //
+    // A borrow of a borrow is the borrow, and the self-hosted compiler added a
+    // second flag to the type code. The codes compose by addition, so the sum
+    // landed above `CONST_BASE` and the type read back as a compile-time value:
+    // the reader was told a format string cannot write it.
+    (
+        "a_borrow_is_bound_from_a_call_that_answers_one",
+        "import \"io.frost\"
+         pick :: fn(mut xs: [4]i64, at: i64) -> ref i64 { ref e := xs[at]  e }
+         main :: fn() -> i64 {
+             mut xs: [4]i64 = [1, 2, 3, 4]
+             ref got := pick(xs, 2)
+             print(\"{}\n\", got)
+             0
+         }
+        ",
+        "3
+",
+    ),
+    // A write through a borrow of a borrow of a struct.
+    //
+    // The bootstrap refused the field write as a read out of something that is
+    // not a struct. The self-hosted compiler's two backends disagreed with each
+    // other: the C one wrote through to the place, and the assembly one took the
+    // address of the second borrow, so the write landed in it instead.
+    (
+        "a_write_through_two_borrows_reaches_the_place",
+        "import \"io.frost\"
+         Point :: struct { x: i64, y: i64 }
+         main :: fn() -> i64 {
+             mut p := Point { x = 1, y = 2 }
+             ref q := p
+             ref r := q
+             r.x = 9
+             print(\"{} {}\n\", p.x, r.y)
+             0
+         }
+        ",
+        "9 2
 ",
     ),
     // `errdefer` before a `return` that hands back the failure.

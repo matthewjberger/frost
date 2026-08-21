@@ -1801,7 +1801,15 @@ pointer_to :: fn(mut p: Parser, target: i64) -> i64 {
     indirect_of(p, target, 0)
 }
 
+// A borrow of a borrow is the borrow. `ref c := b` where `b` already holds one
+// names the place `b` names, so there is one address and one code for it.
+// Added, the second flag carried the code past `CONST_BASE` and the type read
+// back as a compile-time value: `ref got := pick(xs, 2)`, where `pick` answers
+// `ref i64`, was refused as something a format string cannot write.
 borrow_of :: fn(mut p: Parser, target: i64) -> i64 {
+    if (is_borrow(target)) {
+        return target
+    }
     if (is_distinct(target) == false) {
         return BORROW_FLAG + target
     }

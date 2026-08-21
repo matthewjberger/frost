@@ -3508,11 +3508,35 @@ impl<'a> Parser<'a> {
                         self.ast.expr(expression)
                     {
                         let enum_name = *enum_name;
+                        let named = self.ast.name(enum_name).to_string();
                         self.read_token();
                         let variant_name = match self.read_token() {
                             Token::Identifier(v) => v.to_string(),
                             _ => bail!("Expected identifier after '::'"),
                         };
+                        // `Held<i64>::None` writes the arguments on the value.
+                        // They belong to the type the value is bound to, and
+                        // the value names the enum alone. Read as a name of its
+                        // own, it resolved against whatever instance a function
+                        // elsewhere had already made, so the same spelling was
+                        // taken in one program and refused in another.
+                        if let Some(cut) = named.find('<') {
+                            let position = self
+                                .positions
+                                .get(self.ast.expr_span(expression).first
+                                    as usize)
+                                .copied()
+                                .unwrap_or_default();
+                            return Err(anyhow::Error::new(
+                                crate::diagnostic::LocatedError {
+                                    position,
+                                    message: format!(
+                                        "a generic enum's arguments go on the type a value is bound to, so this is written '{}::{variant_name}' with the binding typed '{named}'",
+                                        &named[..cut]
+                                    ),
+                                },
+                            ));
+                        }
                         let variant_name = self.ast.intern(&variant_name);
                         if matches!(self.peek_nth(0), Token::LeftBrace) {
                             self.read_token();
@@ -5700,7 +5724,6 @@ impl<'a> Parser<'a> {
                     &anyhow::Error::new(crate::diagnostic::LocatedError {
                         position,
                         message:
-                        format!(
                         "this line opens with '-', so it negates what \
                          follows rather than continuing the line above, and \
                          nothing reads what it works out. Two readings are \
@@ -5711,7 +5734,7 @@ impl<'a> Parser<'a> {
                          what is written. Write the whole expression on one \
                          line, or leave the '-' at the end of the line above \
                          where it says a subtraction is meant"
-                        ),
+                            .to_string(),
                     }),
                 );
             }

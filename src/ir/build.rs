@@ -10395,6 +10395,19 @@ impl<'a> FunctionLowering<'a> {
         inner: ExprId,
         kind: RefKind,
     ) -> Result<(IrOperand, Type)> {
+        // A borrow of a borrow is the borrow. `ref c := b` where `b` already
+        // holds one names the place `b` names, so what `b` carries is the
+        // address, not the slot `b` sits in. Wrapped a second time, a write
+        // through `r` in `ref q := p  ref r := q` was refused as a field read
+        // of something that is not a struct.
+        if matches!(kind, RefKind::Ref | RefKind::RefMut)
+            && matches!(
+                self.probe_type(inner),
+                Some(Type::Ref(_) | Type::RefMut(_))
+            )
+        {
+            return self.lower_expression(inner, None);
+        }
         let (address, pointee) = self.place_address(inner)?;
         let result_type = match kind {
             RefKind::Ref => Type::Ref(Box::new(pointee)),
@@ -10867,6 +10880,17 @@ impl<'a> FunctionLowering<'a> {
     }
 
     fn slice_value_address(&mut self, expression: ExprId) -> Result<IrOperand> {
+        // A borrow of a run holds the address of the slice, which is the thing
+        // this asks for. Read as the type it is rather than through it,
+        // `slice_len` over a `ref []T` was refused as not a slice, which is the
+        // one thing a borrow of a slice is.
+        if let Some(Type::Ref(inner) | Type::RefMut(inner)) =
+            self.probe_type(expression)
+            && matches!(inner.as_ref(), Type::Slice(_) | Type::Str)
+        {
+            let (operand, _) = self.lower_expression(expression, None)?;
+            return Ok(operand);
+        }
         // A slice that lives somewhere addressable, reached by any place chain:
         // a local, a struct field holding one, or a `mut` parameter, which
         // param-mode lowering turns into a deref of a pointer to the slice.
@@ -10884,7 +10908,7 @@ impl<'a> FunctionLowering<'a> {
         }
         let (operand, value_type) = self.lower_expression(expression, None)?;
         let (Type::Slice(_) | Type::Str) = value_type else {
-            bail!("expected a slice value, found {value_type}");
+            bail!("expected a slice value, found {}", spelled(&value_type));
         };
         let IrOperand::Local(local) = operand else {
             bail!("slice value is not addressable");
@@ -12233,7 +12257,8 @@ impl<'a> FunctionLowering<'a> {
                         )
                     }
                     other => bail!(
-                        "a field is read out of a struct, and this is {other}"
+                        "a field is read out of a struct, and this is {}",
+                        spelled(&other)
                     ),
                 }
             }
@@ -12297,7 +12322,8 @@ impl<'a> FunctionLowering<'a> {
                         Ok((address, struct_name))
                     }
                     other => bail!(
-                        "a field is read out of a struct, and this is {other}"
+                        "a field is read out of a struct, and this is {}",
+                        spelled(&other)
                     ),
                 }
             }
