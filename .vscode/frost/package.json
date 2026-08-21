@@ -2,7 +2,7 @@
   "name": "frost",
   "displayName": "Frost",
   "description": "Syntax highlighting and navigation for the Frost language",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "frost-lang",
   "license": "MIT",
   "engines": {
@@ -71,16 +71,24 @@
         "name": "frost",
         "owner": "frost",
         "source": "frost",
-        "fileLocation": ["relative", "${fileDirname}"],
+        "fileLocation": ["autoDetect", "${workspaceFolder}"],
         "severity": "error",
-        "pattern": {
-          "regexp": "^\\s*(?:(warning|error):\\s*)?(?:\\d+:\\s*)?at (.+?):(\\d+):(\\d+): (.*)$",
-          "severity": 1,
-          "file": 2,
-          "line": 3,
-          "column": 4,
-          "message": 5
-        }
+        "pattern": [
+          {
+            "regexp": "^(\\S.*?):(\\d+):(\\d+):$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          },
+          {
+            "regexp": "^.*$"
+          },
+          {
+            "regexp": "^\\s*\\^+ (?:(warning): )?(.*)$",
+            "severity": 1,
+            "message": 2
+          }
+        ]
       }
     ]
   }

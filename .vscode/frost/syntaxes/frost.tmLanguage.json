@@ -149,6 +149,11 @@
           "match": "\\$\\.\\.\\."
         },
         {
+          "comment": "the branch the compiler answers while the body is expanded. Above the rule below, which would otherwise read the `if` as the name of a type argument",
+          "name": "keyword.control.expansion.frost",
+          "match": "\\$if\\b"
+        },
+        {
           "comment": "$T in a declaration, $i64 or $Point at a call site, $f for a function argument",
           "match": "(\\$)([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
@@ -202,7 +207,7 @@
     "builtin-functions": {
       "comment": "the primitives the compiler provides rather than the standard library",
       "name": "support.function.builtin.frost",
-      "match": "\\b(alignof|assert|cast|flags_has|include_str|live_slots|name_of|ptr_to|ptr_cast|sizeof|slice_from|slice_len|str_len|type_id|typename|wrap_add|wrap_sub|wrap_mul)\\b"
+      "match": "\\b(alignof|assert|cast|fields|flags_has|include_str|live_slots|name_of|ptr_to|ptr_cast|sizeof|slice_from|slice_len|str_len|type_id|typename|wrap_add|wrap_sub|wrap_mul)\\b"
     },
     "builtin-constants": {
       "comment": "the targets a `when` chooses on, declared by the compiler",

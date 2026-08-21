@@ -522,12 +522,15 @@ function publishFindings(document) {
       Math.max(0, (report.line || 1) - 1),
       Math.max(0, (report.column || 1) - 1)
     );
+    // The report says which it is, and a build refuses on one of the two. Read
+    // as a warning whatever it said, an error sat in the list beside the
+    // findings that are only advice.
+    const severity =
+      report.severity === "error"
+        ? vscode.DiagnosticSeverity.Error
+        : vscode.DiagnosticSeverity.Warning;
     found.push(
-      new vscode.Diagnostic(
-        new vscode.Range(at, at),
-        report.message || "",
-        vscode.DiagnosticSeverity.Warning
-      )
+      new vscode.Diagnostic(new vscode.Range(at, at), report.message || "", severity)
     );
   }
   findings.set(document.uri, found);
