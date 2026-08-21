@@ -353,6 +353,84 @@ Three language rules carry this: a compile-time list may hold types, a list may
 be handed on by naming it, and `g(T) for T in list` in an argument list expands
 to one argument per element.
 
+## Filter a container in place
+
+A container is filtered where it stands with a write cursor: a counter of what
+has been kept, which never runs ahead of the one reading, so a kept element is
+written over a slot already read. The length comes down at the end.
+
+```frost
+import "io.frost"
+import "vec.frost"
+
+keep_even :: fn(mut xs: Vec<i64>) {
+    mut kept: i64 = 0
+    mut at: i64 = 0
+    while (at < vec_len(xs)) {
+        value := vec_get(xs, at)
+        if (value % 2 == 0) {
+            vec_set(xs, kept, value)
+            kept = kept + 1
+        }
+        at = at + 1
+    }
+    vec_truncate(xs, kept)
+}
+
+main :: fn() -> i64 {
+    mut xs := vec_new($i64, 8)
+    for value in 1..7 {
+        vec_push(xs, value)
+    }
+    keep_even(xs)
+    for value in vec_slice(xs) {
+        print("{} ", value)
+    }
+    print("
+")
+    vec_free(xs)
+    0
+}
+```
+
+`vec_set` is declared `where !is_linear(T)`, so this shape is for elements that
+are not resources. A container of resources is compacted by consuming what goes
+and moving what stays, which is a different loop.
+
+## Take one out without keeping the order
+
+Where the order does not matter, the last element is written over the one going
+and the length comes down by one. Nothing else moves.
+
+```frost
+import "io.frost"
+import "vec.frost"
+
+take_out :: fn(mut xs: Vec<i64>, index: i64) {
+    last := vec_len(xs) - 1
+    vec_set(xs, index, vec_get(xs, last))
+    vec_truncate(xs, last)
+}
+
+main :: fn() -> i64 {
+    mut xs := vec_new($i64, 4)
+    vec_push(xs, 1)
+    vec_push(xs, 2)
+    vec_push(xs, 3)
+    take_out(xs, 0)
+    for value in vec_slice(xs) {
+        print("{} ", value)
+    }
+    print("
+")
+    vec_free(xs)
+    0
+}
+```
+
+Compaction is the same shape run over the whole container: the filter above
+with the test inverted, which is why one loop covers both.
+
 ## Shapes that misread, and the form to write
 
 Four shapes read differently than they look, and the report you get points

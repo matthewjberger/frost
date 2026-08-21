@@ -238,16 +238,41 @@ the run's length, so a push past the end is an index past the end of a slice
 and aborts where it happens. It may not outlive its storage, which the region
 check enforces:
 
-```frost,sketch
+```frost
+import "io.frost"
+import "arena.frost"
+import "fixed.frost"
+
+Sprite :: struct { x: i64, y: i64 }
+
+tally :: fn(seen: []Sprite) -> i64 {
+    mut total: i64 = 0
+    for sprite in seen {
+        total = total + sprite.x
+    }
+    total
+}
+
 draw_frame :: fn(mut scratch: Arena, world: []Sprite) -> i64 {
-    mut total : i64 = 0
+    mut total: i64 = 0
     with scratch {
         run := arena_carve($Sprite, scratch, 16)
         mut visible := fixed_over(run)
-        for sprite in world { fixed_push(visible, sprite) }
+        for sprite in world {
+            fixed_push(visible, sprite)
+        }
         total = tally(fixed_slice(visible))
     }
     total
+}
+
+main :: fn() -> i64 {
+    world: [2]Sprite = [Sprite { x = 3, y = 0 }, Sprite { x = 4, y = 0 }]
+    mut backing: [1024]u8 = [0; 1024]
+    mut scratch := arena_over(backing)
+    print("{}
+", draw_frame(scratch, world))
+    0
 }
 ```
 
