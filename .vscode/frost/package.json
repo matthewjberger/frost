@@ -2,7 +2,7 @@
   "name": "frost",
   "displayName": "Frost",
   "description": "Syntax highlighting and navigation for the Frost language",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "frost-lang",
   "license": "MIT",
   "engines": {
@@ -48,6 +48,13 @@
       {
         "language": "frost",
         "path": "./snippets/frost.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "frost.applyEveryFix",
+        "title": "Frost: Apply every fix the reports offer",
+        "enablement": "editorLangId == frost"
       }
     ],
     "configuration": {

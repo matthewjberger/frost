@@ -68,17 +68,21 @@ function headOf(name, kind, line, lineIndex) {
   };
 }
 
-// One pass over the file, tracking strings, comments and brace depth, so a
-// head is only read at the top level and a body's extent is known for the
-// outline. A head that never opens a brace ends on its own line.
-function braceDelta(line, state) {
+// One pass over a line: how its braces move the depth, and which of its columns
+// are code rather than the inside of a string or a comment. Both answers come
+// from the same walk, so a reader of one cannot disagree with a reader of the
+// other about where a string ends.
+function readLine(line, state) {
   let delta = 0;
+  const code = [];
+  let open = state.inString || state.inBlockComment ? -1 : 0;
   for (let index = 0; index < line.length; index += 1) {
     const character = line[index];
     if (state.inBlockComment) {
       if (character === "*" && line[index + 1] === "/") {
         state.inBlockComment = false;
         index += 1;
+        open = index + 1;
       }
       continue;
     }
@@ -87,28 +91,62 @@ function braceDelta(line, state) {
         index += 1;
       } else if (character === '"') {
         state.inString = false;
+        open = index + 1;
       }
       continue;
     }
     if (character === "/" && line[index + 1] === "/") {
-      break;
+      if (open >= 0) {
+        code.push([open, index]);
+        open = -1;
+      }
+      return { delta, code };
     }
     if (character === "/" && line[index + 1] === "*") {
       state.inBlockComment = true;
+      if (open >= 0) {
+        code.push([open, index]);
+        open = -1;
+      }
       index += 1;
       continue;
     }
     if (character === '"') {
       state.inString = true;
+      if (open >= 0) {
+        code.push([open, index]);
+        open = -1;
+      }
     } else if (character === "{") {
       delta += 1;
     } else if (character === "}") {
       delta -= 1;
     }
   }
-  return delta;
+  if (open >= 0) {
+    code.push([open, line.length]);
+  }
+  return { delta, code };
 }
 
+function braceDelta(line, state) {
+  return readLine(line, state).delta;
+}
+
+// Where a name is written as a name. A file's lines are walked in order, since
+// a string or a block comment opened on one line runs into the next.
+function codeRunsOf(lines) {
+  const state = { inString: false, inBlockComment: false };
+  return lines.map((line) => readLine(line, state).code);
+}
+
+function insideCode(runs, column, length) {
+  return runs.some(([start, end]) => column >= start && column + length <= end);
+}
+
+// One pass over the file, tracking strings, comments and brace depth, so a
+// head is only read at the top level and a body's extent is known for the
+// outline. A head that never opens a brace ends on its own line.
 function scanDeclarations(lines) {
   const declarations = [];
   const state = { inString: false, inBlockComment: false };
@@ -385,11 +423,18 @@ const referenceProvider = {
     const pattern = new RegExp("\\b" + word + "\\b", "g");
     const locations = [];
     for (const entry of files.values()) {
+      // A name written in a comment or inside a string is prose, not a use of
+      // the declaration. Counted, `// vec_push is what to call` sent a reader
+      // to a line that names nothing.
+      const runs = codeRunsOf(entry.lines);
       for (let lineIndex = 0; lineIndex < entry.lines.length; lineIndex += 1) {
         const line = entry.lines[lineIndex];
         pattern.lastIndex = 0;
         let match;
         while ((match = pattern.exec(line)) !== null) {
+          if (!insideCode(runs[lineIndex], match.index, word.length)) {
+            continue;
+          }
           if (
             !context.includeDeclaration &&
             entry.declarations.some(
@@ -484,56 +529,296 @@ const documentFormattingProvider = {
   },
 };
 
-// Findings from `frost lint`, published where the editor shows problems. They
-// are warnings: a build never refuses on one.
+// What the compiler says about a file, published where the editor shows
+// problems. Two passes, because they answer different questions: a check reports
+// what a build refuses on and what it warns about, and `lint` reports the
+// findings a build says nothing about at all.
 const findings = vscode.languages.createDiagnosticCollection("frost");
 
-function publishFindings(document) {
-  if (document.languageId !== "frost") {
-    return;
-  }
-  const compiler = vscode.workspace
+// The edits the reports carried, by file, for the code actions to offer. Held
+// beside the diagnostics rather than on them: what the editor hands back to a
+// code action is its own copy of a diagnostic, so a property put on one here
+// does not survive the trip.
+const offered = new Map();
+
+function compilerPath() {
+  return vscode.workspace
     .getConfiguration("frost")
     .get("compilerPath", "frost");
-  let written;
-  try {
-    written = require("child_process").execFileSync(
-      compiler,
-      ["lint", "--diagnostics=json", document.uri.fsPath],
-      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }
+}
+
+// The compiler's output, whichever stream it wrote on and whether or not it
+// ended well. A refused build is a nonzero exit and its reports are what to
+// read, so the failure carries the answer.
+//
+// Run without waiting on it. A check and a lint are a compiler apiece, and run
+// where the editor waits they are two builds between one keystroke and the
+// next.
+function runCompiler(arguments_, options) {
+  const held = {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    ...(options || {}),
+  };
+  return new Promise((answer) => {
+    require("child_process").execFile(
+      compilerPath(),
+      arguments_,
+      held,
+      (error, out, err) => {
+        answer({
+          out: typeof out === "string" ? out : "",
+          err: typeof err === "string" ? err : "",
+          failed: Boolean(error),
+        });
+      }
     );
-  } catch (error) {
-    // A nonzero exit is what having findings looks like, so the output is
-    // still what to read.
-    written = error && typeof error.stdout === "string" ? error.stdout : "";
-  }
-  const found = [];
-  for (const line of written.split(LINE_BREAKS)) {
-    if (!line.trim()) {
+  });
+}
+
+function reportsIn(text) {
+  const held = [];
+  for (const line of (text || "").split(LINE_BREAKS)) {
+    if (!line.trim().startsWith("{")) {
       continue;
     }
-    let report;
     try {
-      report = JSON.parse(line);
+      held.push(JSON.parse(line));
     } catch (error) {
       continue;
     }
-    const at = new vscode.Position(
-      Math.max(0, (report.line || 1) - 1),
-      Math.max(0, (report.column || 1) - 1)
-    );
-    // The report says which it is, and a build refuses on one of the two. Read
-    // as a warning whatever it said, an error sat in the list beside the
-    // findings that are only advice.
+  }
+  return held;
+}
+
+// A span in a report counts bytes and a position counts UTF-16 units, and the
+// two agree only while every byte is one. A file holding a character above
+// ASCII is read by its line and column instead, which is exact either way.
+function bytesAreUnits(text) {
+  return !/[^\x00-\x7F]/.test(text);
+}
+
+// What to underline. A report's own span is a point at the place it names, so
+// the span of the edit it offers is preferred where there is one, and the word
+// under the place where there is neither. A zero-width range draws nothing.
+function rangeOf(document, report, ascii) {
+  const at = new vscode.Position(
+    Math.max(0, (report.line || 1) - 1),
+    Math.max(0, (report.column || 1) - 1)
+  );
+  const spans = [report.fix && report.fix.span, report.span];
+  if (ascii) {
+    for (const span of spans) {
+      if (Array.isArray(span) && span[1] > span[0]) {
+        return new vscode.Range(
+          document.positionAt(span[0]),
+          document.positionAt(span[1])
+        );
+      }
+    }
+  }
+  return document.getWordRangeAtPosition(at) || new vscode.Range(at, at);
+}
+
+async function publishFindings(document) {
+  if (document.languageId !== "frost" || document.uri.scheme !== "file") {
+    return;
+  }
+  const path = document.uri.fsPath;
+  // The check writes its reports on the error stream and `lint` writes its own
+  // on the output stream. Neither writes a file: a build that is refused stops
+  // before it emits, and one that is not was asked for no output.
+  const [check, lint] = await Promise.all([
+    runCompiler([path, "--diagnostics=json"]),
+    runCompiler(["lint", "--diagnostics=json", path]),
+  ]);
+  const checked = check.err;
+  const linted = lint.out;
+  const ascii = bytesAreUnits(document.getText());
+  const found = [];
+  const fixes = [];
+  const seen = new Set();
+  for (const report of reportsIn(checked).concat(reportsIn(linted))) {
+    // The two passes overlap on the warnings, which both of them find.
+    const key = `${report.line}:${report.column}:${report.message}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    const range = rangeOf(document, report, ascii);
     const severity =
       report.severity === "error"
         ? vscode.DiagnosticSeverity.Error
         : vscode.DiagnosticSeverity.Warning;
-    found.push(
-      new vscode.Diagnostic(new vscode.Range(at, at), report.message || "", severity)
+    const held = new vscode.Diagnostic(
+      range,
+      report.message || "",
+      severity
     );
+    held.source = "frost";
+    // Another place the same report is about, as a link the reader can follow.
+    if (Array.isArray(report.related) && report.related.length > 0) {
+      held.relatedInformation = report.related
+        .filter((place) => place && typeof place.line === "number")
+        .map((place) => {
+          const where = new vscode.Position(
+            Math.max(0, place.line - 1),
+            Math.max(0, (place.column || 1) - 1)
+          );
+          return new vscode.DiagnosticRelatedInformation(
+            new vscode.Location(
+              place.file ? vscode.Uri.file(place.file) : document.uri,
+              new vscode.Range(where, where)
+            ),
+            place.message || ""
+          );
+        });
+    }
+    found.push(held);
+    if (report.fix && ascii && Array.isArray(report.fix.span)) {
+      fixes.push({
+        message: held.message,
+        range,
+        edit: new vscode.Range(
+          document.positionAt(report.fix.span[0]),
+          document.positionAt(report.fix.span[1])
+        ),
+        replacement: report.fix.replacement || "",
+        certain: report.fix.certain === true,
+      });
+    }
   }
   findings.set(document.uri, found);
+  offered.set(document.uri.toString(), fixes);
+}
+
+// The edit a report carried, offered where the report is. The compiler worked
+// it out; without this it was written into the JSON and read by nothing.
+const codeActionProvider = {
+  provideCodeActions(document, range, context) {
+    const held = offered.get(document.uri.toString()) || [];
+    const actions = [];
+    for (const fix of held) {
+      if (!fix.range.intersection(range)) {
+        continue;
+      }
+      const shown = fix.replacement
+        ? `Replace with '${fix.replacement}'`
+        : "Remove this";
+      const action = new vscode.CodeAction(
+        shown,
+        vscode.CodeActionKind.QuickFix
+      );
+      action.edit = new vscode.WorkspaceEdit();
+      action.edit.replace(document.uri, fix.edit, fix.replacement);
+      // A fix the compiler applies unread is the one to reach for, and one it
+      // offers is a guess at what was meant.
+      action.isPreferred = fix.certain;
+      action.diagnostics = context.diagnostics.filter(
+        (diagnostic) => diagnostic.message === fix.message
+      );
+      actions.push(action);
+    }
+    return actions;
+  },
+};
+
+// The exported surface under a prefix, from `frost api`, which reads the
+// program rather than the text. Asked once for the first two characters and
+// narrowed here, since the answer for `ve` holds every answer for `vec_`.
+const surface = new Map();
+
+// A function's head without the body, which an `inline fn` carries on the same
+// line. The brace that opens a body is the first one written outside every
+// bracket, so a `where` clause naming a call keeps its own and a body holding
+// one does not put the cut inside itself.
+//
+// Only a function. A struct's braces hold its fields, which is what a reader
+// asking about a struct wants to read.
+function withoutBody(text) {
+  if (!/::\s*(?:[a-z]+\s+)*fn\b/.test(text)) {
+    return text;
+  }
+  let depth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === "(" || character === "[") {
+      depth += 1;
+    } else if (character === ")" || character === "]") {
+      depth -= 1;
+    } else if (character === "{" && depth === 0) {
+      return text.slice(0, index).trimEnd();
+    }
+  }
+  return text;
+}
+
+async function surfaceUnder(prefix, directory) {
+  const key = `${directory} ${prefix}`;
+  const cached = surface.get(key);
+  if (cached && Date.now() - cached.at < 5000) {
+    return cached.items;
+  }
+  const written = (await runCompiler(["api", prefix], { cwd: directory })).out;
+  const lines = written.split(LINE_BREAKS);
+  const items = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^(.+):(\d+)$/.test(lines[index])) {
+      continue;
+    }
+    const signature = withoutBody((lines[index + 1] || "").trim());
+    const named = signature.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*::/);
+    if (!named) {
+      continue;
+    }
+    items.push({ name: named[1], signature, where: lines[index] });
+  }
+  surface.set(key, { at: Date.now(), items });
+  return items;
+}
+
+const completionItemProvider = {
+  async provideCompletionItems(document, position) {
+    const range = document.getWordRangeAtPosition(position);
+    const written = range
+      ? document.getText(new vscode.Range(range.start, position))
+      : "";
+    if (written.length < 2) {
+      return undefined;
+    }
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    const directory = folder
+      ? folder.uri.fsPath
+      : require("path").dirname(document.uri.fsPath);
+    const under = await surfaceUnder(written.slice(0, 2), directory);
+    return under
+      .filter((held) => held.name.startsWith(written))
+      .map((held) => {
+        const item = new vscode.CompletionItem(
+          held.name,
+          held.signature.includes(":: fn")
+            ? vscode.CompletionItemKind.Function
+            : vscode.CompletionItemKind.Variable
+        );
+        item.detail = held.signature;
+        item.documentation = new vscode.MarkdownString(held.where);
+        return item;
+      });
+  },
+};
+
+// `frost fix` applies every edit a report carried that it applies unread. The
+// file on disk is what it rewrites, so the buffer is written first and read
+// back after.
+async function applyEveryFix() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.languageId !== "frost") {
+    return;
+  }
+  await editor.document.save();
+  await runCompiler(["fix", editor.document.uri.fsPath]);
+  await vscode.commands.executeCommand("workbench.action.files.revert");
+  await publishFindings(editor.document);
 }
 
 function activate(context) {
@@ -556,6 +841,14 @@ function activate(context) {
     vscode.languages.registerWorkspaceSymbolProvider(workspaceSymbolProvider),
     vscode.languages.registerReferenceProvider(selector, referenceProvider),
     vscode.languages.registerHoverProvider(selector, hoverProvider),
+    vscode.languages.registerCodeActionsProvider(selector, codeActionProvider, {
+      providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+    }),
+    vscode.languages.registerCompletionItemProvider(
+      selector,
+      completionItemProvider
+    ),
+    vscode.commands.registerCommand("frost.applyEveryFix", applyEveryFix),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.document.languageId !== "frost") {
         return;
@@ -584,7 +877,11 @@ function activate(context) {
   watcher.onDidCreate(indexFile, null, context.subscriptions);
   watcher.onDidChange(indexFile, null, context.subscriptions);
   watcher.onDidDelete(
-    (uri) => files.delete(uri.toString()),
+    (uri) => {
+      files.delete(uri.toString());
+      offered.delete(uri.toString());
+      findings.delete(uri);
+    },
     null,
     context.subscriptions
   );
