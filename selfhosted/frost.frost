@@ -27,6 +27,7 @@
 
 import "core.frost"
 import "cli.frost"
+import "api.frost"
 import "format.frost"
 import "lint.frost"
 import "lexer.frost"
@@ -717,6 +718,11 @@ main :: fn() -> i64 {
     if (frost_rt_arg_count() > 1
         && cstr_eq(frost_rt_arg_at(1), "fmt")) {
         return format_command()
+    }
+    // The same for `api`, which names a prefix rather than a file and reads
+    // every source under the directory the command was run in.
+    if (frost_rt_arg_count() > 1 && cstr_eq(frost_rt_arg_at(1), "api")) {
+        return api_command()
     }
     // The same for `generate`, which names no file at all: what it writes comes
     // out of the project's manifest rather than off the command line.

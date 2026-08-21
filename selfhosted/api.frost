@@ -1,0 +1,461 @@
+// The exported surface of a project under a name prefix, which is what
+// `frost api` answers with, and what a completion list is made of.
+//
+// A flat namespace gives up the narrowing a `.` provides in a method language:
+// a wrong guess is an undefined name rather than a shortened list. This is that
+// list, asked for by the prefix a family shares.
+//
+// Read off the source rather than off the parse. What is printed is what the
+// author wrote, parameter names, modes and `where` clause included, and a file
+// that does not compile still answers, which is what an editor asking while a
+// line is half-written needs.
+
+import "core.frost"
+import "imports.frost"
+
+export api_command
+
+// One exported name as it was declared. The file's text is held rather than
+// copied out of, since the answers are sorted across every file before any of
+// them is written and a name is a range in the text it came from.
+Exported :: struct {
+    path: ^i8,
+    text: str,
+    line: i64,
+    name_off: i64,
+    name_len: i64,
+    head_off: i64,
+    head_len: i64,
+}
+
+// How far a declaration head may run onto the lines below it. A head longer
+// than this is one nobody would read in a completion list anyway, and the limit
+// is what stops a file with an unclosed bracket from taking the rest of itself.
+HEAD_LINES_MAX :: 12
+
+// How deep the walk goes. A project nests its sources a few directories down;
+// anything past this is a loop somebody made with a link.
+WALK_DEPTH_MAX :: 16
+
+api_command :: fn() -> i64 {
+    mut prefix: ^i8 = ""
+    mut index: i64 = 2
+    count := frost_rt_arg_count()
+    while (index < count) {
+        argument := frost_rt_arg_at(index)
+        if (starts_with_dashes(argument) == false && cstr_len(prefix) == 0) {
+            prefix = argument
+        }
+        index = index + 1
+    }
+    if (cstr_len(prefix) == 0) {
+        report("frost api: which prefix?\n")
+        return 1
+    }
+    mut found: Arena<Exported> = arena_make($Exported, 256)
+    read_directory(found, ".", cstr_slice(prefix), 0)
+    sort_by_name(found)
+    mut at: i64 = 0
+    while (at < found.count) {
+        held := arena_at(found, at)
+        emit_text(cstr_slice(held.path))
+        emit_text(":")
+        frost_rt_emit_int(held.line)
+        emit_text("\n")
+        emit_range(held.text, held.head_off, held.head_len)
+        emit_text("\n\n")
+        at = at + 1
+    }
+    frost_rt_emit_int(found.count)
+    emit_text(" exported name(s) beginning with '")
+    emit_text(cstr_slice(prefix))
+    emit_text("'\n")
+    0
+}
+
+starts_with_dashes :: fn(argument: ^i8) -> bool {
+    (cstr_len(argument) >= 2 && byte_at(argument, 0) == CH_MINUS
+        && byte_at(argument, 1) == CH_MINUS)
+}
+
+// Every `.frost` file under a directory, read for what it exports. The
+// directories a build writes into hold copies of what is already here, and a
+// name found twice is a name listed twice.
+read_directory :: fn(
+    mut found: Arena<Exported>,
+    path: ^i8,
+    prefix: str,
+    depth: i64
+) {
+    if (depth > WALK_DEPTH_MAX) {
+        return
+    }
+    if (unsafe { frost_rt_dir_open(path) } == 0) {
+        return
+    }
+    // The names first, then the walk. One walk at a time is what the runtime
+    // holds, so reading a directory inside another would take the handle the
+    // outer one is standing on.
+    mut names: Arena<Held> = arena_make($Held, 64)
+    mut directories: Arena<Held> = arena_make($Held, 32)
+    mut entry := unsafe { frost_rt_dir_next() }
+    while (cstr_len(entry) != 0) {
+        kept := join_two(entry, "")
+        if (frost_rt_dir_entry_is_dir() == 1) {
+            if (walked_into(kept)) {
+                arena_push(directories, Held { at = kept })
+            }
+        } else if (ends_with_frost(kept)) {
+            arena_push(names, Held { at = kept })
+        }
+        entry = unsafe { frost_rt_dir_next() }
+    }
+    frost_rt_dir_close()
+    mut i: i64 = 0
+    while (i < names.count) {
+        read_file(found, under_directory(path, arena_at(names, i).at), prefix)
+        i = i + 1
+    }
+    mut k: i64 = 0
+    while (k < directories.count) {
+        read_directory(
+            found,
+            under_directory(path, arena_at(directories, k).at),
+            prefix,
+            depth + 1
+        )
+        k = k + 1
+    }
+}
+
+// A name the walk holds while the directory it came from is still open.
+Held :: struct {
+    at: ^i8,
+}
+
+// Whether a directory is one a project's sources live under. `.` and `..` walk
+// back over ground already covered, a name beginning with a dot is the tooling's
+// own, and the two build directories hold copies of what is already here.
+walked_into :: fn(name: ^i8) -> bool {
+    if (cstr_len(name) == 0 || byte_at(name, 0) == CH_DOT) {
+        return false
+    }
+    cstr_eq(name, "target") == false
+}
+
+ends_with_frost :: fn(name: ^i8) -> bool {
+    length := cstr_len(name)
+    if (length < 7) {
+        return false
+    }
+    mut k: i64 = 0
+    while (k < 6) {
+        if (byte_at(name, length - 6 + k) != byte_at(".frost", k)) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+under_directory :: fn(directory: ^i8, name: ^i8) -> ^i8 {
+    if (cstr_eq(directory, ".")) {
+        return name
+    }
+    join_two(join_two(directory, "/"), name)
+}
+
+// One file: every name on its export lines that begins with the prefix, and
+// where each one is declared.
+read_file :: fn(mut found: Arena<Exported>, path: ^i8, prefix: str) {
+    raw := unsafe { frost_rt_read_file(path) }
+    length := cstr_len(raw)
+    if (length == 0) {
+        return
+    }
+    text := cstr_slice(raw)
+    shown := file_name(path)
+    mut line_number: i64 = 1
+    mut at: i64 = 0
+    while (at < length) {
+        end := line_end(text, length, at)
+        name_len := declaration_head(text, at, end)
+        if (name_len > 0 && begins_with(text, at, name_len, prefix)
+            && exported_by(text, length, at, name_len)) {
+            head := head_end(text, length, at, end)
+            arena_push(
+                found,
+                Exported {
+                    path = shown,
+                    text = text,
+                    line = line_number,
+                    name_off = at,
+                    name_len = name_len,
+                    head_off = at,
+                    head_len = head - at
+                }
+            )
+        }
+        at = end + 1
+        line_number = line_number + 1
+    }
+}
+
+line_end :: fn(text: str, length: i64, from: i64) -> i64 {
+    mut at := from
+    while (at < length && text[at] != CH_LF) {
+        at = at + 1
+    }
+    at
+}
+
+// The length of the name a declaration head declares, or 0 for any other line.
+//
+// A head opens its own line, and `Type::Variant` is written tight where a
+// declaration is spaced, which is the rule the grammar tells the two apart by.
+declaration_head :: fn(text: str, from: i64, end: i64) -> i64 {
+    if (from >= end || is_space(text[from])) {
+        return 0
+    }
+    mut at := from
+    while (at < end && is_name_byte(text[at])) {
+        at = at + 1
+    }
+    length := at - from
+    if (length == 0 || at + 2 >= end) {
+        return 0
+    }
+    if (text[at] != CH_SPACE || text[at + 1] != CH_COLON
+        || text[at + 2] != CH_COLON) {
+        return 0
+    }
+    length
+}
+
+// Whether a name is on one of the file's `export` lines. A list runs over as
+// many lines as it needs, each line but the last ending in a comma.
+exported_by :: fn(
+    text: str,
+    length: i64,
+    name_off: i64,
+    name_len: i64
+) -> bool {
+    mut reading: bool = false
+    mut at: i64 = 0
+    while (at < length) {
+        end := line_end(text, length, at)
+        mut from := at
+        while (from < end && is_space(text[from])) {
+            from = from + 1
+        }
+        if (word_here(text, from, end, "export")) {
+            reading = true
+            from = from + 6
+        }
+        if (reading) {
+            if (names_one(text, from, end, name_off, name_len)) {
+                return true
+            }
+            reading = trailing_comma(text, from, end)
+        }
+        at = end + 1
+    }
+    false
+}
+
+word_here :: fn(text: str, from: i64, end: i64, word: str) -> bool {
+    wanted := str_len(word)
+    if (from + wanted > end) {
+        return false
+    }
+    mut k: i64 = 0
+    while (k < wanted) {
+        if (text[from + k] != word[k]) {
+            return false
+        }
+        k = k + 1
+    }
+    from + wanted >= end || is_name_byte(text[from + wanted]) == false
+}
+
+// Whether a comma-separated run of names holds this one.
+names_one :: fn(
+    text: str,
+    from: i64,
+    end: i64,
+    name_off: i64,
+    name_len: i64
+) -> bool {
+    mut at := from
+    while (at < end) {
+        if (is_name_byte(text[at]) == false) {
+            at = at + 1
+            continue
+        }
+        mut stop := at
+        while (stop < end && is_name_byte(text[stop])) {
+            stop = stop + 1
+        }
+        if (stop - at == name_len && range_equal(text, at, name_off, name_len)) {
+            return true
+        }
+        at = stop
+    }
+    false
+}
+
+trailing_comma :: fn(text: str, from: i64, end: i64) -> bool {
+    mut at := end - 1
+    while (at >= from && is_space(text[at])) {
+        at = at - 1
+    }
+    at >= from && text[at] == CH_COMMA
+}
+
+// Where a declaration head ends: at the line it opens on, or at the end of the
+// last line its parameters run onto. The brace that opens a body is not part of
+// it, and neither is the space in front of that brace.
+head_end :: fn(text: str, length: i64, from: i64, first_end: i64) -> i64 {
+    mut end := first_end
+    mut depth := brackets_in(text, from, end)
+    mut lines: i64 = 0
+    while (depth > 0 && end < length && lines < HEAD_LINES_MAX) {
+        next := line_end(text, length, end + 1)
+        depth = depth + brackets_in(text, end + 1, next)
+        end = next
+        lines = lines + 1
+    }
+    mut at := end
+    while (at > from && is_space(text[at - 1])) {
+        at = at - 1
+    }
+    if (at > from && text[at - 1] == CH_LBRACE) {
+        at = at - 1
+    }
+    while (at > from && is_space(text[at - 1])) {
+        at = at - 1
+    }
+    at
+}
+
+brackets_in :: fn(text: str, from: i64, end: i64) -> i64 {
+    mut depth: i64 = 0
+    mut at := from
+    while (at < end) {
+        held := text[at]
+        if (held == CH_LPAREN || held == CH_LBRACKET) {
+            depth = depth + 1
+        } else if (held == CH_RPAREN || held == CH_RBRACKET) {
+            depth = depth - 1
+        }
+        at = at + 1
+    }
+    depth
+}
+
+begins_with :: fn(text: str, off: i64, len: i64, prefix: str) -> bool {
+    wanted := str_len(prefix)
+    if (wanted > len) {
+        return false
+    }
+    mut k: i64 = 0
+    while (k < wanted) {
+        if (text[off + k] != prefix[k]) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+range_equal :: fn(text: str, one: i64, other: i64, length: i64) -> bool {
+    mut k: i64 = 0
+    while (k < length) {
+        if (text[one + k] != text[other + k]) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+emit_range :: fn(text: str, off: i64, len: i64) {
+    mut k: i64 = 0
+    while (k < len) {
+        frost_rt_emit_char(cast($i64, text[off + k]))
+        k = k + 1
+    }
+}
+
+// By name, so the list reads as a family rather than as the order the walk
+// happened to reach the files in. Two names that are the same are left in the
+// order they were found, which is the order the directories were walked.
+sort_by_name :: fn(mut found: Arena<Exported>) {
+    mut i: i64 = 1
+    while (i < found.count) {
+        mut k := i
+        while (k > 0 && name_before(found, k, k - 1)) {
+            swap_entries(found, k, k - 1)
+            k = k - 1
+        }
+        i = i + 1
+    }
+}
+
+name_before :: fn(mut found: Arena<Exported>, one: i64, other: i64) -> bool {
+    left_text: str = arena_at(found, one).text
+    right_text: str = arena_at(found, other).text
+    left_off := arena_at(found, one).name_off
+    right_off := arena_at(found, other).name_off
+    left_len := arena_at(found, one).name_len
+    right_len := arena_at(found, other).name_len
+    mut k: i64 = 0
+    while (k < left_len && k < right_len) {
+        left := cast($i64, left_text[left_off + k])
+        right := cast($i64, right_text[right_off + k])
+        if (left != right) {
+            return left < right
+        }
+        k = k + 1
+    }
+    left_len < right_len
+}
+
+swap_entries :: fn(mut found: Arena<Exported>, one: i64, other: i64) {
+    held := arena_at(found, one)
+    kept := Exported {
+        path = held.path,
+        text = held.text,
+        line = held.line,
+        name_off = held.name_off,
+        name_len = held.name_len,
+        head_off = held.head_off,
+        head_len = held.head_len
+    }
+    there := arena_at(found, other)
+    held.path = there.path
+    held.text = there.text
+    held.line = there.line
+    held.name_off = there.name_off
+    held.name_len = there.name_len
+    held.head_off = there.head_off
+    held.head_len = there.head_len
+    other_entry := arena_at(found, other)
+    other_entry.path = kept.path
+    other_entry.text = kept.text
+    other_entry.line = kept.line
+    other_entry.name_off = kept.name_off
+    other_entry.name_len = kept.name_len
+    other_entry.head_off = kept.head_off
+    other_entry.head_len = kept.head_len
+}
+
+is_space :: fn(byte: u8) -> bool {
+    byte == CH_SPACE || byte == CH_TAB || byte == CH_CR || byte == CH_LF
+}
+
+is_name_byte :: fn(byte: u8) -> bool {
+    held := cast($i64, byte)
+    ((held >= 48 && held <= 57) || (held >= 65 && held <= 90)
+        || (held >= 97 && held <= 122) || held == 95)
+}
