@@ -154,7 +154,7 @@ mut scratch := arena_over(backing)
 | `arena_mark(a) -> i64` | Where the arena is now, to roll back to |
 | `arena_reset(mut a, mark)` | Everything carved since the mark, reclaimed |
 | `arena_used(a) -> i64` | How many bytes are out |
-| `arena_left(a) -> i64` | How many are still there |
+| `arena_room(a) -> i64` | How many more will fit |
 | `arena_take(mut a, size, align) -> []u8` | The byte-level carve the typed one is built on |
 | `arena_give(mut a, block)` | Nothing; an arena reclaims by reset |
 

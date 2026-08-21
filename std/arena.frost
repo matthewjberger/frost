@@ -23,7 +23,7 @@
 import "mem.frost"
 import "allocation.frost"
 
-export Arena, arena_over, arena_mark, arena_reset, arena_used, arena_left,
+export Arena, arena_over, arena_mark, arena_reset, arena_used, arena_room,
     arena_carve, arena_take, arena_give, arena_source
 
 Arena :: struct {
@@ -60,9 +60,10 @@ arena_used :: fn(a: Arena) -> i64 {
     a.offset
 }
 
-// How many are left, which is what a caller checks before carving a run whose
-// size it worked out rather than chose.
-arena_left :: fn(a: Arena) -> i64 {
+// How many more will fit, which is what a caller checks before carving a run
+// whose size it worked out rather than chose. `fixed_room` is the same question
+// over a fixed run and answers to the same name.
+arena_room :: fn(a: Arena) -> i64 {
     slice_len(a.data) - a.offset
 }
 
@@ -167,10 +168,10 @@ test "a carve of a struct is aligned and sized by the struct" {
 test "what is left counts down as runs go out" {
     mut backing: [128]u8 = [0; 128]
     mut a := arena_over(backing)
-    assert(arena_left(a) == 128)
+    assert(arena_room(a) == 128)
     mut run := arena_carve($i64, a, 4)
     run[0] = 1
-    assert(arena_left(a) == 96)
+    assert(arena_room(a) == 96)
     arena_reset(a, 0)
-    assert(arena_left(a) == 128)
+    assert(arena_room(a) == 128)
 }

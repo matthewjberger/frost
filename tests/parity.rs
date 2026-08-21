@@ -7192,7 +7192,7 @@ e-2
          \x20   one[0] = 3\n\
          \x20   mut wide := arena_carve($Wide, a, 2)\n\
          \x20   print(\"{} {}\n\", arena_used(a), slice_len(wide))\n\
-         \x20   print(\"{} {}\n\", one[0], arena_left(a))\n\
+         \x20   print(\"{} {}\n\", one[0], arena_room(a))\n\
          \x20   arena_reset(a, 0)\n\
          \x20   print(\"{}\n\", arena_used(a))\n\
          \x20   0\n\
