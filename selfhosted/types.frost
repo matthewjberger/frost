@@ -31,6 +31,7 @@ export is_narrowing,
     constant_node,
     local_exists, lookup_local, lower_enum_compare, nth_param_by_value,
     nth_param_type, nth_value_arg, nth_param_auto_borrows,
+    nth_param_takes_address,
     param_node_by_value,
     borrow_kept, pack_local_type, operand_type,
     reads_through_borrow,
@@ -146,6 +147,19 @@ param_node_by_value :: fn(mut p: Parser, param_node: i64) -> bool {
         entry = entry + 1
     }
     false
+}
+
+// Whether the nth parameter arrives as an address, by the mode it was written
+// with or by a `ref T` written out as its type. Both are a pointer at the ABI
+// and the call is what takes the address, so the two backends and the scan
+// deciding which names can live in a register ask this one question rather than
+// each answering half of it.
+nth_param_takes_address :: fn(mut p: Parser, params: i64, n: i64) -> bool {
+    if (nth_param_auto_borrows(p, params, n)) {
+        return true
+    }
+    declared := nth_param_type(p, params, n)
+    declared >= 0 && is_borrow(declared)
 }
 
 // Whether the nth parameter borrows what it is given, so the call site is what
@@ -2847,6 +2861,12 @@ word_is_gparam :: fn(
 // The cursor is left wherever the shape ran out, and the caller reads on to the
 // next top-level comma.
 type_names_gparam :: fn(mut p: Parser, name_off: i64, name_len: i64) -> i64 {
+    // A borrow is peeled where an argument's type is taken, so `ref T` names
+    // the parameter the same way a bare `T` does, and `ref []T` names it
+    // through the slice the borrow holds.
+    while (cur(p) == TokenKind::KwRef) {
+        advance(p)
+    }
     // `[]$T` and `[N]$T` name the parameter through what they hold, so the
     // argument's element is what it binds to.
     if (cur(p) == TokenKind::Lbracket) {

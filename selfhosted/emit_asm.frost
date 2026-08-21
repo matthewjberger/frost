@@ -325,7 +325,7 @@ asm_scan_args :: fn(mut p: Parser, args: i64, fn_index: i64) {
         if (vnode.kind != NodeKind::TypeVal) {
             mut borrows: bool = params < 0
             if (params >= 0) {
-                borrows = nth_param_auto_borrows(p, params, index)
+                borrows = nth_param_takes_address(p, params, index)
             }
             asm_scan_expr(p, value, borrows)
             index = index + 1
@@ -2751,17 +2751,17 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64, at: i64) {
         // scalar in a slot is not one until it is taken. An aggregate already
         // travels as its address, so naming one is enough.
         arg_ty := type_of(p, argument)
-        if (nth_param_auto_borrows(p, params_of_call, i)
-            && is_pointer(arg_ty) == false
+        // A specialization's parameters carry no width, so nothing is
+        // converted into one. Everywhere else the callee's declared type is
+        // what the value has to arrive as.
+        declared := nth_param_type(p, params_of_call, i)
+        borrows := nth_param_takes_address(p, params_of_call, i)
+        if (borrows && is_pointer(arg_ty) == false
             && is_aggregate(arg_ty) == false) {
             emit_asm_addr(p, argument)
         } else {
             emit_asm_expr(p, argument)
         }
-        // A specialization's parameters carry no width, so nothing is
-        // converted into one. Everywhere else the callee's declared type is
-        // what the value has to arrive as.
-        declared := nth_param_type(p, params_of_call, i)
         // A borrowed parameter's declared type is a pointer to what it
         // takes, and an aggregate is already an address here, so the
         // conversion is against what the pointer points at.

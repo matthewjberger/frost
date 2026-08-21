@@ -6301,6 +6301,52 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         ",
         "41 42\n",
     ),
+    // A parameter whose written type is `ref T`, over a scalar and over a
+    // struct.
+    //
+    // A borrow the reader wrote out is the same address a `mut` parameter is,
+    // and the self-hosted compiler read it as an ordinary type: the definition
+    // took a pointer and every call handed it the value, so the C backend
+    // emitted a program the C compiler refused and the assembly backend
+    // dereferenced the value as an address.
+    (
+        "a_parameter_written_as_a_borrow_takes_an_address",
+        "import \"io.frost\"
+         Point :: struct { x: i64, y: i64 }
+         far :: fn(v: ref Point) -> i64 { v.x + v.y }
+         one :: fn(v: ref i64) -> i64 { v + 1 }
+         main :: fn() -> i64 {
+             p := Point { x = 3, y = 4 }
+             n := 5
+             print(\"{} {}\n\", far(p), one(n))
+             0
+         }
+        ",
+        "7 6
+",
+    ),
+    // The same borrow written on a generic's parameter.
+    //
+    // Which argument settles `$T` is read back from the declaration's own
+    // tokens, and that walk read through `^T`, `[]T` and `Bag<T>` and not
+    // through `ref T`. Nothing settled the parameter, so the instance was named
+    // with the code for "no answer" and the call was written as
+    // `mf_0_seen_t-1(...)`, which is not a name a linker can be given.
+    (
+        "a_generic_binds_its_parameter_through_a_borrow",
+        "import \"io.frost\"
+         Point :: struct { x: i64, y: i64 }
+         first :: fn($T: Type, v: ref T) -> i64 { sizeof(T) }
+         main :: fn() -> i64 {
+             p := Point { x = 3, y = 4 }
+             n := 5
+             print(\"{} {}\n\", first(p), first(n))
+             0
+         }
+        ",
+        "16 8
+",
+    ),
     // `errdefer` before a `return` that hands back the failure.
     //
     // The self-hosted compiler passed a written-out `return` as an ordinary

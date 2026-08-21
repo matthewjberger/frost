@@ -1180,6 +1180,14 @@ arg_plan :: fn(
         if (plan.param_auto == 1 && is_pointer(arg_ty) == false) {
             plan.borrow = 1
         }
+        // A parameter whose written type is `ref T` arrives as an address the
+        // same way a mode-borrow does, and the call is what takes it. The mode
+        // marks a parameter the reader put no type sigil on; this is the sigil
+        // written out. Read as an ordinary type, the definition took `T*` and
+        // every call handed it a `T`.
+        if (is_borrow(plan.param_ty) && is_pointer(arg_ty) == false) {
+            plan.borrow = 1
+        }
         // A string literal is already a pointer, so the rule above leaves it
         // alone, but a `str` parameter wants a slice built from it and handed
         // over by address like any other aggregate. An array reached through a
@@ -1202,7 +1210,8 @@ arg_plan :: fn(
         // since a `mut` parameter takes an address whatever it is bound to.
         if (param_from_instance == 0 && generic_fn_of(p, fn_index) >= 0) {
             plan.borrow = 0
-            if (plan.param_auto != 2 && is_aggregate(arg_ty)) {
+            if (plan.param_auto != 2
+                && (is_aggregate(arg_ty) || is_borrow(plan.param_ty))) {
                 plan.borrow = 1
             }
         }
