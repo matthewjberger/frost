@@ -525,9 +525,9 @@ place_character :: fn(text: str, offset: i64) -> i64 {
 // Whether a byte may be part of a name.
 name_byte :: fn(byte: i64) -> bool {
     (byte >= CH_LOWER_A && byte <= CH_LOWER_Z) ||
-        (byte >= CH_UPPER_A && byte <= CH_UPPER_Z) ||
-        (byte >= 48 && byte <= 57) ||
-        byte == CH_UNDERSCORE
+    (byte >= CH_UPPER_A && byte <= CH_UPPER_Z) ||
+    (byte >= 48 && byte <= 57) ||
+    byte == CH_UNDERSCORE
 }
 
 // Where the name under a byte starts. A byte that is not part of one starts
@@ -575,11 +575,11 @@ hex_value :: fn(byte: i64) -> i64 {
 // compares against when a diagnostic comes back.
 uri_plain :: fn(byte: i64) -> bool {
     (byte >= CH_LOWER_A && byte <= CH_LOWER_Z) ||
-        (byte >= CH_UPPER_A && byte <= CH_UPPER_Z) ||
-        (byte >= 48 && byte <= 57) ||
-        byte == CH_MINUS || byte == CH_DOT ||
-        byte == CH_UNDERSCORE || byte == 126 ||
-        byte == CH_SLASH
+    (byte >= CH_UPPER_A && byte <= CH_UPPER_Z) ||
+    (byte >= 48 && byte <= 57) ||
+    byte == CH_MINUS || byte == CH_DOT ||
+    byte == CH_UNDERSCORE || byte == 126 ||
+    byte == CH_SLASH
 }
 
 // The file a URI names, written out as a path. `file:///c%3A/x/y.frost` names
@@ -1107,8 +1107,7 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
         answer_inlay_hints(s, document, request)
         return
     }
-    if (json_text_eq(document, method,
-        "textDocument/prepareCallHierarchy")) {
+    if (json_text_eq(document, method, "textDocument/prepareCallHierarchy")) {
         answer_prepare_hierarchy(s, document, request)
         return
     }
@@ -1120,8 +1119,7 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
         answer_outgoing_calls(s, document, request)
         return
     }
-    if (json_text_eq(document, method,
-        "textDocument/prepareTypeHierarchy")) {
+    if (json_text_eq(document, method, "textDocument/prepareTypeHierarchy")) {
         answer_prepare_type_hierarchy(s, document, request)
         return
     }
@@ -1616,9 +1614,12 @@ publish_each :: fn(mut s: Server, doc: i64, mut found: Json) {
 
 // Whether this record is the first one about its file, which is what decides
 // where a notification is written.
-// Whether this record is the first one about its file, which is what decides
-// where a notification is written.
-first_for_file :: fn(mut found: Json, root: i64, index: i64, file: i64) -> bool {
+first_for_file :: fn(
+    mut found: Json,
+    root: i64,
+    index: i64,
+    file: i64
+) -> bool {
     mut earlier: i64 = 0
     while (earlier < index) {
         held := json_at(found, root, earlier)
@@ -2012,7 +2013,11 @@ answer_document_symbols :: fn(mut s: Server, mut document: Json, request: i64) {
 // Every name written anywhere under the workspace, narrowed by what was asked
 // for. A walk over the sources rather than a check, since the question is about
 // every file rather than about one.
-answer_workspace_symbols :: fn(mut s: Server, mut document: Json, request: i64) {
+answer_workspace_symbols :: fn(
+    mut s: Server,
+    mut document: Json,
+    request: i64
+) {
     params := json_member(document, request, "params")
     query := json_member(document, params, "query")
     walk_sources(s)
@@ -2066,13 +2071,7 @@ say_symbols_of :: fn(text: str, prefix: str) {
     }
 }
 
-say_one_symbol :: fn(
-    text: str,
-    at: i64,
-    named: i64,
-    ends: i64,
-    length: i64
-) {
+say_one_symbol :: fn(text: str, at: i64, named: i64, ends: i64, length: i64) {
     emit_text("{\"name\":")
     say_string_range(text, at, at + named)
     emit_text(",\"kind\":")
@@ -2772,12 +2771,7 @@ say_completions_in :: fn(text: str, prefix: str, already: i64) -> i64 {
 
 // Whether a name begins with what was typed. Matched without regard to case,
 // which is what a reader typing a lowercase start of a type name expects.
-begins_with_prefix :: fn(
-    text: str,
-    at: i64,
-    named: i64,
-    prefix: str
-) -> bool {
+begins_with_prefix :: fn(text: str, at: i64, named: i64, prefix: str) -> bool {
     length := str_len(prefix)
     if (length == 0) {
         return true
@@ -2975,12 +2969,7 @@ say_string_of_node :: fn(mut found: Json, node: i64) {
 
 // Where a declaration stops: the brace it opens, where it opens one, and the
 // end of what it was written across otherwise.
-declaration_extent :: fn(
-    text: str,
-    at: i64,
-    ends: i64,
-    length: i64
-) -> i64 {
+declaration_extent :: fn(text: str, at: i64, ends: i64, length: i64) -> i64 {
     head := head_end(text, length, at, ends)
     // A head stops in front of the brace a body opens, since what a reader
     // reads is the signature. What a declaration covers is the body with it,
@@ -3196,7 +3185,6 @@ source_count :: fn(mut s: Server) -> i64 {
     }
     seen
 }
-
 
 // One of the sources the walk found, in a buffer of its own, since reading
 // the file it names writes into the others.
@@ -3453,7 +3441,6 @@ say_one_parameter :: fn(head: str, from: i64, to: i64, already: i64) -> i64 {
     1
 }
 
-
 // The head that was found, on one line, which is what a signature is shown
 // as. A head written across several lines carries its breaks; the panel it
 // goes in has one line.
@@ -3546,9 +3533,9 @@ head_declares_a_type :: fn(text: str, head_off: i64, named: i64) -> bool {
         at = at + 1
     }
     text_is(text, at, "struct") || text_is(text, at, "enum") ||
-        text_is(text, at, "distinct") || text_is(text, at, "flags") ||
-        text_is(text, at, "packed") || text_is(text, at, "linear") ||
-        text_is(text, at, "type")
+    text_is(text, at, "distinct") || text_is(text, at, "flags") ||
+    text_is(text, at, "packed") || text_is(text, at, "linear") ||
+    text_is(text, at, "type")
 }
 
 // The type a name was written with, put in `s.named`.
@@ -4729,7 +4716,7 @@ declared_colour :: fn(text: str, mut tokens: Arena<Token>, index: i64) -> i64 {
 
 opens_a_type :: fn(kind: TokenKind) -> bool {
     kind == TokenKind::KwStruct || kind == TokenKind::KwEnum ||
-        kind == TokenKind::KwDistinct
+    kind == TokenKind::KwDistinct
 }
 
 kind_at :: fn(mut tokens: Arena<Token>, index: i64) -> TokenKind {
@@ -4751,21 +4738,21 @@ upper_first :: fn(text: str, off: i64) -> bool {
 // Whether a token is one of the language's own words.
 is_word_token :: fn(kind: TokenKind) -> bool {
     kind == TokenKind::KwFn || kind == TokenKind::KwIf ||
-        kind == TokenKind::KwWhen || kind == TokenKind::KwElse ||
-        kind == TokenKind::KwWhile || kind == TokenKind::KwBreak ||
-        kind == TokenKind::KwContinue || kind == TokenKind::KwReturn ||
-        kind == TokenKind::KwStruct || kind == TokenKind::KwMatch ||
-        kind == TokenKind::KwCase || kind == TokenKind::KwExtern ||
-        kind == TokenKind::KwMut || kind == TokenKind::KwMove ||
-        kind == TokenKind::KwLinear || kind == TokenKind::KwUses ||
-        kind == TokenKind::KwWith || kind == TokenKind::KwImport ||
-        kind == TokenKind::KwExport || kind == TokenKind::KwEnum ||
-        kind == TokenKind::KwTest || kind == TokenKind::KwUnsafe ||
-        kind == TokenKind::KwDistinct || kind == TokenKind::KwWhere ||
-        kind == TokenKind::KwSafe || kind == TokenKind::KwRef ||
-        kind == TokenKind::KwInline || kind == TokenKind::KwDefer ||
-        kind == TokenKind::KwErrDefer || kind == TokenKind::KwFor ||
-        kind == TokenKind::KwIn
+    kind == TokenKind::KwWhen || kind == TokenKind::KwElse ||
+    kind == TokenKind::KwWhile || kind == TokenKind::KwBreak ||
+    kind == TokenKind::KwContinue || kind == TokenKind::KwReturn ||
+    kind == TokenKind::KwStruct || kind == TokenKind::KwMatch ||
+    kind == TokenKind::KwCase || kind == TokenKind::KwExtern ||
+    kind == TokenKind::KwMut || kind == TokenKind::KwMove ||
+    kind == TokenKind::KwLinear || kind == TokenKind::KwUses ||
+    kind == TokenKind::KwWith || kind == TokenKind::KwImport ||
+    kind == TokenKind::KwExport || kind == TokenKind::KwEnum ||
+    kind == TokenKind::KwTest || kind == TokenKind::KwUnsafe ||
+    kind == TokenKind::KwDistinct || kind == TokenKind::KwWhere ||
+    kind == TokenKind::KwSafe || kind == TokenKind::KwRef ||
+    kind == TokenKind::KwInline || kind == TokenKind::KwDefer ||
+    kind == TokenKind::KwErrDefer || kind == TokenKind::KwFor ||
+    kind == TokenKind::KwIn
 }
 
 // ---------------------------------------------------------------------------
@@ -4822,8 +4809,12 @@ say_call_hints :: fn(mut s: Server, from: i64, to: i64) {
                 cast($i64, text[ends]) == CH_LPAREN) {
                 line := place_line(text, starts)
                 if (line >= from && line <= to) {
-                    written = written + say_hints_of_call(s, starts, ends,
-                        written)
+                    written = written + say_hints_of_call(
+                        s,
+                        starts,
+                        ends,
+                        written
+                    )
                 }
                 at = ends
             } else {
@@ -4877,16 +4868,28 @@ say_argument_hints :: fn(mut s: Server, opens: i64, already: i64) -> i64 {
             depth = depth - 1
         }
         if (byte == CH_RPAREN && depth == 0) {
-            written = written + say_one_hint(text, head, from, walk, which,
-                already + written)
+            written = written + say_one_hint(
+                text,
+                head,
+                from,
+                walk,
+                which,
+                already + written
+            )
             return written
         }
         if (byte == CH_RPAREN) {
             depth = depth - 1
         }
         if (byte == CH_COMMA && depth == 0) {
-            written = written + say_one_hint(text, head, from, walk, which,
-                already + written)
+            written = written + say_one_hint(
+                text,
+                head,
+                from,
+                walk,
+                which,
+                already + written
+            )
             which = which + 1
             from = walk + 1
         }
@@ -5220,7 +5223,11 @@ say_hierarchy_item :: fn(text: str, uri: str, at: i64, named: i64) {
 
 // The declaration the caret is on or inside, as the one item a hierarchy
 // starts from.
-answer_prepare_hierarchy :: fn(mut s: Server, mut document: Json, request: i64) {
+answer_prepare_hierarchy :: fn(
+    mut s: Server,
+    mut document: Json,
+    request: i64
+) {
     doc := doc_of_request(s, document, request)
     if (doc < 0) {
         say_null_result(document, request)
@@ -5585,9 +5592,9 @@ field_typed :: fn(text: str, from: i64, to: i64, wanted: str) -> bool {
                 cast($i64, text[at + 1]) != CH_COLON) {
                 mut walk := at + 1
                 while (walk < to && (cast($i64, text[walk]) == CH_SPACE ||
-                    cast($i64, text[walk]) == CH_LBRACKET ||
-                    cast($i64, text[walk]) == CH_RBRACKET ||
-                    cast($i64, text[walk]) == CH_CARET)) {
+                        cast($i64, text[walk]) == CH_LBRACKET ||
+                        cast($i64, text[walk]) == CH_RBRACKET ||
+                        cast($i64, text[walk]) == CH_CARET)) {
                     walk = walk + 1
                 }
                 if (name_written_at(text, walk, wanted) == walk) {
@@ -5644,15 +5651,19 @@ say_field_types :: fn(mut s: Server) {
                 cast($i64, held[at + 1]) != CH_COLON) {
                 mut walk := at + 1
                 while (walk < length && (cast($i64, held[walk]) == CH_SPACE ||
-                    cast($i64, held[walk]) == CH_LBRACKET ||
-                    cast($i64, held[walk]) == CH_RBRACKET ||
-                    cast($i64, held[walk]) == CH_CARET)) {
+                        cast($i64, held[walk]) == CH_LBRACKET ||
+                        cast($i64, held[walk]) == CH_RBRACKET ||
+                        cast($i64, held[walk]) == CH_CARET)) {
                     walk = walk + 1
                 }
                 names := name_end(held, walk)
                 if (names > walk && first_type_at(held, at, walk, names)) {
-                    written = written + say_one_field_type(s, walk, names,
-                        written)
+                    written = written + say_one_field_type(
+                        s,
+                        walk,
+                        names,
+                        written
+                    )
                 }
             }
             at = at + 1
@@ -5670,9 +5681,9 @@ first_type_at :: fn(held: str, upto: i64, walk: i64, names: i64) -> bool {
             mut inner := at + 1
             while (inner < str_len(held) &&
                 (cast($i64, held[inner]) == CH_SPACE ||
-                cast($i64, held[inner]) == CH_LBRACKET ||
-                cast($i64, held[inner]) == CH_RBRACKET ||
-                cast($i64, held[inner]) == CH_CARET)) {
+                    cast($i64, held[inner]) == CH_LBRACKET ||
+                    cast($i64, held[inner]) == CH_RBRACKET ||
+                    cast($i64, held[inner]) == CH_CARET)) {
                 inner = inner + 1
             }
             if (name_written_at(held, inner, wanted) == inner) {

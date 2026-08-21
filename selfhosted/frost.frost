@@ -758,7 +758,6 @@ main :: fn() -> i64 {
     read_and_check(parser, options)
     mut program := parser.program
 
-
     // An editor's question about a checked program, answered instead of a
     // build. The program was parsed and checked exactly as a build would
     // have, so the answer reads the same tables a build reads.
