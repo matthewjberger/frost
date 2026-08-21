@@ -4,6 +4,12 @@ export RUST_BACKTRACE := "1"
 # Where `install` and `install-self` put the two compilers. `~/.cargo/bin` is
 # already on PATH for anyone who can build this repo, so the default needs no
 # setup. FROST_BIN overrides it. Windows sets USERPROFILE and not always HOME.
+#
+# `frostc` is the self-hosted compiler and it is what every recipe below runs: a
+# program is built with it, and so is every tool, since a tool is written in
+# Frost and lives there. `frost` is the bootstrap, a complete Frost compiler
+# whose one job is to build `frostc`, which is what `selfhost-build` asks of it
+# and the only place a recipe names it.
 homedir := env_var_or_default("HOME", env_var_or_default("USERPROFILE", "."))
 bindir := env_var_or_default("FROST_BIN", join(homedir, ".cargo", "bin"))
 
@@ -172,16 +178,16 @@ lint:
 
 # Compiles and runs a frost file
 run file:
-    cargo run -r -q -p frost --bin frost -- --link -o {{file}}.exe {{file}}
+    frostc --link -o {{file}}.exe {{file}}
     ./{{file}}.exe
 
 # Compiles a frost file to a native executable
 compile file:
-    cargo run -r -q -p frost --bin frost -- --link -o {{file}}.exe {{file}}
+    frostc --link -o {{file}}.exe {{file}}
 
 # Compiles a frost file through the C backend instead of the native one
 compile-c file:
-    cargo run -r -q -p frost --bin frost -- --emit-c --link -o {{file}}.exe {{file}}
+    frostc --emit-c --link -o {{file}}.exe {{file}}
 
 # Lists the example programs
 [unix]
@@ -202,7 +208,7 @@ examples-run:
     set -euo pipefail
     for f in examples/native/*.frost; do
         echo "== $f"
-        cargo run -r -q -p frost --bin frost -- --link -o "$f.exe" "$f"
+        frostc --link -o "$f.exe" "$f"
         "./$f.exe"
         rm -f "$f.exe"
     done
@@ -210,31 +216,31 @@ examples-run:
 # Builds and runs every example, checking they all still work
 [windows]
 examples-run:
-    Get-ChildItem examples/native/*.frost | ForEach-Object { Write-Host "== $_"; cargo run -r -q -p frost --bin frost -- --link -o "$_.exe" "$_"; & "$($_.FullName).exe"; Remove-Item "$($_.FullName).exe" -Force }
+    Get-ChildItem examples/native/*.frost | ForEach-Object { Write-Host "== $_"; frostc --link -o "$_.exe" "$_"; & "$($_.FullName).exe"; Remove-Item "$($_.FullName).exe" -Force }
 
 # Builds and runs a graphics example: `just app spinning`. One of window, input,
 # triangle, scene, spinning, textured, shadowed, gltf_model. SDL3_DIR overrides
 # where SDL3.dll is found (Windows)
 [windows]
 app name:
-    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/graphics/{{name}}.exe examples/graphics/{{name}}.frost; Copy-Item "$sdl/SDL3.dll",lib/renderer/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/{{name}}.exe
+    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; frostc --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/graphics/{{name}}.exe examples/graphics/{{name}}.frost; Copy-Item "$sdl/SDL3.dll",lib/renderer/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/{{name}}.exe
 
 # Builds and runs a graphics example: `just app spinning` (Unix)
 [unix]
 app name:
-    cargo run -r -q -p frost --bin frost -- --link {{unix_sdl}} {{unix_wgpu}} -o examples/graphics/{{name}} examples/graphics/{{name}}.frost
+    frostc --link {{unix_sdl}} {{unix_wgpu}} -o examples/graphics/{{name}} examples/graphics/{{name}}.frost
     ./examples/graphics/{{name}}
 
 # Builds and runs the engine-app starting point: `just template`. Copy
 # examples/template.frost, rename it, and grow it.
 [windows]
 template:
-    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/template.exe examples/template.frost; Copy-Item "$sdl/SDL3.dll",lib/renderer/wgpu/wgpu_native.dll examples -Force; & ./examples/template.exe
+    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; frostc --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/template.exe examples/template.frost; Copy-Item "$sdl/SDL3.dll",lib/renderer/wgpu/wgpu_native.dll examples -Force; & ./examples/template.exe
 
 # Builds and runs the engine-app starting point: `just template` (Unix)
 [unix]
 template:
-    cargo run -r -q -p frost --bin frost -- --link {{unix_sdl}} {{unix_wgpu}} -o examples/template examples/template.frost
+    frostc --link {{unix_sdl}} {{unix_wgpu}} -o examples/template examples/template.frost
     ./examples/template
 
 # Fetches the libraries the graphics examples link against, and the schema the
@@ -703,7 +709,7 @@ audit:
     set -uo pipefail
     found=0
     while IFS= read -r f; do
-        out=$(cargo run -r -q -p frost --bin frost -- -L std --emit-c \
+        out=$(frostc -L std --emit-c \
             -o /dev/null "$f" 2>&1 || true)
         held=$(printf '%s\n' "$out" \
             | grep -cE "vouches for nothing|is inside another one" || true)
@@ -722,7 +728,7 @@ audit:
     $found = 0
     $files = Get-ChildItem std, examples, selfhosted -Filter *.frost -Recurse | Sort-Object FullName
     foreach ($f in $files) {
-        $out = cargo run -r -q -p frost --bin frost -- -L std --emit-c -o audit.tmp $f.FullName 2>&1 | Out-String
+        $out = frostc -L std --emit-c -o audit.tmp $f.FullName 2>&1 | Out-String
         $held = ([regex]::Matches($out, 'vouches for nothing|is inside another one')).Count
         if ($held -gt 0) { Write-Host "unsafe audit: $($f.Name) has $held"; $found = $found + $held }
     }

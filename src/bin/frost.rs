@@ -1164,20 +1164,17 @@ fn run_generators(arguments: &[String]) -> Result<bool> {
         // what makes those two agree, so `--check` compares what a build leaves
         // on disk rather than the form on the way there.
         if written.extension().is_some_and(|held| held == "frost") {
-            let rendered = Command::new(&compiler)
-                .arg("fmt")
-                .arg(&written)
-                .status()
-                .with_context(|| format!("formatting {}", written.display()))?;
-            if !rendered.success() {
-                if checking {
-                    fs::remove_file(&written).ok();
-                }
-                eprintln!(
-                    "frost generate: the formatter refused {}",
-                    step.output
-                );
-                return Ok(false);
+            // Rendered here rather than by running `frost fmt` over it. A
+            // formatter run announces every file it rewrote, and the file here
+            // is a temporary one nobody asked about, so `generate` wrote a line
+            // naming a path that is gone by the time it is read.
+            let source = fs::read_to_string(&written)
+                .with_context(|| format!("reading {}", written.display()))?;
+            let rendered = frost::format_source(&source);
+            if rendered != source {
+                fs::write(&written, &rendered).with_context(|| {
+                    format!("writing {}", written.display())
+                })?;
             }
         }
         if !checking {
