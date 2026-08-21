@@ -2848,6 +2848,16 @@ fn type_predicate(
         "is_struct" => matches!(ty, Type::Struct(_) | Type::Enum(_)),
         "is_array" => matches!(ty, Type::Array(..) | Type::ArrayGeneric(..)),
         "is_slice" => matches!(ty, Type::Slice(_) | Type::Str),
+        // Text, which is a run of bytes and answers `is_slice` as well. A body
+        // that means text had to say slice and hope: a `[]i64` reaches the same
+        // arm, and only `print` held a second check to catch it.
+        "is_str" => matches!(ty, Type::Str),
+        // A yes or no. Left out, std/io.frost routed one by putting it after
+        // every other arm and letting it reach a truthiness test, which worked
+        // because `bool` answers false to all eight. That is an accident of
+        // which questions the vocabulary holds rather than something the code
+        // says, and a ninth would have broken it with no diagnostic.
+        "is_bool" => matches!(ty, Type::Bool),
         "is_pointer" => {
             matches!(ty, Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_))
         }
@@ -2863,7 +2873,7 @@ fn type_predicate(
     Some(answer)
 }
 
-pub const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer, is_linear";
+pub const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_str, is_bool, is_struct, is_array, is_slice, is_pointer, is_linear";
 
 // What a formatted value may be: a number, a yes or no, or text. Read through
 // any name a type carries, the same way the bounds vocabulary reads one.

@@ -338,7 +338,8 @@ bound_term :: fn(
         "'{}' is not one of the bounds a type can be held to, ",
         source_text(p.src, pred_off, pred_len)
     )
-    report("which are: is_numeric, is_integer, is_float, is_struct, ")
+    report("which are: is_numeric, is_integer, is_float, is_str, is_bool, ")
+    report("is_struct, ")
     report("is_array, is_slice, is_pointer, is_linear")
     report(", and no function of this program answers it")
     frost_rt_recover_escape()

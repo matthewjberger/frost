@@ -592,6 +592,8 @@ The vocabulary is fixed and closed:
 | `is_struct(T)` | a struct or an enum |
 | `is_array(T)` | a fixed array `[N]T` |
 | `is_slice(T)` | a slice `[]T`, which includes `str` |
+| `is_str(T)` | `str`, which is a run of bytes and answers `is_slice` too |
+| `is_bool(T)` | `bool` |
 | `is_pointer(T)` | a raw pointer or a borrow |
 | `is_linear(T)` | a resource: a type that must be consumed exactly once |
 

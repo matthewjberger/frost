@@ -201,6 +201,17 @@ run_from :: fn($out: fn(str), mut line: Line, fmt: str, at: i64) -> i64 {
 //
 // The order the arms are asked in is what routes a `bool`, which answers no to
 // every predicate and lands in the last two arms.
+// A yes or no, written as the number it is. Routed by name rather than by
+// standing after every other arm and reaching a truthiness test, which worked
+// only because `bool` answered false to every question the vocabulary held.
+put_bool :: fn($out: fn(str), mut line: Line, value: bool) {
+    if (value) {
+        put_int($out, line, 1)
+    } else {
+        put_int($out, line, 0)
+    }
+}
+
 write :: fn($out: fn(str), format fmt: str, args: $...) {
     mut line := Line { bytes = [0; LINE], used = 0 }
     mut at: i64 = 0
@@ -208,14 +219,12 @@ write :: fn($out: fn(str), format fmt: str, args: $...) {
         at = run_from($out, line, fmt, at)
         $if (is_float(value)) {
             put_f64($out, line, cast($f64, value))
-        } else $if (is_slice(value)) {
+        } else $if (is_str(value)) {
             put_bytes($out, line, value)
+        } else $if (is_bool(value)) {
+            put_bool($out, line, value)
         } else $if (is_numeric(value)) {
             put_int($out, line, cast($i64, value))
-        } else if (value) {
-            put_int($out, line, 1)
-        } else {
-            put_int($out, line, 0)
         }
     }
     at = run_from($out, line, fmt, at)

@@ -1400,7 +1400,8 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
         "twice :: fn($T: Type, v: $T) -> T where is_sortable(T) { v }\n\
          main :: fn() -> i64 { twice(1) }\n",
         "'is_sortable' is not one of the bounds a type can be held to, which \
-         are: is_numeric, is_integer, is_float, is_struct, is_array, is_slice, \
+         are: is_numeric, is_integer, is_float, is_str, is_bool, is_struct, \
+         is_array, is_slice, \
          is_pointer, is_linear",
     ),
     // One permission word at both layers, so the older spelling gets a sentence
