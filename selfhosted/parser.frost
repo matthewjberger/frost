@@ -4078,7 +4078,7 @@ names_a_constant :: fn(mut p: Parser, args: i64) -> bool {
         if (held < 0) {
             return false
         }
-        if (held >= FN_BASE) {
+        if (is_fn_arg(held)) {
             return true
         }
         index = index + 1
@@ -4089,7 +4089,7 @@ names_a_constant :: fn(mut p: Parser, args: i64) -> bool {
 // The type a bundle constant was declared with, read off the literal its name
 // stands for. -1 for an argument that names no constant.
 argument_bundle_type :: fn(mut p: Parser, value: i64) -> i64 {
-    if (value < FN_BASE) {
+    if (is_fn_arg(value) == false) {
         return -1
     }
     entry := arena_at(p.fns, value - FN_BASE)
@@ -7855,7 +7855,7 @@ unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
                 element.const_off,
                 element.const_len
             )
-        } else if (element_is_type == 1 && element_ty >= FN_BASE) {
+        } else if (element_is_type == 1 && is_fn_arg(element_ty)) {
             // A function element is written into the body under its own name,
             // the way a record constant is. The loop's name then stands for the
             // function rather than for a type, so a call on it is a call to
@@ -11939,7 +11939,7 @@ instance_fits_kind :: fn(
     if (xarg_count < gfn.xparam_count) {
         return false
     }
-    if ((arg >= FN_BASE) != (gfn.tparam_is_fn == 1)) {
+    if (is_fn_arg(arg) != (gfn.tparam_is_fn == 1)) {
         return false
     }
     if (is_number(arg) != (gfn.tparam_is_value == 1)) {
@@ -11949,7 +11949,7 @@ instance_fits_kind :: fn(
     while (i < gfn.xparam_count) {
         param := arena_at(p.gparams, gfn.xparam_start + i)
         garg := arena_at(p.gargs, xarg_start + i)
-        if ((garg.value >= FN_BASE) != (param.is_fn == 1)) {
+        if (is_fn_arg(garg.value) != (param.is_fn == 1)) {
             return false
         }
         if (is_number(garg.value) != (param.is_value == 1)) {

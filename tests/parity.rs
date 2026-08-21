@@ -6428,6 +6428,49 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "9 2
 ",
     ),
+    // A generic instantiated over a `distinct` type.
+    //
+    // The compile-time argument codes ride in the same space as the type codes,
+    // and `DISTINCT_BASE` sits above `FN_BASE`, so `code >= FN_BASE` was true of
+    // every distinct type. `Meters`, the first one a program declares, indexed
+    // the function table at `DISTINCT_BASE - FN_BASE` and the build aborted with
+    // an arena out of range.
+    (
+        "a_generic_is_instantiated_over_a_distinct_type",
+        "import \"io.frost\"
+         Meters :: distinct i64
+         twice :: fn($T: Type, v: T) -> T { v }
+         main :: fn() -> i64 {
+             m: Meters = 5
+             n := twice(m)
+             raw: i64 = n
+             print(\"{}\n\", raw)
+             0
+         }
+        ",
+        "5
+",
+    ),
+    // A binding whose value is an operator over two vectors.
+    //
+    // A binding with no annotation read its type off the walks table, which is
+    // empty while the declaration is still being read, so `c := a + b` came out
+    // an `i64`. `c[0]` then named an `i64` and the call it was handed to was
+    // written under the name of an instance nobody had made.
+    (
+        "a_binding_from_an_operator_over_vectors_keeps_the_lanes",
+        "import \"io.frost\"
+         main :: fn() -> i64 {
+             a: [4]f32 = [1.0, 2.0, 3.0, 4.0]
+             b: [4]f32 = [1.0, 1.0, 1.0, 1.0]
+             c := a + b
+             print(\"{} {}\n\", c[0], c[3])
+             0
+         }
+        ",
+        "2 5
+",
+    ),
     // `errdefer` before a `return` that hands back the failure.
     //
     // The self-hosted compiler passed a written-out `return` as an ordinary

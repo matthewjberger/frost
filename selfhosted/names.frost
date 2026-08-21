@@ -25,7 +25,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     name_visible,
     is_borrow, is_pointer, is_proc, vector_of, is_raw_pointer, is_slab_ty, is_slice_ty,
-    is_indirect, pointer_to, borrow_of,
+    is_indirect, pointer_to, borrow_of, is_fn_arg, is_const_arg,
     is_integer, integer_bits, one_bit, bit_ordinal, report_ordinal,
     is_columns_ty,
     is_columns_zeroed_call, field_type_by_range,
@@ -1438,7 +1438,7 @@ write_instance_name :: fn(mut p: Parser, struct_ty: i64) {
 // what tells `Slab<Node, 2>` from `Slab<Node, Two>` and
 // `Map<Mask, i64, mask_keys>` from the same table hashed another way.
 write_argument_name :: fn(mut p: Parser, value: i64) {
-    if (value >= FN_BASE) {
+    if (is_fn_arg(value)) {
         entry := arena_at(p.fns, value - FN_BASE)
         synth_range(p, entry.off, entry.len)
         return
@@ -1787,6 +1787,19 @@ is_raw_pointer :: fn(ty: i64) -> bool {
 
 // Whether the code names an indirection over a distinct type, which is the one
 // shape that is looked up rather than added. See `Indirect` in core.frost.
+// Whether a code names a function chosen at a call, or a compile-time number.
+// Both ride in the same space as a type code and both are bounded above, since
+// `DISTINCT_BASE` sits above them: read as `>= FN_BASE` alone, every distinct
+// type answered yes and `Meters`, the first one declared, indexed the function
+// table at `DISTINCT_BASE - FN_BASE`.
+is_fn_arg :: fn(ty: i64) -> bool {
+    ty >= FN_BASE && ty < DISTINCT_BASE
+}
+
+is_const_arg :: fn(ty: i64) -> bool {
+    ty >= CONST_BASE && ty < PROC_BASE
+}
+
 is_indirect :: fn(ty: i64) -> bool {
     ty >= INDIRECT_BASE && ty < POINTER_BASE
 }
@@ -2426,7 +2439,7 @@ binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 fn_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     if (p.binding_active == 1 && p.type_param_len == length
         && bytes_equal(p.src, p.type_param_off, offset, length)
-        && p.type_binding >= FN_BASE) {
+        && is_fn_arg(p.type_binding)) {
         return p.type_binding - FN_BASE
     }
     mut b: i64 = p.gbindings.count
@@ -2435,7 +2448,7 @@ fn_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         binding := arena_at(p.gbindings, b)
         if (binding.name_len == length
             && bytes_equal(p.src, binding.name_off, offset, length)
-            && binding.bound >= FN_BASE) {
+            && is_fn_arg(binding.bound)) {
             return binding.bound - FN_BASE
         }
     }

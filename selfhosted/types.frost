@@ -312,6 +312,17 @@ binding_type :: fn(mut p: Parser, value: i64) -> i64 {
             return held
         }
     }
+    // An operator over two names is read the same way and off the same table.
+    // `c := a + b` over two vectors was read as an `i64`, so `c[0]` named an
+    // `i64` and the call it was handed to took the name of an instance nobody
+    // made: `mf_1_print_i64_f32_f32` against a program holding
+    // `mf_1_print_i64_i64_i64`.
+    if (bound_kind == NodeKind::Bin) {
+        held := pack_local_type(p, value)
+        if (held >= 0) {
+            return held
+        }
+    }
     ty := type_of(p, value)
     node := arena_at(p.arena, value)
     // A string literal is a pointer where a `^i8` is asked for and a `str`

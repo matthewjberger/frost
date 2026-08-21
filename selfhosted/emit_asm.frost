@@ -3691,10 +3691,10 @@ emit_asm_fn_symbol :: fn(mut p: Parser, fn_index: i64) {
 // argument `_c<number>`, a function argument `_f<index>`.
 emit_asm_mangled_arg :: fn(mut p: Parser, arg: i64) {
     emit_text("_")
-    if (arg >= FN_BASE) {
+    if (is_fn_arg(arg)) {
         emit_text("f")
         frost_rt_emit_int(arg - FN_BASE)
-    } else if (arg >= CONST_BASE) {
+    } else if (is_const_arg(arg)) {
         emit_text("c")
         frost_rt_emit_int(arg - CONST_BASE)
     } else {

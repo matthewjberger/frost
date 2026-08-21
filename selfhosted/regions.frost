@@ -2121,7 +2121,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         check_capability_as_value(p, node.val, node.c, node.pos)
         return
     }
-    if (kind == NodeKind::TypeVal && node.val >= FN_BASE) {
+    if (kind == NodeKind::TypeVal && is_fn_arg(node.val)) {
         check_capability_as_argument(p, node.val - FN_BASE, node.pos)
         return
     }
@@ -2544,7 +2544,7 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64, at: i64) {
         value := node.a
         next_id := node.next
         vnode := arena_at(p.arena, value)
-        if (vnode.kind == NodeKind::TypeVal && vnode.val >= FN_BASE) {
+        if (vnode.kind == NodeKind::TypeVal && is_fn_arg(vnode.val)) {
             check_capability_as_argument(p, vnode.val - FN_BASE, vnode.pos)
         }
         if (vnode.kind != NodeKind::TypeVal) {
