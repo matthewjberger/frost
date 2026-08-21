@@ -9,6 +9,7 @@ const CONTEXTUAL: &[&str] = &[
     "align",
     "export",
     "false",
+    "fields",
     "flags",
     "include_str",
     "packed",
