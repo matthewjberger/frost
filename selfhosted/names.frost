@@ -19,7 +19,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     is_distinct, distinct_repr, distinct_id, distinct_type,
     is_flags_type, flag_bit_value, flag_bit_holding, record_flag_bit,
     type_value_index, names_values, record_type_value,
-    report_type_name, report_distinct_note, written_number,
+    report_type_name, report_distinct_note, written_number, emit_type_word,
     fn_names_matching,
     report_declared_elsewhere, check_unimported_names,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
@@ -1544,6 +1544,77 @@ synth_range :: fn(mut p: Parser, off: i64, len: i64) {
         k = k + 1
     }
     p.synth_next = p.synth_next + len
+}
+
+// A type spelled into a symbol name, in the characters a linker takes.
+//
+// The codes compose by arithmetic, so a slice came out `t500000` and a pointer
+// to a distinct type once came out `t1000500000`: unreadable in a crash dump, in
+// a profile, and in the linker's own complaint, and ungreppable back to what a
+// reader wrote. The words are what the bootstrap already writes into its own
+// symbols, so the two say the same thing about the same type.
+emit_type_word :: fn(mut p: Parser, ty: i64) {
+    held := distinct_repr(ty)
+    if (held == TY_I64) { emit_text("i64") return }
+    if (held == TY_I32) { emit_text("i32") return }
+    if (held == TY_I16) { emit_text("i16") return }
+    if (held == TY_I8) { emit_text("i8") return }
+    if (held == TY_ISIZE) { emit_text("isize") return }
+    if (held == TY_U64) { emit_text("u64") return }
+    if (held == TY_U32) { emit_text("u32") return }
+    if (held == TY_U16) { emit_text("u16") return }
+    if (held == TY_U8) { emit_text("u8") return }
+    if (held == TY_USIZE) { emit_text("usize") return }
+    if (held == TY_F64) { emit_text("f64") return }
+    if (held == TY_F32) { emit_text("f32") return }
+    if (held == TY_BOOL) { emit_text("bool") return }
+    if (held == TY_VOID) { emit_text("void") return }
+    if (held == TY_HANDLE) { emit_text("Handle") return }
+    if (held == TY_PARAM) { emit_text("T") return }
+    if (is_borrow(held)) {
+        emit_text("r_")
+        emit_type_word(p, pointee(p, held))
+        return
+    }
+    if (is_pointer(held)) {
+        emit_text("p_")
+        emit_type_word(p, pointee(p, held))
+        return
+    }
+    if (is_array_ty(held) && array_element(p, held) == TY_U8
+        && array_length(p, held) < 0) {
+        emit_text("str")
+        return
+    }
+    if (is_array_ty(held)) {
+        length := array_length(p, held)
+        if (length >= 0) {
+            emit_text("a")
+            frost_rt_emit_int(length)
+            emit_text("_")
+        } else {
+            emit_text("s_")
+        }
+        emit_type_word(p, array_element(p, held))
+        return
+    }
+    if (is_proc(held)) {
+        emit_text("proc")
+        return
+    }
+    if (is_struct_ty(held)) {
+        def := arena_at(p.structs, struct_index_of(held))
+        mut k: i64 = 0
+        while (k < def.name_len) {
+            frost_rt_emit_char(p.src[def.name_off + k])
+            k = k + 1
+        }
+        return
+    }
+    // Nothing above recognised it. The number is what there is to say, and a
+    // name that says nothing is better than one that says the wrong thing.
+    emit_text("t")
+    frost_rt_emit_int(held)
 }
 
 write_type_name :: fn(mut p: Parser, ty: i64) {

@@ -2394,15 +2394,15 @@ emit_value_param_bindings :: fn(mut p: Parser, params: i64) {
 // a value argument `_c<number>`, and a function argument `_f<index>`. Both a
 // call and its definition mangle through here, so the two always agree.
 emit_mangled_arg :: fn(mut p: Parser, arg: i64) {
+    emit_text("_")
     if (arg >= FN_BASE) {
-        emit_text("_f")
+        emit_text("f")
         frost_rt_emit_int(arg - FN_BASE)
     } else if (arg >= CONST_BASE) {
-        emit_text("_c")
+        emit_text("c")
         frost_rt_emit_int(arg - CONST_BASE)
     } else {
-        emit_text("_t")
-        frost_rt_emit_int(arg)
+        emit_type_word(p, arg)
     }
 }
 
