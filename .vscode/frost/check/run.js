@@ -23,11 +23,28 @@ if (process.argv[2]) {
   process.env.FROST_COMPILER = process.argv[2];
 }
 
-// `require("vscode")` inside the extension resolves to the stub beside this.
+// Every server the extension starts, kept so the gate can weigh whether it
+// ends. A server that outlives the editor holds the compiler binary open, and
+// the next build cannot write over it.
+const child_process = require("child_process");
+const started = [];
+const spawned = Object.assign({}, child_process, {
+  spawn(...held) {
+    const child = child_process.spawn(...held);
+    started.push(child);
+    return child;
+  },
+});
+
+// `require("vscode")` inside the extension resolves to the stub beside this,
+// and `require("child_process")` to the wrapper above it.
 const load = Module._load;
 Module._load = function (request, parent, isMain) {
   if (request === "vscode") {
     return require(path.join(here, "vscode.js"));
+  }
+  if (request === "child_process") {
+    return spawned;
   }
   return load(request, parent, isMain);
 };
@@ -462,9 +479,31 @@ async function main() {
   );
 
   extension.deactivate();
-  // The server is stopped, not gone; it was started with this directory as its
-  // own, so the system keeps it until the process has.
-  await new Promise((settle) => setTimeout(settle, 500));
+  // What deactivate leaves behind. The workspace cannot be removed while a
+  // process holds it as its own directory, and a server still running holds
+  // the compiler binary too, so every one it started must have ended.
+  const ended = await Promise.all(
+    started.map(
+      (child) =>
+        new Promise((settle) => {
+          if (child.exitCode !== null || child.signalCode !== null) {
+            settle(true);
+            return;
+          }
+          const waited = setTimeout(() => settle(false), 4000);
+          child.on("close", () => {
+            clearTimeout(waited);
+            settle(true);
+          });
+        })
+    )
+  );
+  want(
+    "servers end",
+    ended,
+    (held) => held.length > 0 && held.every((one) => one),
+    (held) => `${held.filter((one) => one).length} of ${held.length} ended`
+  );
   try {
     fs.rmSync(workspace, { recursive: true, force: true });
   } catch (problem) {

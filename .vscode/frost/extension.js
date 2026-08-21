@@ -107,14 +107,32 @@ class Server {
     );
   }
 
+  // Ends the conversation and makes sure the process is gone.
+  //
+  // A server is asked to leave the way the protocol says: `shutdown` first,
+  // then `exit`. One that does not act on either would outlive the editor and
+  // hold the compiler binary open, so the handle is kept until the process
+  // closes and the child is killed if it stays.
   stop() {
     if (!this.child) {
       return;
     }
+    const child = this.child;
+    this.send({
+      jsonrpc: "2.0",
+      id: this.next++,
+      method: "shutdown",
+      params: {},
+    });
     this.send({ jsonrpc: "2.0", method: "exit", params: {} });
-    this.child.stdin.end();
     this.child = null;
     this.open.clear();
+    child.stdin.end();
+    const waited = setTimeout(() => child.kill(), 2000);
+    if (waited.unref) {
+      waited.unref();
+    }
+    child.on("close", () => clearTimeout(waited));
   }
 
   send(message) {
