@@ -211,6 +211,7 @@ Slab :: struct($T: Type, $N: usize) {
 | --- | --- |
 | `slab_reset(mut s)` | Every slot free, every generation back to zero |
 | `slab_full(s) -> bool` | Whether there is any room left |
+| `slab_len(s) -> i64` | How many slots hold an element |
 | `slab_insert(mut s, move value) -> Handle<T>` | Takes a free slot. The caller checks `slab_full` first |
 | `slab_alive(s, handle) -> bool` | Whether the handle names a live slot |
 | `slab_slot(s, handle) -> i64` | The slot a handle names, or -1 where it is stale |
@@ -266,6 +267,7 @@ handle scheme is the slab's, unchanged.
 | --- | --- |
 | `columns_reset(mut c)` | Every slot free, every generation back to zero |
 | `columns_full(c) -> bool` | Whether there is any room left |
+| `columns_len(c) -> i64` | How many slots hold an element |
 | `columns_insert(mut c, move value) -> Handle<T>` | Scatters the element into the columns |
 | `columns_alive(c, handle) -> bool` | Whether the handle names a live slot |
 | `columns_release(mut c, handle) -> bool` | Frees the slot, bumping its generation |

@@ -98,7 +98,8 @@ store at the validated slot) are the compiler-supplied pieces, for the same
 reason `pool[handle]` is. They select a column before indexing, which a function
 returning a second-class borrow cannot express. Everything else is an ordinary
 Frost library. `std/columns.frost` provides `columns_reset`, `columns_full`,
-`columns_insert`, `columns_alive`, and `columns_release`, field for field the
+`columns_len`, `columns_insert`, `columns_alive`, and `columns_release`, field
+for field the
 same as `std/slab.frost`, so moving a system from arrays-of-structs to
 structure-of-arrays is changing `Slab<T, N>` to `columns<T, N>` and the `slab_`
 prefix to `columns_`, and nothing else in the calling code.

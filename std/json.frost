@@ -83,7 +83,7 @@ json_real :: fn(mut document: Json, node: i64) -> f64 {
     if (held.kind != JsonKind::Number) {
         return 0.0
     }
-    str_to_f64(str_slice(document.source, held.text_off, held.text_len))
+    str_to_f64(str_range(document.source, held.text_off, held.text_len))
 }
 
 // The next child of whatever holds this one, or -1 at the end. Walking a

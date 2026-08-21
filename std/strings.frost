@@ -14,7 +14,7 @@ import "mem.frost"
 export str_eq, str_starts_with, str_ends_with, str_index_of, str_contains,
     str_count, str_is_empty, str_to_i64, str_to_f64,
     str_byte_is_digit, str_byte_is_space,
-    str_slice, str_span
+    str_range, str_span
 
 str_is_empty :: fn(s: str) -> bool { str_len(s) == 0 }
 
@@ -22,7 +22,10 @@ str_is_empty :: fn(s: str) -> bool { str_len(s) == 0 }
 // bounds-checked because reaching it is an index, and `count` is the caller's
 // word. This is what a program reaches for instead of carrying an offset and a
 // length beside every string it means to look at part of.
-str_slice :: fn(s: str, from: i64, count: i64) -> str {
+// The strict form: a range past the end aborts. Named for what it does rather
+// than for the type it does it to, so the same operation over a slice and over
+// text is one word: `slice_range` and `str_range`, `slice_span` and `str_span`.
+str_range :: fn(s: str, from: i64, count: i64) -> str {
     slice_range(s, from, count)
 }
 
@@ -313,10 +316,10 @@ test "reading an integer" {
 
 test "a slice views part of a string" {
     s := "hello world"
-    assert(str_eq(str_slice(s, 0, 5), "hello"))
-    assert(str_eq(str_slice(s, 6, 5), "world"))
-    assert(str_eq(str_slice(s, 4, 3), "o w"))
-    assert(str_len(str_slice(s, 3, 0)) == 0)
+    assert(str_eq(str_range(s, 0, 5), "hello"))
+    assert(str_eq(str_range(s, 6, 5), "world"))
+    assert(str_eq(str_range(s, 4, 3), "o w"))
+    assert(str_len(str_range(s, 3, 0)) == 0)
 }
 
 test "a span stops at the end" {
@@ -330,7 +333,7 @@ test "a span stops at the end" {
 
 test "a view is the bytes it views" {
     s := "banana"
-    inner := str_slice(s, 1, 3)
+    inner := str_range(s, 1, 3)
     assert(str_eq(inner, "ana"))
     assert(str_index_of(inner, "n") == 1)
     assert(str_contains(inner, "na"))

@@ -19,7 +19,7 @@ export heap_array, heap_slice, heap_grow, heap_grow_slice, heap_release,
     heap_release_slice, heap_bytes, heap_terminated, heap_grow_bytes, heap_zero,
     heap_copy,
     bytes_at, bytes_as, as_bytes, slice_prefix, slice_range, slice_span,
-    slice_chunk, heap_live
+    slice_chunk, slice_empty, heap_live
 
 // How many blocks are out. A container that frees what it took leaves this
 // where it found it, so a test can say a leak happened rather than waiting for

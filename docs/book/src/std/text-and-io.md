@@ -136,7 +136,7 @@ with no allocation anywhere.
 | `str_to_f64(s) -> f64` | A decimal number, fraction and `e` exponent included |
 | `str_byte_is_digit(byte) -> bool` | Whether the byte is `0` through `9` |
 | `str_byte_is_space(byte) -> bool` | Space, tab, newline or carriage return |
-| `str_slice(s, from, count) -> str` | A view of `count` bytes from `from` |
+| `str_range(s, from, count) -> str` | A view of `count` bytes from `from`, which aborts past the end |
 | `str_span(s, from, count) -> str` | The same, stopping at the end |
 
 Every call here answers a question about text you already have. Building a new

@@ -17,8 +17,8 @@
 
 import "slab.frost"
 
-export columns, columns_reset, columns_full, columns_insert, columns_alive,
-    columns_release
+export columns, columns_reset, columns_full, columns_len, columns_insert,
+    columns_alive, columns_release
 
 // One array per field of the element, named after that field, and the
 // generational bookkeeping beside them. `live_words` says which slots hold an
@@ -61,6 +61,13 @@ columns_reset :: fn($T: Type, $N: usize, mut c: columns<T, N>) {
 
 columns_full :: fn($T: Type, $N: usize, c: columns<T, N>) -> bool {
     c.free_count == 0
+}
+
+// How many slots hold an element. Every other container hands its count out
+// through a name; this one made the caller reach into the field, which is a
+// different shape for the same question.
+columns_len :: fn($T: Type, $N: usize, c: columns<T, N>) -> i64 {
+    c.live_count
 }
 
 // The caller checks `columns_full` first. The element is scattered into the

@@ -260,7 +260,7 @@ gltf_read :: fn(path: str) -> Gltf {
         return empty_gltf(false)
     }
 
-    mut document := json_parse(str_slice(bytes, json_at, json_length))
+    mut document := json_parse(str_range(bytes, json_at, json_length))
     root := json_root(document)
     if (root < 0) {
         print("gltf: the JSON chunk does not parse\n")

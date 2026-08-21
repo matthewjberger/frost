@@ -13,8 +13,9 @@
 // the generation are packed together. The two convert freely because a handle is
 // an i64 at the ABI.
 
-export Slab, slab_reset, slab_full, slab_insert, slab_alive, slab_slot,
-    slab_release, GENERATION_LIMIT, CONTAINER_SHIFT, frost_rt_container_id
+export Slab, slab_reset, slab_full, slab_len, slab_insert, slab_alive,
+    slab_slot, slab_release, GENERATION_LIMIT, CONTAINER_SHIFT,
+    frost_rt_container_id
 
 frost_rt_container_id :: safe extern fn() -> i64
 
@@ -84,6 +85,13 @@ slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
 
 slab_full :: fn($T: Type, $N: usize, s: Slab<T, N>) -> bool {
     s.free_count == 0
+}
+
+// How many slots hold an element. Every other container hands its count out
+// through a name; this one made the caller reach into the field, which is a
+// different shape for the same question.
+slab_len :: fn($T: Type, $N: usize, s: Slab<T, N>) -> i64 {
+    s.live_count
 }
 
 // The caller checks `slab_full` first. There is no in-band "no handle" value,

@@ -890,7 +890,7 @@ main :: fn() -> i64 {
     print("{}\n", str_len(name)) // 11
     print("{}\n", str_ends_with(name, ".frost")) // 1
     print("{}\n", str_index_of(name, ".")) // 5
-    print("{}\n", str_slice(name, 0, 5)) // frost
+    print("{}\n", str_range(name, 0, 5)) // frost
     print("{}\n", str_to_i64("42")) // 42
     0
 }
