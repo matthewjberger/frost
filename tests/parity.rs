@@ -137,6 +137,20 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 { hold($f64, 2) }\n",
         "Write `if` for a branch the program takes, and `$if` for one the compiler answers",
     ),
+    // A line opened with a minus after another statement. Two readings are
+    // open and they are different programs, and the message shows both. The
+    // bootstrap put the report on the line after the one that opens with the
+    // minus: `record_error` reads the place off the cursor for a fault that
+    // carries none, and the cursor is past the statement by then.
+    (
+        "a_line_opened_with_a_minus",
+        "main :: fn() -> i64 {\n\
+         \x20   total := 1 + 2\n\
+         \x20   - 3\n\
+         \x20   total\n\
+         }\n",
+        "this line standing on its own as a negative value, and this line joined to the one above as a subtraction",
+    ),
     // A write to what a `for` names. The element is a copy, so the write went
     // in, came out again, and the container was what it had been.
     (

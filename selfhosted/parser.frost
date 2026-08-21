@@ -6986,10 +6986,13 @@ already_said :: fn(mut p: Parser, at: i64) -> bool {
 refuse_minus_continuation :: fn(mut p: Parser, at: i64) {
     report_where(p.modules, p.src, at)
     report("this line opens with '-', so it negates what follows rather than")
-    report(" continuing the line above, and nothing reads what it works out. A")
-    report(" statement ends at the end of a line: write the whole expression on")
-    report(" one line, or leave the '-' at the end of the line above where it")
-    report(" says a subtraction is meant")
+    report(" continuing the line above, and nothing reads what it works out.")
+    report(" Two readings are open here and they are different programs: this")
+    report(" line standing on its own as a negative value, and this line joined")
+    report(" to the one above as a subtraction. A statement ends at the end of")
+    report(" a line, so the first is what is written. Write the whole")
+    report(" expression on one line, or leave the '-' at the end of the line")
+    report(" above where it says a subtraction is meant")
     frost_rt_recover_escape()
 }
 

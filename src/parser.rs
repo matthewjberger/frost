@@ -5690,16 +5690,29 @@ impl<'a> Parser<'a> {
                 && self.peek_nth(0) != &Token::RightBrace
                 && self.peek_nth(0) != &Token::EndOfFile
             {
+                // Carried as a located fault rather than a bare one, since
+                // `record_error` reads the place off the cursor for anything
+                // that has none and the cursor is past this statement by now:
+                // the report landed on the line after the one that opens with
+                // the minus.
                 self.record_error(
                     position,
-                    &anyhow::anyhow!(
+                    &anyhow::Error::new(crate::diagnostic::LocatedError {
+                        position,
+                        message:
+                        format!(
                         "this line opens with '-', so it negates what \
                          follows rather than continuing the line above, and \
-                         nothing reads what it works out. A statement ends at \
-                         the end of a line: write the whole expression on one \
+                         nothing reads what it works out. Two readings are \
+                         open here and they are different programs: this line \
+                         standing on its own as a negative value, and this \
+                         line joined to the one above as a subtraction. A \
+                         statement ends at the end of a line, so the first is \
+                         what is written. Write the whole expression on one \
                          line, or leave the '-' at the end of the line above \
                          where it says a subtraction is meant"
-                    ),
+                        ),
+                    }),
                 );
             }
         }
