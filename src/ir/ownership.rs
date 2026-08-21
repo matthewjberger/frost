@@ -15,7 +15,8 @@ const CONSUMED: u8 = 4;
 type State = HashMap<LocalId, u8>;
 
 pub fn check_linearity(module: &IrModule) -> Result<()> {
-    let reports = check_linearity_recovering(module, &HashSet::new());
+    let reports =
+        check_linearity_recovering(module, &HashSet::new(), &HashMap::new());
     if reports.is_empty() {
         return Ok(());
     }
@@ -34,19 +35,89 @@ pub fn check_linearity(module: &IrModule) -> Result<()> {
 pub fn check_linearity_recovering(
     module: &IrModule,
     pooled: &HashSet<String>,
+    consumers: &HashMap<String, Option<String>>,
 ) -> Vec<crate::diagnostic::Diagnostic> {
     let mut reports = Vec::new();
     for function in &module.functions {
-        if let Err(fault) = check_function(function, pooled) {
+        if let Err(fault) = check_function(function, pooled, consumers) {
             reports.push(fault);
         }
     }
     reports
 }
 
+/// The one function that takes each type by `move`, by the type's name. A type
+/// with two of them is left out: naming either is a guess, and a reader handed
+/// the wrong one writes a call that does not fix what they were told about.
+///
+/// Read off the declarations rather than the IR, because a function nothing
+/// calls yet contributes no IR, and a value nothing consumes is exactly the
+/// program where that is so.
+pub fn consumers_of(
+    ast: &crate::ast::Ast,
+    roots: &[crate::ast::StmtId],
+) -> HashMap<String, Option<String>> {
+    let mut found: HashMap<String, Option<String>> = HashMap::new();
+    for statement in roots {
+        // A C function declared `extern fn close(move f: File)` consumes one
+        // the same way a Frost function does, and a program whose only
+        // consumer is one is the shape a binding to a C API takes.
+        let (name, params) = match ast.stmt(*statement) {
+            crate::ast::Statement::Constant(name, value) => {
+                match ast.expr(*value) {
+                    crate::ast::Expression::Function(params, _, _)
+                    | crate::ast::Expression::Proc(params, _, _) => {
+                        (name, params)
+                    }
+                    _ => continue,
+                }
+            }
+            crate::ast::Statement::Extern { name, params, .. } => {
+                (name, params)
+            }
+            _ => continue,
+        };
+        let named = crate::modules::imports::demangle_private_names(
+            ast.name(*name),
+        );
+        for parameter in ast.params_in(*params) {
+            if parameter.mode != crate::parser::ParamMode::Move {
+                continue;
+            }
+            let Some(held) = &parameter.type_annotation else {
+                continue;
+            };
+            let held = held.to_string();
+            match found.get(&held) {
+                Some(Some(first)) if *first != named => {
+                    found.insert(held, None);
+                }
+                Some(_) => {}
+                None => {
+                    found.insert(held, Some(named.clone()));
+                }
+            }
+        }
+    }
+    found
+}
+
+/// What to add to a report about a value nothing consumed: the call that
+/// consumes it, where the program holds exactly one.
+fn consumed_by(
+    consumers: &HashMap<String, Option<String>>,
+    held: &str,
+) -> String {
+    match consumers.get(held) {
+        Some(Some(name)) => format!("; '{name}' takes one"),
+        _ => String::new(),
+    }
+}
+
 fn check_function(
     function: &IrFunction,
     pooled: &HashSet<String>,
+    consumers: &HashMap<String, Option<String>>,
 ) -> Result<(), Diagnostic> {
     let linear_locals: Vec<LocalId> = (0..function.locals.len())
         .filter(|&local| function.locals[local].linear)
@@ -97,7 +168,7 @@ fn check_function(
                 block_id,
                 entry.clone(),
                 &referenced,
-                pooled,
+                &Rules { pooled, consumers },
             )?;
         }
     }
@@ -200,12 +271,20 @@ fn apply(state: &mut State, statement: &IrStatement) {
     }
 }
 
+// What the walk reads about the program rather than about the block in hand:
+// the container types already refused as pools, and the one function that
+// consumes each type. Both are the same for every block of every function.
+struct Rules<'a> {
+    pooled: &'a HashSet<String>,
+    consumers: &'a HashMap<String, Option<String>>,
+}
+
 fn report_block(
     function: &IrFunction,
     block_id: BlockId,
     mut state: State,
     referenced: &HashSet<LocalId>,
-    pooled: &HashSet<String>,
+    rules: &Rules<'_>,
 ) -> Result<(), Diagnostic> {
     for statement in &function.blocks[block_id].statements {
         if let IrStatement::Consume(local) = statement {
@@ -237,20 +316,22 @@ fn report_block(
             // obligation it carries cannot be answered: no consumer discharges
             // it. Telling its holder to consume it as well points at a second
             // line with nothing the reader can do about it.
-            if pooled.contains(&function.locals[local].ty.to_string()) {
+            if rules.pooled.contains(&function.locals[local].ty.to_string())
+            {
                 continue;
             }
             if let Some(held) = &function.locals[local].name {
                 // The storage a `_` was given. Naming it points the reader at a
                 // word nothing in the program spells, so the complaint is the
                 // one the `_` earns: it took a resource and let it go.
+                let held_type = function.locals[local].ty.to_string();
+                let takes_one = consumed_by(rules.consumers, &held_type);
                 if names_a_discard(held) {
                     return Err(located(
                         function,
                         local,
                         format!(
-                            "this `_` drops a '{}', which is consumed exactly once; bind it to a name and consume it",
-                            function.locals[local].ty
+                            "this `_` drops a '{held_type}', which is consumed exactly once; bind it to a name and consume it{takes_one}"
                         ),
                     ));
                 }
@@ -259,7 +340,7 @@ fn report_block(
                     function,
                     local,
                     format!(
-                        "linear value {name} is not consumed on every path before return"
+                        "linear value {name} is not consumed on every path before return{takes_one}"
                     ),
                 ));
             }
@@ -341,7 +422,11 @@ mod tests {
         // The walk a build runs, with the set of pooled types it is handed
         // there. A program here declares none, so it is empty, and the path
         // under test is the path that runs.
-        let reports = check_linearity_recovering(&module, &HashSet::new());
+        let reports = check_linearity_recovering(
+            &module,
+            &HashSet::new(),
+            &HashMap::new(),
+        );
         match reports.is_empty() {
             true => Ok(()),
             false => Err(anyhow::anyhow!(

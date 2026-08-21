@@ -520,7 +520,7 @@ fn check_statement(
             for field in ast.fields_in(*fields) {
                 if field.field_type.contains_reference() {
                     bail!(
-                        "cannot store a reference in struct '{}' (field '{}'); references are second-class",
+                        "cannot store a reference in struct '{}' (field '{}'); references are second-class, so what outlives a call is named another way: a handle into a pool, an index, or a `ref T` handed back rather than kept",
                         ast.name(*name),
                         ast.name(field.name)
                     );
@@ -535,7 +535,7 @@ fn check_statement(
                 for field in ast.fields_in(fields) {
                     if field.field_type.contains_reference() {
                         bail!(
-                            "cannot store a reference in enum '{}' (variant '{}', field '{}'); references are second-class",
+                            "cannot store a reference in enum '{}' (variant '{}', field '{}'); references are second-class, so what outlives a call is named another way: a handle into a pool, an index, or a `ref T` handed back rather than kept",
                             ast.name(*name),
                             ast.name(variant.name),
                             ast.name(field.name)

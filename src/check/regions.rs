@@ -472,7 +472,7 @@ impl<'a> Region<'a> {
 
     fn escape(&mut self, how: &str, at: Position) {
         let message = format!(
-            "region: a pointer into arena '{}' escapes its region by {how}; it may not outlive the arena",
+            "region: a pointer into arena '{}' escapes its region by {how}; it may not outlive the arena, so take the storage from a source that outlives the region, or copy out what it names",
             self.arena
         );
         record_once(&mut self.diagnostics, at, message);
@@ -2298,7 +2298,7 @@ impl Frame<'_> {
     fn escape(&mut self, how: &str, at: Position) {
         let function = self.function.clone();
         let message = format!(
-            "region: a pointer into the frame of '{function}' is {how}; the storage it names dies when the call returns"
+            "region: a pointer into the frame of '{function}' is {how}; the storage it names dies when the call returns, so hand back a copy of the value, or name storage a parameter brought in"
         );
         record_once(&mut self.diagnostics, at, message);
     }

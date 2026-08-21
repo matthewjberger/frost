@@ -57,6 +57,64 @@ const WARNED_BY_BOTH: &[(&str, &str, &str)] = &[
 ];
 
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A refusal names the shape to reach for. Every one of these has exactly
+    // one right answer, and a reader told only what is wrong derives it a
+    // second time.
+    (
+        "a_reference_stored_in_a_struct_field",
+        "Holder :: struct { seen: ref i64 }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a handle into a pool, an index, or a `ref T` handed back rather than kept",
+    ),
+    // An enum is laid out as a struct carrying every variant's fields, and the
+    // self-hosted compiler reported the layout: 'struct Held (field
+    // Some_seen)' where the reader wrote a variant and a field.
+    (
+        "a_reference_stored_in_an_enum_variant",
+        "Held :: enum { None, Some { seen: ref i64 } }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "cannot store a reference in enum 'Held' (variant 'Some', field 'seen')",
+    ),
+    // State every function can see. There are none, so the three shapes that
+    // carry state instead are named where the reach happens.
+    (
+        "a_binding_written_at_the_top_level",
+        "mut counter := 0\n\
+         main :: fn() -> i64 { 0 }\n",
+        "a `mut` parameter, a value the caller owns and passes down, or `uses` on the function and a `with` block around the call",
+    ),
+    // A resource left unconsumed, where the program holds one function that
+    // takes it. Naming the call is the whole of what the reader needs.
+    (
+        "a_linear_value_left_unconsumed_names_its_consumer",
+        "File :: linear struct { fd: i64 }\n\
+         open :: fn() -> File { File { fd = 1 } }\n\
+         close :: fn(move f: File) { }\n\
+         main :: fn() -> i64 { f := open()\n\
+         \x20   0 }\n",
+        "is not consumed on every path before return; 'close' takes one",
+    ),
+    // The same, dropped by a `_`.
+    (
+        "a_discard_of_a_resource_names_its_consumer",
+        "File :: linear struct { fd: i64 }\n\
+         open :: fn() -> File { File { fd = 1 } }\n\
+         close :: fn(move f: File) { }\n\
+         main :: fn() -> i64 { _ := open()\n\
+         \x20   0 }\n",
+        "bind it to a name and consume it; 'close' takes one",
+    ),
+    // Two functions take it, so naming either is a guess and neither is named.
+    (
+        "a_resource_with_two_consumers_names_neither",
+        "File :: linear struct { fd: i64 }\n\
+         open :: fn() -> File { File { fd = 1 } }\n\
+         close :: fn(move f: File) { }\n\
+         discard :: fn(move f: File) { }\n\
+         main :: fn() -> i64 { f := open()\n\
+         \x20   0 }\n",
+        "linear value 'f' is not consumed on every path before return",
+    ),
     // A parameter list the reader did not close. The list holds parameters and
     // the commas between them, and the self-hosted compiler's loop ran to the
     // `)` or the end of the file: the brace was taken for a parameter's name

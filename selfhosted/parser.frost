@@ -11036,6 +11036,16 @@ parse_one_declaration :: fn(mut p: Parser) -> i64 {
         // Say so where it is written; the loop skips to the next head and
         // keeps reading.
         report_where(p.modules, p.src, cur_off(p))
+        // A binding written here is a reader reaching for state every function
+        // can see. There are none and there will be none, so the three shapes
+        // that carry state instead are named where the reach happens.
+        if (cur(p) == TokenKind::KwMut) {
+            report("a binding at the top level would be state every function ")
+            report("can see, and there are none. What holds state is a `mut` ")
+            report("parameter, a value the caller owns and passes down, or ")
+            report("`uses` on the function and a `with` block around the call")
+            frost_rt_recover_escape()
+        }
         report("expected a declaration head, `import`, `export`, or `test`,")
         report(" found '")
         report_src(p.src, cur_off(p), cur_len(p))

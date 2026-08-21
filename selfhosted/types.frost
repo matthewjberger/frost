@@ -11,6 +11,7 @@ import "layout.frost"
 export is_narrowing,
     call_ret_type, call_type_args, call_args_for, collect_type_args,
     settle_pack_args, tparam_position, gparam_position, word_is_gparam,
+    report_consumer_of,
     written_gparam_count,
     first_settled_gparam, has_fallback_gparam, fallback_gparam_count,
     settled_type_args, nth_type_arg,
@@ -1082,6 +1083,43 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
 }
 
 // The generic-fns index of a function, or -1 if it is not generic.
+// The one function that takes this type by `move`, or -1 where the program has
+// none or has two. Naming either of two is a guess, and a reader handed the
+// wrong one writes a call that does not fix what they were told about.
+sole_consumer_of :: fn(mut p: Parser, ty: i64) -> i64 {
+    mut found: i64 = -1
+    mut i: i64 = 0
+    while (i < p.fns.count) {
+        sym := arena_at(p.fns, i)
+        mut param := sym.params
+        while (param != (-1)) {
+            node := arena_at(p.arena, param)
+            if (node.a == 2 && node.b == ty) {
+                if (found >= 0 && found != i) {
+                    return -1
+                }
+                found = i
+            }
+            param = node.next
+        }
+        i = i + 1
+    }
+    found
+}
+
+// What to add to a report about a value nothing consumed: the call that
+// consumes it, where the program holds exactly one.
+report_consumer_of :: fn(mut p: Parser, ty: i64) {
+    which := sole_consumer_of(p, ty)
+    if (which < 0) {
+        return
+    }
+    sym := arena_at(p.fns, which)
+    report("; '")
+    report_src(p.src, sym.off, sym.len)
+    report("' takes one")
+}
+
 generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
     mut i: i64 = 0
     while (i < p.generic_fns.count) {

@@ -1623,6 +1623,7 @@ impl<'a> Parser<'a> {
                     | Token::Unsafe
             )
         {
+            self.refuse_ambient_state()?;
             let written = self.peek_nth(0).to_string();
             return Err(self.here(format!(
                 "expected a declaration head, `import`, `export`, or `test`, found '{written}'"
@@ -1870,6 +1871,7 @@ impl<'a> Parser<'a> {
                         self.read_token();
                         self.refuse_unknown_declaration_head()?;
                     }
+                    self.refuse_ambient_state()?;
                     let written = self.peek_nth(0).to_string();
                     return Err(self.here(format!(
                         "expected a declaration head, `import`, `export`, or `test`, found '{written}'"
@@ -2920,6 +2922,19 @@ impl<'a> Parser<'a> {
     /// what may stand there is what may open one; anything else is a token the
     /// reader has to replace, and read as an expression it went to whatever
     /// `while` or `ref` parses as and failed somewhere inside.
+    /// A binding written at the top level, which is a reader reaching for state
+    /// every function can see. There are none and there will be none, so the
+    /// three shapes that carry state instead are named where the reach happens.
+    fn refuse_ambient_state(&mut self) -> Result<()> {
+        if self.block_depth > 0 || !matches!(self.peek_nth(0), Token::Mut) {
+            return Ok(());
+        }
+        Err(self.here(
+            "a binding at the top level would be state every function can see, and there are none. What holds state is a `mut` parameter, a value the caller owns and passes down, or `uses` on the function and a `with` block around the call"
+                .to_string(),
+        ))
+    }
+
     fn refuse_unknown_declaration_head(&mut self) -> Result<()> {
         if Self::can_begin_expression(self.peek_nth(0)) {
             return Ok(());
@@ -5911,10 +5926,14 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         match parser.parse() {
             Ok(module) => Ok(module),
+            // A statement handed to a parser reading declarations. Both
+            // refusals say the same thing about it: what is written here
+            // belongs in a block, which is where the second reading puts it.
             Err(error)
-                if error
-                    .to_string()
-                    .contains("expected a declaration head") =>
+                if error.to_string().contains("expected a declaration head")
+                    || error
+                        .to_string()
+                        .contains("a binding at the top level") =>
             {
                 let mut statement_parser = Parser::new(&tokens);
                 statement_parser.block_depth = 1;

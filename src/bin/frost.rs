@@ -758,6 +758,7 @@ fn lowered_and_checked(
                     &program.roots,
                     linear_types,
                 ),
+                &frost::consumers_of(&program.ast, &program.roots),
             ));
         }
     }

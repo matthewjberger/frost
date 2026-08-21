@@ -3289,13 +3289,16 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
                     report("this `_` drops a '")
                     report_type_name(p, ty)
                     report("', which is consumed exactly once; bind it to a name and consume it")
+                    report_consumer_of(p, ty)
                     frost_rt_recover_escape()
                 }
                 // Written down rather than said. Refer to
-                // `deferred_unconsumed`.
+                // `deferred_unconsumed`. The type travels with the name, since
+                // what consumes it is read off the type and the report is
+                // written long after the walk that found it.
                 arena_push(
                     p.deferred_unconsumed,
-                    Cap { ty = 0, off = node.val, len = node.c }
+                    Cap { ty = ty, off = node.val, len = node.c }
                 )
                 frost_rt_recover_escape()
             }
@@ -6154,6 +6157,7 @@ flush_unconsumed :: fn(mut p: Parser, others: i64) {
         report("linear value '")
         report_src(p.src, held.off, held.len)
         report("' is not consumed on every path before return")
+        report_consumer_of(p, held.ty)
         frost_rt_end_line()
         i = i + 1
     }
@@ -6485,6 +6489,34 @@ type_contains_borrow :: fn(mut p: Parser, ty: i64) -> bool {
     false
 }
 
+// The variant of this enum whose name opens a field's, or -1 where the struct
+// is not an enum or the field belongs to no variant. A variant's fields are
+// held under `Variant_field`, so the variant is what stands before the first
+// underscore and the field is the rest.
+variant_holding_field :: fn(
+    mut p: Parser,
+    struct_index: i64,
+    off: i64,
+    len: i64
+) -> i64 {
+    def := arena_at(p.structs, struct_index)
+    if (def.is_enum == 0) {
+        return -1
+    }
+    ty := STRUCT_BASE + struct_index
+    mut i: i64 = 0
+    while (i < p.variants.count) {
+        entry := arena_at(p.variants, i)
+        if (entry.enum_ty == ty && entry.name_len + 1 < len
+            && p.src[off + entry.name_len] == CH_UNDERSCORE
+            && bytes_equal(p.src, entry.name_off, off, entry.name_len)) {
+            return i
+        }
+        i = i + 1
+    }
+    -1
+}
+
 check_reference_fields :: fn(mut p: Parser) {
     mut i: i64 = 0
     while (i < p.structs.count) {
@@ -6496,11 +6528,41 @@ check_reference_fields :: fn(mut p: Parser) {
             // hold a borrow is reported and the walk goes on to the next.
             if (type_contains_borrow(p, field.ty)) {
                 report_where(p.modules, p.src, def.name_off)
-                report("cannot store a reference in struct '")
-                report_src(p.src, def.name_off, def.name_len)
-                report("' (field '")
-                report_src(p.src, field.name_off, field.name_len)
-                report("'); references are second-class")
+                report("cannot store a reference in ")
+                // An enum is laid out as a struct carrying every variant's
+                // fields under a name the variant is written into, so the
+                // field the reader wrote is the tail of what the table holds.
+                // Reported as the reader wrote it: an enum, a variant and a
+                // field.
+                variant := variant_holding_field(
+                    p,
+                    i,
+                    field.name_off,
+                    field.name_len
+                )
+                if (variant >= 0) {
+                    named := arena_at(p.variants, variant)
+                    report("enum '")
+                    report_src(p.src, def.name_off, def.name_len)
+                    report("' (variant '")
+                    report_src(p.src, named.name_off, named.name_len)
+                    report("', field '")
+                    report_src(
+                        p.src,
+                        field.name_off + named.name_len + 1,
+                        field.name_len - named.name_len - 1
+                    )
+                    report("')")
+                } else {
+                    report("struct '")
+                    report_src(p.src, def.name_off, def.name_len)
+                    report("' (field '")
+                    report_src(p.src, field.name_off, field.name_len)
+                    report("')")
+                }
+                report("; references are second-class, so what outlives ")
+                report("a call is named another way: a handle into a pool, an ")
+                report("index, or a `ref T` handed back rather than kept")
                 frost_rt_recover_note()
             }
             fid = field.next
@@ -7598,7 +7660,8 @@ frame_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
     report_src(p.src, p.current_fn_off, p.current_fn_len)
     report("' is ")
     report_cstr(how)
-    report("; the storage it names dies when the call returns")
+    report("; the storage it names dies when the call returns, so hand back ")
+    report("a copy of the value, or name storage a parameter brought in")
     frost_rt_recover_escape()
 }
 
@@ -7616,7 +7679,8 @@ frame_escape_kept :: fn(mut p: Parser, pos: i64, callee: i64) {
     report("' is handed to '")
     report_src(p.src, sym.off, sym.len)
     report("', which keeps it in something that outlives this frame; the ")
-    report("storage it names dies when the call returns")
+    report("storage it names dies when the call returns, so hand back a copy ")
+    report("of the value, or name storage a parameter brought in")
     frost_rt_recover_escape()
 }
 
@@ -8946,7 +9010,8 @@ region_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
     report_src(p.src, p.region_off, p.region_len)
     report("' escapes its region by ")
     report_cstr(how)
-    report("; it may not outlive the arena")
+    report("; it may not outlive the arena, so take the storage from a ")
+    report("source that outlives the region, or copy out what it names")
     frost_rt_recover_escape()
 }
 
