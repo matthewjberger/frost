@@ -2009,6 +2009,13 @@ Parser :: struct {
     // function yet and would read as a call to one that does not exist. This
     // says which names are a function the caller supplies, and each instance
     // resolves them to the function it was actually given.
+    // What the `for` loops around the statement being read have named. A write
+    // to one of them is a write to a copy, which changes nothing.
+    loop_names: Arena<Cap>,
+    // How many of those the block about to be read is answerable for, or -1
+    // where the block is not a loop body. The head of a `for` writes its names
+    // down and the body's block is what takes them off again.
+    loop_body_mark: i64,
     cfn_params: Arena<GParam>,
     // The name offset of the function whose parameters are being read, so each
     // compile-time parameter is written down under the body that declares it.

@@ -115,6 +115,19 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0 }\n",
         "linear value 'f' is not consumed on every path before return",
     ),
+    // A write to what a `for` names. The element is a copy, so the write went
+    // in, came out again, and the container was what it had been.
+    (
+        "a_write_to_what_a_loop_names",
+        "main :: fn() -> i64 {\n\
+         \x20   xs: [3]i64 = [1, 2, 3]\n\
+         \x20   for value in xs {\n\
+         \x20       value = 9\n\
+         \x20   }\n\
+         \x20   0\n\
+         }\n",
+        "is what the loop names, and writing to it changes nothing",
+    ),
     // A parameter list the reader did not close. The list holds parameters and
     // the commas between them, and the self-hosted compiler's loop ran to the
     // `)` or the end of the file: the brace was taken for a parameter's name

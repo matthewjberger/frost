@@ -941,6 +941,8 @@ main :: fn() -> i64 {
         pack_start = 0,
         pack_count = 0,
         gparams = arena_make($GParam, 4096),
+        loop_names = arena_make($Cap, 32),
+        loop_body_mark = -1,
         cfn_params = arena_make($GParam, 4096),
         params_owner_off = -1,
         gargs = arena_make($GArg, 8192),

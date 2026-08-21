@@ -22,6 +22,18 @@ value is its trailing expression, when it has one.
   once and a body that appends to the same container walks only what was there
   at the start.
 
+  A body may write to the container it walks. `xs[index] = ...` inside
+  `for index, value in xs` is an ordinary write to an element: `value` was read
+  before it and holds what was there, and the next step reads the element as it
+  now stands. Handing the container to a function that writes to it is the same
+  write by another route and is accepted the same way.
+
+  A body may not write to what the loop names. The element binds the way a
+  parameter of its type would, so a scalar is a copy and writing to it changes
+  nothing; both compilers used to take the write, emit it, and hand back the
+  container as it went in. Write to the container at the index instead, or bind
+  what you want to keep before the loop.
+
   A name followed by `{` is a struct literal everywhere else, so the literal is
   not available in the `Expr` of a `for`, whose brace opens the body.
 

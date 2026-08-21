@@ -3040,9 +3040,16 @@ parse_expr :: fn(mut p: Parser) -> i64 {
 
 parse_block :: fn(mut p: Parser) -> i64 {
     advance(p)
+    // A loop's names reach its body and no further. The head wrote them down
+    // and this is the block they are for, so this is where they come off.
+    mine := p.loop_body_mark
+    p.loop_body_mark = -1
     p.block_depth = p.block_depth + 1
     head := parse_stmt_list(p, TokenKind::Rbrace)
     p.block_depth = p.block_depth - 1
+    if (mine >= 0) {
+        p.loop_names.count = mine
+    }
     // The list stops at the closing brace or at the end of the file. Stepping
     // over a brace that is not there steps past the last token, and the next
     // walk to read one indexes the token arena out of range, which is an
@@ -6446,6 +6453,13 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         mut item_off := first_off
         mut item_len := first_len
         mut has_index: i64 = 0
+        // What this loop names, held while its body is read. The body's block
+        // takes them off again.
+        p.loop_body_mark = p.loop_names.count
+        arena_push(
+            p.loop_names,
+            Cap { ty = 0, off = first_off, len = first_len }
+        )
         if (cur(p) == TokenKind::Comma) {
             advance(p)
             item_off = cur_off(p)
@@ -6453,6 +6467,10 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             refuse_literal_name(p, item_off, item_len)
             advance(p)
             has_index = 1
+            arena_push(
+                p.loop_names,
+                Cap { ty = 0, off = item_off, len = item_len }
+            )
         }
         if (cur(p) != TokenKind::KwIn) {
             report_where(p.modules, p.src, cur_off(p))
@@ -6755,6 +6773,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     }
     expr := parse_expr(p)
     if (cur(p) == TokenKind::Assign) {
+        refuse_write_to_a_loop_name(p, expr)
         advance(p)
         // The place is the context the value is read in, the same way an
         // annotation is, so `phase = .Draining` names its enum by the place it
@@ -6775,6 +6794,36 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
 // Everything a `?` or a match queued while this statement was being parsed goes
 // in ahead of it, in the order it was written. Each queued entry is a run of
 // one or two statements, given by its first and last.
+// A write to what a `for` names.
+//
+// The element binds the way a parameter of its type would, so a scalar is a
+// copy of what the container holds and writing to it changes nothing. Both
+// compilers took the write and emitted it, and the container came out of the
+// loop as it went in. What the reader meant is a write to the element, which
+// is the container and the index.
+refuse_write_to_a_loop_name :: fn(mut p: Parser, place: i64) {
+    node := arena_at(p.arena, place)
+    if (node.kind != NodeKind::Var) {
+        return
+    }
+    mut i: i64 = 0
+    while (i < p.loop_names.count) {
+        held := arena_at(p.loop_names, i)
+        if (held.len == node.c
+            && bytes_equal(p.src, held.off, node.val, node.c)) {
+            report_where(p.modules, p.src, node.pos)
+            report("'")
+            report_src(p.src, node.val, node.c)
+            report("' is what the loop names, and writing to it changes ")
+            report("nothing: the element binds the way a parameter of its ")
+            report("type would. Write to the container at the index, or bind ")
+            report("what you want to keep before the loop")
+            frost_rt_recover_escape()
+        }
+        i = i + 1
+    }
+}
+
 flush_pending :: fn(mut p: Parser, mark: i64, statement: i64) -> i64 {
     mut head: i64 = -1
     mut tail: i64 = -1

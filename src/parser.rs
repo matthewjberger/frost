@@ -353,6 +353,9 @@ pub struct Parser<'a> {
     // otherwise a struct literal, so the literal is not available there. The
     // same rule `match` needs, which it gets by looking for `case`.
     no_struct_literal: bool,
+    // What the `for` loops around the statement being read have named. A write
+    // to one of them is a write to a copy, which changes nothing.
+    loop_names: Vec<Symbol>,
     // Top-level `N :: 8` constants, read off the token stream before the parse
     // so that an array size may name one wherever it appears, including above
     // the line that declares it.
@@ -593,6 +596,7 @@ fn bare_parser(tokens: &[Token]) -> Parser<'_> {
         diagnostics: Vec::new(),
         internal_types: false,
         no_struct_literal: false,
+        loop_names: Vec::new(),
         integer_constants: HashMap::new(),
         constant_values: HashMap::new(),
         folder: crate::const_eval::Folder::new(
@@ -893,6 +897,7 @@ impl<'a> Parser<'a> {
             diagnostics: Vec::new(),
             internal_types: false,
             no_struct_literal: false,
+            loop_names: Vec::new(),
             integer_constants: HashMap::new(),
             constant_values: HashMap::new(),
             folder: crate::const_eval::Folder::new(
@@ -963,6 +968,7 @@ impl<'a> Parser<'a> {
             diagnostics: Vec::new(),
             internal_types: false,
             no_struct_literal: false,
+            loop_names: Vec::new(),
             integer_constants: HashMap::new(),
             constant_values: HashMap::new(),
             folder: crate::const_eval::Folder::new(
@@ -2124,12 +2130,44 @@ impl<'a> Parser<'a> {
         self.no_struct_literal = held;
         let range = range?;
 
-        let body = self.parse_block()?;
+        // What the loop names is bound by the loop and not by the reader, so
+        // it is held while the body is read and dropped after it.
+        let held = self.loop_names.len();
+        self.loop_names.push(iterator);
+        if let Some(second) = second {
+            self.loop_names.push(second);
+        }
+        let body = self.parse_block();
+        self.loop_names.truncate(held);
+        let body = body?;
 
         Ok(self.ast.push_stmt(
             Statement::For(iterator, second, range, body),
             self.span_from(start),
         ))
+    }
+
+    /// A write to what a `for` names.
+    ///
+    /// The element binds the way a parameter of its type would, so a scalar is
+    /// a copy of what the container holds and writing to it changes nothing.
+    /// Both compilers took the write and emitted it, and the container came out
+    /// of the loop as it went in. What the reader meant is a write to the
+    /// element, which is the container and the index.
+    fn refuse_write_to_a_loop_name(&mut self, place: ExprId) -> Result<()> {
+        let Expression::Identifier(name) = self.ast.expr(place) else {
+            return Ok(());
+        };
+        if !self.loop_names.contains(name) {
+            return Ok(());
+        }
+        let written = self.ast.name(*name).to_string();
+        Err(anyhow::Error::new(crate::diagnostic::LocatedError {
+            position: self.ast.position_of(self.ast.expr_span(place)),
+            message: format!(
+                "'{written}' is what the loop names, and writing to it changes nothing: the element binds the way a parameter of its type would. Write to the container at the index, or bind what you want to keep before the loop"
+            ),
+        }))
     }
 
     fn parse_while_statement(&mut self) -> Result<StmtId> {
@@ -3120,7 +3158,10 @@ impl<'a> Parser<'a> {
         let statement = if matches!(self.peek_nth(0), Token::Assign) {
             self.read_token();
             let rhs = self.parse_expression(Precedence::Lowest)?;
-            Statement::Assignment(expression, rhs)
+            {
+                self.refuse_write_to_a_loop_name(expression)?;
+                Statement::Assignment(expression, rhs)
+            }
         } else {
             Statement::Expression(expression)
         };
