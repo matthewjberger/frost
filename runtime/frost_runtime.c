@@ -219,15 +219,21 @@ static void frost_rt_install_stack_handler(void) {
 }
 #endif
 
-/* Diagnostics are bytes, and the C library on Windows opens a stream in text
-   mode, where writing a newline writes two. A report would then differ from the
-   same report written by the bootstrap compiler, and from the same report
-   written by the fault handler beside this, which uses the system call and
-   translates nothing. Two compilers held to one wording have to write one
-   line. */
-static void frost_rt_open_stderr_as_bytes(void) {
+/* Every stream is bytes, and the C library on Windows opens one in text mode,
+   where writing a newline writes two and reading two gives one. A report would
+   then differ from the same report written by the bootstrap compiler, and from
+   the same report written by the fault handler beside this, which uses the
+   system call and translates nothing. Two compilers held to one wording have to
+   write one line.
+
+   The same holds of what a program writes and of what a tool is piped: a
+   rendering written to a file held one byte per break and the same rendering
+   sent to standard output held two. */
+static void frost_rt_open_streams_as_bytes(void) {
 #if defined(_WIN32)
     _setmode(_fileno(stderr), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stdin), _O_BINARY);
 #endif
 }
 
@@ -236,7 +242,7 @@ static void frost_rt_open_stderr_as_bytes(void) {
    what runs something ahead of it. */
 static void frost_rt_start_up(void) {
     frost_rt_install_stack_handler();
-    frost_rt_open_stderr_as_bytes();
+    frost_rt_open_streams_as_bytes();
 }
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -519,6 +525,35 @@ const char *frost_rt_read_file(const char *path) {
     size_t read = fread(buffer, 1, (size_t)length, file);
     buffer[read] = 0;
     fclose(file);
+    return buffer;
+}
+
+/* Everything on standard input, for a tool asked to read a buffer rather than a
+   file. An editor formats what is on screen, which has not been written yet, so
+   there is no path to hand over. The length is not known ahead of it, so the
+   room doubles as it fills. */
+const char *frost_rt_read_stdin(void) {
+    size_t room = 65536;
+    size_t held = 0;
+    char *buffer = (char *)malloc(room);
+    if (buffer == 0) {
+        return "";
+    }
+    for (;;) {
+        size_t read = fread(buffer + held, 1, room - held - 1, stdin);
+        held += read;
+        if (held + 1 < room) {
+            break;
+        }
+        room *= 2;
+        char *grown = (char *)realloc(buffer, room);
+        if (grown == 0) {
+            free(buffer);
+            return "";
+        }
+        buffer = grown;
+    }
+    buffer[held] = 0;
     return buffer;
 }
 

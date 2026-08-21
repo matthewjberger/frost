@@ -1456,7 +1456,16 @@ format_command :: fn() -> i64 {
 // differs. Rendering into memory rather than over the file is what lets
 // `--check` ask without writing.
 format_one :: fn(path: ^i8, check: bool) -> i64 {
-    raw := unsafe { frost_rt_read_file(path) }
+    // `-` is the buffer on standard input, which is what an editor formats: the
+    // text on screen has not been written to a file, so there is no path to
+    // open, and the rendering goes back the way it came.
+    from_input := cstr_eq(path, "-")
+    mut raw: ^i8 = ""
+    if (from_input) {
+        raw = unsafe { frost_rt_read_stdin() }
+    } else {
+        raw = unsafe { frost_rt_read_file(path) }
+    }
     if (cstr_len(raw) == 0) {
         return 0
     }
@@ -1465,6 +1474,10 @@ format_one :: fn(path: ^i8, check: bool) -> i64 {
     emit_to_memory()
     format_source(src, length)
     written := emit_memory_text()
+    if (from_input) {
+        report_text(written)
+        return 0
+    }
     if (same_text(src, length, written)) {
         return 0
     }
