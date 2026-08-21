@@ -429,7 +429,7 @@ fn bound_in_expression(
             }
             bound_in_block(ast, *body, out);
         }
-        Expression::If(condition, then_block, else_block) => {
+        Expression::If(condition, then_block, else_block, _) => {
             bound_in_expression(ast, *condition, out);
             bound_in_block(ast, *then_block, out);
             if let Some(block) = else_block {

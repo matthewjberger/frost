@@ -518,7 +518,7 @@ impl Lowering {
             Expression::FieldAccess(inner, _) => {
                 self.check_expression(ast, inner, returns)
             }
-            Expression::If(condition, then_block, else_block) => {
+            Expression::If(condition, then_block, else_block, _) => {
                 self.check_expression(ast, condition, returns)?;
                 let then_block =
                     self.rewrite_block(ast, then_block, returns)?;
@@ -528,7 +528,7 @@ impl Lowering {
                     }
                     None => None,
                 };
-                let Expression::If(_, held_then, held_else) =
+                let Expression::If(_, held_then, held_else, _) =
                     &mut ast.expressions[expression.0 as usize]
                 else {
                     return Ok(());

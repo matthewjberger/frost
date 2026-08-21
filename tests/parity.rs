@@ -115,6 +115,28 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0 }\n",
         "linear value 'f' is not consumed on every path before return",
     ),
+    // A branch the compiler decides, written as one the program decides.
+    // Written the same, which of the two a reader was looking at came down to
+    // whether a name in the condition happened to be a compile-time parameter.
+    (
+        "an_expansion_time_branch_written_as_an_ordinary_one",
+        "import \"io.frost\"\n\
+         show :: fn($T: Type, v: T) {\n\
+         \x20   if (is_slice(v)) { print(\"s\\n\") } else { print(\"o\\n\") }\n\
+         }\n\
+         main :: fn() -> i64 { show(3)\n\
+         \x20   0 }\n",
+        "so the branch it decides is written `$if` rather than `if`",
+    ),
+    // The other way round: a `$if` over a condition the program works out.
+    (
+        "an_ordinary_branch_written_as_an_expansion_time_one",
+        "hold :: fn($T: Type, v: i64) -> i64 {\n\
+         \x20   $if (v > 0) { 1 } else { 0 }\n\
+         }\n\
+         main :: fn() -> i64 { hold($f64, 2) }\n",
+        "Write `if` for a branch the program takes, and `$if` for one the compiler answers",
+    ),
     // A write to what a `for` names. The element is a copy, so the write went
     // in, came out again, and the container was what it had been.
     (
@@ -8660,7 +8682,7 @@ main :: fn() -> i64 {
          plain :: fn(v: i64) -> i64 { v }\n\
          each :: fn(args: $...) {\n\
          \x20   for v in args {\n\
-         \x20       if (is_linear(v)) { print(\"{}\\n\", close(v)) } else { print(\"{}\\n\", plain(v)) }\n\
+         \x20       $if (is_linear(v)) { print(\"{}\\n\", close(v)) } else { print(\"{}\\n\", plain(v)) }\n\
          \x20   }\n}\n\
          main :: fn() -> i64 {\n\
          \x20   each(File { fd = 7 }, 5)\n\
@@ -10047,10 +10069,10 @@ Bad :: enum { Nope }
          Held :: linear struct { n: i64 }
          drop_it :: fn(move h: Held) -> i64 { h.n }
          width :: fn($T: Type, move value: $T) -> i64 {
-             if (is_linear(T)) { return drop_it(value) } else { return 7 }
+             $if (is_linear(T)) { return drop_it(value) } else { return 7 }
          }
          other :: fn($T: Type, move value: $T) -> i64 {
-             if (!is_linear(T)) { return 7 } else { return drop_it(value) }
+             $if (!is_linear(T)) { return 7 } else { return drop_it(value) }
          }
          tell :: fn($T: Type) -> i64 {
              held := is_linear(T)

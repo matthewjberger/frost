@@ -23,6 +23,20 @@ use crate::types::{Type, spelled};
 /// reads the words this writes rather than a copy of them.
 pub const UNDEFINED_CALL: &str = "call to undefined function";
 
+// A call to a name nothing declares. One of the type predicates is a question
+// the compiler answers rather than a function, so a call to one that reached
+// here is a branch the reader wrote as `if` where the compiler decides it.
+// Said as the name of a function that is not there, a reader looked for a
+// declaration to add and there is none to write.
+fn undefined_call(name: &str) -> anyhow::Error {
+    if BOUND_VOCABULARY.split(", ").any(|held| held == name) {
+        return anyhow::anyhow!(
+            "'{name}' is answered while the body is expanded, so the branch it decides is written `$if` rather than `if`"
+        );
+    }
+    anyhow::anyhow!("{UNDEFINED_CALL} '{name}'")
+}
+
 // The names the compiler reads as its own wherever they are written: the calls
 // it answers, and the three constants a `when` chooses on. What makes them
 // reserved is that a program may not declare one, and that is asked in one
@@ -2849,7 +2863,7 @@ fn type_predicate(
     Some(answer)
 }
 
-const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer, is_linear";
+pub const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer, is_linear";
 
 // What a formatted value may be: a number, a yes or no, or text. Read through
 // any name a type carries, the same way the bounds vocabulary reads one.
@@ -3388,10 +3402,25 @@ impl Expansion<'_> {
                 continue;
             }
             if let Statement::Expression(value) = ast.stmt(statement)
-                && let Expression::If(condition, consequence, alternative) =
-                    ast.expr(*value).clone()
-                && let Some(taken) = self.answer(ast, condition)?
+                && let Expression::If(
+                    condition,
+                    consequence,
+                    alternative,
+                    expansion_time,
+                ) = ast.expr(*value).clone()
+                && expansion_time
             {
+                // A `$if` says the whole of its condition is answered here. One
+                // that is not is a branch the program would take while it runs,
+                // written under a word saying it would not.
+                let Some(taken) = self.answer(ast, condition)? else {
+                    return locate(
+                        Err(anyhow::anyhow!(
+                            "a `$if` is answered while the body is expanded, and this condition is not: it reads something the program works out while it runs. Write `if` for a branch the program takes, and `$if` for one the compiler answers"
+                        )),
+                        ast.position_of(ast.expr_span(condition)),
+                    );
+                };
                 let kept = if taken {
                     Some(consequence)
                 } else {
@@ -3401,6 +3430,22 @@ impl Expansion<'_> {
                     expanded.extend(self.statements(ast, kept)?);
                 }
                 continue;
+            }
+            // An ordinary `if` whose condition this can answer. The branch it
+            // decides is decided here, and a body under it may write what only
+            // one of the two arguments makes sense for, so the word saying so
+            // is what the reader writes.
+            if let Statement::Expression(value) = ast.stmt(statement)
+                && let Expression::If(condition, _, _, false) =
+                    ast.expr(*value).clone()
+                && self.answer(ast, condition)?.is_some()
+            {
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "this condition is answered while the body is expanded, so the branch it decides is written `$if` rather than `if`"
+                    )),
+                    ast.position_of(ast.expr_span(condition)),
+                );
             }
             expanded.push(self.statement(ast, statement)?);
         }
@@ -3855,16 +3900,20 @@ impl Expansion<'_> {
                 let right = self.expression(ast, right)?;
                 Expression::Infix(left, operator, right)
             }
-            Expression::If(condition, consequence, alternative) => {
-                Expression::If(
-                    self.expression(ast, condition)?,
-                    self.block(ast, consequence)?,
-                    match alternative {
-                        Some(block) => Some(self.block(ast, block)?),
-                        None => None,
-                    },
-                )
-            }
+            Expression::If(
+                condition,
+                consequence,
+                alternative,
+                expansion_time,
+            ) => Expression::If(
+                self.expression(ast, condition)?,
+                self.block(ast, consequence)?,
+                match alternative {
+                    Some(block) => Some(self.block(ast, block)?),
+                    None => None,
+                },
+                expansion_time,
+            ),
             Expression::Call(callee, arguments) => {
                 let argument_ids: Vec<ExprId> =
                     ast.exprs_in(arguments).to_vec();
@@ -4137,11 +4186,14 @@ fn rename_expression(
             let right = rename_expression(ast, right, subst);
             Expression::Infix(left, operator, right)
         }
-        Expression::If(condition, consequence, alternative) => Expression::If(
-            rename_expression(ast, condition, subst),
-            rename_block(ast, consequence, subst),
-            alternative.map(|block| rename_block(ast, block, subst)),
-        ),
+        Expression::If(condition, consequence, alternative, expansion_time) => {
+            Expression::If(
+                rename_expression(ast, condition, subst),
+                rename_block(ast, consequence, subst),
+                alternative.map(|block| rename_block(ast, block, subst)),
+                expansion_time,
+            )
+        }
         Expression::Call(callee, arguments) => {
             let callee = rename_expression(ast, callee, subst);
             let argument_ids: Vec<ExprId> = ast.exprs_in(arguments).to_vec();
@@ -4382,7 +4434,7 @@ fn collect_instances_in_expression(
             collect_instances_in_expression(ast, *left, out);
             collect_instances_in_expression(ast, *right, out);
         }
-        Expression::If(condition, consequence, alternative) => {
+        Expression::If(condition, consequence, alternative, _) => {
             collect_instances_in_expression(ast, *condition, out);
             collect_instances_in_block(ast, *consequence, out);
             if let Some(block) = alternative {
@@ -4744,7 +4796,7 @@ fn collect_call_instances_in_expression(
                 ast, *right, env, discovery, out,
             );
         }
-        Expression::If(condition, consequence, alternative) => {
+        Expression::If(condition, consequence, alternative, _) => {
             collect_call_instances_in_expression(
                 ast, *condition, env, discovery, out,
             );
@@ -5409,11 +5461,14 @@ fn substitute_expression(
             let right = substitute_expression(ast, right, subst);
             Expression::Infix(left, operator, right)
         }
-        Expression::If(condition, consequence, alternative) => Expression::If(
-            substitute_expression(ast, condition, subst),
-            substitute_block(ast, consequence, subst),
-            alternative.map(|block| substitute_block(ast, block, subst)),
-        ),
+        Expression::If(condition, consequence, alternative, expansion_time) => {
+            Expression::If(
+                substitute_expression(ast, condition, subst),
+                substitute_block(ast, consequence, subst),
+                alternative.map(|block| substitute_block(ast, block, subst)),
+                expansion_time,
+            )
+        }
         Expression::Call(callee, arguments) => {
             let callee = substitute_expression(ast, callee, subst);
             let argument_ids: Vec<ExprId> = ast.exprs_in(arguments).to_vec();
@@ -7371,7 +7426,7 @@ impl<'a> FunctionLowering<'a> {
             Expression::Infix(left, operator, right) => {
                 self.lower_infix(left, operator, right, expected)
             }
-            Expression::If(condition, consequence, alternative) => {
+            Expression::If(condition, consequence, alternative, _) => {
                 self.lower_if(condition, consequence, alternative, expected)
             }
             Expression::Call(callee, arguments) => {
@@ -8666,7 +8721,7 @@ impl<'a> FunctionLowering<'a> {
             && !self.builder.constants.contains_key(name)
         {
             return locate(
-                Err(anyhow::anyhow!("{UNDEFINED_CALL} '{name}'")),
+                Err(undefined_call(name)),
                 self.at_expression(callee),
             );
         }
@@ -9851,7 +9906,7 @@ impl<'a> FunctionLowering<'a> {
                     .map(|local| self.type_of_local(local))
                     .is_some_and(|ty| matches!(ty, Type::Proc(..))) =>
             {
-                anyhow::anyhow!("{UNDEFINED_CALL} '{}'", self.ast.name(*name))
+                undefined_call(self.ast.name(*name))
             }
             Expression::Identifier(name) => anyhow::anyhow!(
                 "a call names the function it goes to, and '{}' holds a function rather than being one. Name the function at the call as a compile-time argument, or match on what the value stands for and call each one",

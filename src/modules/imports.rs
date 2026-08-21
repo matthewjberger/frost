@@ -2232,7 +2232,7 @@ impl Renamer {
                 self.expression(ast, start, scope);
                 self.expression(ast, end, scope);
             }
-            Expression::If(condition, consequence, alternative) => {
+            Expression::If(condition, consequence, alternative, _) => {
                 self.expression(ast, condition, scope);
                 self.block(ast, consequence, scope);
                 if let Some(block) = alternative {

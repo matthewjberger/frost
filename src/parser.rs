@@ -3347,6 +3347,12 @@ impl<'a> Parser<'a> {
                     "a borrow `&`/`&mut` is not surface syntax; pass a plain value and the compiler borrows for the parameter mode, or take a raw pointer with ptr_to(x)"
                 );
             }
+            // `$if` is the branch the compiler answers, and the `$` is what
+            // says so. Read before the arm below, which takes a `$` as the
+            // mark on a type argument and would read `if` as a type name.
+            Token::Dollar if matches!(self.peek_nth(1), Token::If) => {
+                self.parse_if_expression_marked(true)?
+            }
             Token::Dollar => {
                 self.read_token();
                 // `$fn(a: i64) -> i64 { a + 1 }` names a function the same way
@@ -4593,7 +4599,23 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_if_expression(&mut self) -> Result<ExprId> {
+        self.parse_if_expression_marked(false)
+    }
+
+    /// `if` and `$if`. The second is answered while the body is expanded and
+    /// the branch that cannot run is dropped before anything checks it, so a
+    /// body may write what only one of the two arguments makes sense for. The
+    /// two used to be spelled the same, and which one a reader was looking at
+    /// was decided by whether a name in the condition happened to be a
+    /// compile-time parameter, which is not something the line says.
+    fn parse_if_expression_marked(
+        &mut self,
+        expansion_time: bool,
+    ) -> Result<ExprId> {
         let start = self.mark();
+        if expansion_time {
+            self.read_token();
+        }
         self.read_token();
 
         if !matches!(self.peek_nth(0), Token::LeftParentheses) {
@@ -4613,9 +4635,13 @@ impl<'a> Parser<'a> {
         let mut alternative = None;
         if matches!(self.peek_nth(0), Token::Else) {
             self.read_token();
-            if matches!(self.peek_nth(0), Token::If) {
+            let chained = matches!(self.peek_nth(0), Token::If)
+                || (matches!(self.peek_nth(0), Token::Dollar)
+                    && matches!(self.peek_nth(1), Token::If));
+            if chained {
                 let arm_start = self.mark();
-                let else_if = self.parse_if_expression()?;
+                let marked = matches!(self.peek_nth(0), Token::Dollar);
+                let else_if = self.parse_if_expression_marked(marked)?;
                 let statement = self.ast.push_stmt(
                     Statement::Expression(else_if),
                     self.span_from(arm_start),
@@ -4627,7 +4653,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(self.ast.push_expr(
-            Expression::If(condition, consequence, alternative),
+            Expression::If(condition, consequence, alternative, expansion_time),
             self.span_from(start),
         ))
     }
@@ -6343,7 +6369,7 @@ mod tests {
     fn if_expressions() -> Result<()> {
         let (module, expression) = single_expression("if (x < y) { x }")?;
         let ast = &module.ast;
-        let Expression::If(condition, consequence, alternative) =
+        let Expression::If(condition, consequence, alternative, _) =
             ast.expr(expression)
         else {
             bail!("Expected an if expression!");
@@ -6366,7 +6392,7 @@ mod tests {
         let (module, expression) =
             single_expression("if (x < y) { x } else { y }")?;
         let ast = &module.ast;
-        let Expression::If(condition, consequence, alternative) =
+        let Expression::If(condition, consequence, alternative, _) =
             ast.expr(expression)
         else {
             bail!("Expected an if expression!");

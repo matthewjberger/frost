@@ -291,7 +291,7 @@ fn report_unknown_in_expression(
     found: &mut Vec<Diagnostic>,
 ) {
     match ast.expr(value) {
-        Expression::If(condition, then, otherwise) => {
+        Expression::If(condition, then, otherwise, _) => {
             report_unknown_in_expression(ast, *condition, known, values, found);
             report_unknown_in_block(ast, *then, known, values, found);
             if let Some(held) = otherwise {

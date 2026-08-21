@@ -216,7 +216,7 @@ fn report_in_expression(
             report_in_expression(ast, *left, scope, found);
             report_in_expression(ast, *right, scope, found);
         }
-        Expression::If(condition, then, otherwise) => {
+        Expression::If(condition, then, otherwise, _) => {
             report_in_expression(ast, *condition, scope, found);
             report_in_block(ast, *then, scope, found);
             if let Some(held) = otherwise {

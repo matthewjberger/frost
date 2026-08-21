@@ -398,7 +398,7 @@ pub fn display_expr(ast: &Ast, expression: ExprId) -> String {
                 display_expr(ast, *right)
             )
         }
-        Expression::If(condition, consequence, alternative) => {
+        Expression::If(condition, consequence, alternative, _) => {
             let mut result = format!(
                 "if ({}) {{ {} }}",
                 display_expr(ast, *condition),

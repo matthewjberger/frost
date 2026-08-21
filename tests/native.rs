@@ -14950,7 +14950,7 @@ main :: fn() -> i64 {
     for field in fields(Vertex) {
         print("{}\n", offset_of(field))
         print("{}\n", sizeof(field))
-        if (is_struct(field)) { print("{}\n", 1) } else { print("{}\n", 0) }
+        $if (is_struct(field)) { print("{}\n", 1) } else { print("{}\n", 0) }
     }
     0
 }
@@ -15297,7 +15297,7 @@ printall :: fn(args: $...) {
 
 show :: fn(args: $...) {
     for value in args {
-        if (is_float(value)) {
+        $if (is_float(value)) {
             print("{}\n", 1)
             print("{}\n", value)
         } else {
@@ -15370,7 +15370,7 @@ bump :: fn(mut n: i64) -> i64 {
 
 twice :: fn(args: $...) {
     for value in args {
-        if (is_float(value)) {
+        $if (is_float(value)) {
             print("{}\n", value)
             print("{}\n", value)
         } else {

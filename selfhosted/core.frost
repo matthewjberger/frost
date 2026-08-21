@@ -312,7 +312,7 @@ report_fmt :: fn(format fmt: str, args: $...) {
     mut at: i64 = 0
     for value in args {
         at = report_run(fmt, at)
-        if (is_slice(value)) {
+        $if (is_slice(value)) {
             report(value)
         } else {
             report_int(cast($i64, value))

@@ -357,7 +357,12 @@ impl Threader {
                 self.thread_expression(ast, left, provider)?;
                 self.thread_expression(ast, right, provider)?;
             }
-            Expression::If(condition, consequence, alternative) => {
+            Expression::If(
+                condition,
+                consequence,
+                alternative,
+                expansion_time,
+            ) => {
                 self.thread_expression(ast, condition, provider)?;
                 let threaded_consequence =
                     self.thread_block(ast, consequence, provider)?;
@@ -374,6 +379,7 @@ impl Threader {
                         condition,
                         threaded_consequence,
                         threaded_alternative,
+                        expansion_time,
                     );
                 }
             }

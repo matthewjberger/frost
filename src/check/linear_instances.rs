@@ -688,7 +688,7 @@ fn walk_expression(
             walk_expression(ast, *left, found, at);
             walk_expression(ast, *right, found, at);
         }
-        Expression::If(condition, then_block, else_block) => {
+        Expression::If(condition, then_block, else_block, _) => {
             walk_expression(ast, *condition, found, at);
             walk_block(ast, *then_block, found);
             if let Some(block) = else_block {

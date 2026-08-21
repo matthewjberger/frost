@@ -89,7 +89,7 @@ fn in_expression(
     found: &mut Vec<Diagnostic>,
 ) {
     match ast.expr(value) {
-        Expression::If(condition, then, otherwise) => {
+        Expression::If(condition, then, otherwise, _) => {
             in_expression(ast, *condition, found);
             in_block(ast, *then, found);
             if let Some(held) = otherwise {

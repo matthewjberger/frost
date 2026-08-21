@@ -6050,6 +6050,45 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         frost_rt_recover_escape()
     }
 
+    // `$if`, the branch the compiler answers. The `$` is what says so: an
+    // ordinary `if` over a type predicate reads the same way and is decided
+    // somewhere else, and which one a reader was looking at came down to
+    // whether a name in the condition happened to be a compile-time parameter.
+    if (kind == TokenKind::Dollar && peek_kind(p, 1) == TokenKind::KwIf) {
+        advance(p)
+        // An `if` over what a type is has an answer here, and the branch that
+        // cannot run is not parsed into the program at all. That is what lets
+        // one body serve elements of different types: the branch that would not
+        // compile for this one is gone before anything checks it.
+        held_answer := expansion_answer(p)
+        if (held_answer >= 0) {
+            return parse_expansion_if(p, held_answer)
+        }
+        // A condition holding one of the predicates is one this answers,
+        // whether or not it has what it needs to answer it here: a template is
+        // read once with nothing bound, and an instance is read again with the
+        // binding it was made for. Either way the branches are parsed and the
+        // instance decides.
+        if (condition_holds_a_predicate(p)) {
+            return parse_stmt(p)
+        }
+        // A `$if` says the whole of its condition is answered here. One that is
+        // not is a branch the program would take while it runs, written under
+        // a word saying it would not.
+        //
+        // Said once. A generic's body is read again for every instance, and one
+        // line written once is one mistake however many readings pass over it.
+        if (already_said(p, peek_off(p, 2))) {
+            return parse_stmt(p)
+        }
+        report_where(p.modules, p.src, peek_off(p, 2))
+        report("a `$if` is answered while the body is expanded, and this ")
+        report("condition is not: it reads something the program works out ")
+        report("while it runs. Write `if` for a branch the program takes, and ")
+        report("`$if` for one the compiler answers")
+        frost_rt_recover_escape()
+    }
+
     // A function is declared where every other declaration is, for the same
     // reason. Written in a body it read as a name reaching into a type, and the
     // reader was told the type has no variant called `fn`, then that `->` is
@@ -6401,13 +6440,16 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         return defer_before_return(p, value, start, failing)
     }
     if (kind == TokenKind::KwIf) {
-        // An `if` over what a type is has an answer here, and the branch that
-        // cannot run is not parsed into the program at all. That is what lets
-        // one body serve elements of different types: the branch that would not
-        // compile for this one is gone before anything checks it.
-        held_answer := expansion_answer(p)
-        if (held_answer >= 0) {
-            return parse_expansion_if(p, held_answer)
+        // An ordinary `if` whose condition the expansion can answer. The branch
+        // it decides is decided there, and a body under it may write what only
+        // one of the two arguments makes sense for, so the word saying so is
+        // what the reader writes.
+        if (expansion_answer(p) >= 0) {
+            report_where(p.modules, p.src, peek_off(p, 2))
+            report("this condition is answered while the body is expanded, ")
+            report("so the branch it decides is written `$if` rather than ")
+            report("`if`")
+            frost_rt_recover_escape()
         }
         // Where the `if` is written. Read off the cursor once the branches are
         // parsed, the node named the brace that closes the last of them, so a
@@ -6421,7 +6463,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         mut else_head: i64 = -1
         if (cur(p) == TokenKind::KwElse) {
             advance(p)
-            if (cur(p) == TokenKind::KwIf) {
+            if (cur(p) == TokenKind::KwIf
+                || (cur(p) == TokenKind::Dollar
+                    && peek_kind(p, 1) == TokenKind::KwIf)) {
                 else_head = parse_stmt(p)
             } else {
                 else_head = parse_block(p)
@@ -7309,6 +7353,41 @@ expansion_answer :: fn(mut p: Parser) -> i64 {
     answer
 }
 
+// Whether the condition the cursor's `if` opens calls one of the type
+// predicates, read off the tokens between its parentheses.
+//
+// A `$if` over one is answered where the body is expanded, and whether the
+// answer is available at this reading is a question about which reading this
+// is rather than about what the reader wrote.
+condition_holds_a_predicate :: fn(mut p: Parser) -> bool {
+    mut depth: i64 = 0
+    mut ahead: i64 = 1
+    while (true) {
+        kind := peek_kind(p, ahead)
+        if (kind == TokenKind::Eof) {
+            return false
+        }
+        if (kind == TokenKind::Lparen) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rparen) {
+            depth = depth - 1
+            if (depth == 0) {
+                return false
+            }
+        } else if (kind == TokenKind::Ident
+            && peek_kind(p, ahead + 1) == TokenKind::Lparen
+            && is_type_predicate(
+                p.src,
+                peek_off(p, ahead),
+                peek_len(p, ahead)
+            )) {
+            return true
+        }
+        ahead = ahead + 1
+    }
+    false
+}
+
 // Whether a compile-time binding holds a type, which is what a predicate has an
 // answer for. The value, function-pointer and chosen-function ranges sit above
 // the type codes and below the `distinct` ones, so a `distinct` type answers
@@ -7834,7 +7913,9 @@ parse_expansion_if :: fn(mut p: Parser, taken: i64) -> i64 {
         // one was: a predicate over the same element is answered here too, and
         // a condition that is not one is the ordinary runtime `if`. Reading it
         // is what moves the cursor past a branch this element does not take.
-        if (cur(p) == TokenKind::KwIf) {
+        if (cur(p) == TokenKind::KwIf
+            || (cur(p) == TokenKind::Dollar
+                && peek_kind(p, 1) == TokenKind::KwIf)) {
             other = parse_stmt(p)
         } else {
             other = parse_block(p)

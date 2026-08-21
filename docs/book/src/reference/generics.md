@@ -150,9 +150,9 @@ specialization takes one ordinary parameter per element.
 ```frost,sketch
 widths :: fn(args: $...) {
     for value in args {
-        if (is_slice(value)) {
+        $if (is_slice(value)) {
             print("{} bytes\n", slice_len(value))
-        } else if (is_float(value)) {
+        } else $if (is_float(value)) {
             print("{} rounds to {}\n", value, cast($i64, value))
         } else {
             print("{}\n", value)
@@ -173,17 +173,24 @@ time and no index. Every other `for` is the ordinary loop of chapter 7.
 element it is has to be known while the body is being expanded. An index past
 what the call gave is an error against the call.
 
-An `if` over a type predicate is decided at expansion time. Inside a
-specialization, a condition from the 11.4a vocabulary asked of a parameter is
-answered while the body is expanded, and the branch that cannot run is dropped
-before anything checks it:
+`$if` is the branch the compiler decides. Inside a specialization, a condition
+from the 11.4a vocabulary asked of a parameter is answered while the body is
+expanded, and the branch that cannot run is dropped before anything checks it,
+which is what lets one body serve arguments of different types:
+
+The `$` is what says so, and it is not optional. An ordinary `if` whose
+condition the expansion can answer is refused, naming `$if`; a `$if` whose
+condition it cannot is refused the same way, naming `if`. Written the same,
+which of the two a reader was looking at came down to whether a name in the
+condition happened to be a compile-time parameter, which is not something the
+line says.
 
 ```frost
 import "io.frost"
 
 show :: fn(args: $...) {
     for value in args {
-        if (is_slice(value)) {
+        $if (is_slice(value)) {
             print("{} bytes\n", slice_len(value))
         } else {
             print("{}\n", value)
@@ -200,7 +207,7 @@ positions:
 
 ```frost,sketch
 width :: fn($T: Type, move value: $T) -> i64 {
-    if (is_linear(T)) { return consume(value) } else { return 7 }
+    $if (is_linear(T)) { return consume(value) } else { return 7 }
 }
 ```
 

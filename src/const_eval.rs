@@ -382,7 +382,7 @@ impl<'a> Folder<'a> {
             }
             Statement::Expression(value) => {
                 // A bare `if` is a statement here, and each arm may leave.
-                if let Expression::If(condition, then, otherwise) =
+                if let Expression::If(condition, then, otherwise, _) =
                     ast.expr(*value)
                 {
                     let arms = Arms {
@@ -762,7 +762,7 @@ impl<'a> Folder<'a> {
                 let right = self.value(ast, *right, locals, stack)?;
                 combine(left, *operator, right)
             }
-            Expression::If(condition, then, otherwise) => {
+            Expression::If(condition, then, otherwise, _) => {
                 let mut held = locals.clone();
                 let arms = Arms {
                     condition: *condition,

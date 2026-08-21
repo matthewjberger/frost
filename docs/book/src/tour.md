@@ -497,9 +497,9 @@ import "io.frost"
 
 printall :: fn(args: $...) {
     for value in args {
-        if (is_float(value)) {
+        $if (is_float(value)) {
             print("{}\n", value)
-        } else if (is_slice(value)) {
+        } else $if (is_slice(value)) {
             print("{}\n", value)
         } else {
             print("{}\n", value)
@@ -541,7 +541,7 @@ main :: fn() -> i64 {
     print("{}\n", field_count(Vertex))
     for field in fields(Vertex) {
         print("{}\n{}\n", offset_of(field), sizeof(field))
-        if (is_float(field)) { print("{}\n", 1) } else { print("{}\n", 0) }
+        $if (is_float(field)) { print("{}\n", 1) } else { print("{}\n", 0) }
     }
     0
 }

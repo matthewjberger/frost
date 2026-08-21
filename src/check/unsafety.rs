@@ -288,7 +288,7 @@ fn strip_expression(ast: &mut Ast, expression: ExprId) {
         Expression::Function(_, _, body)
         | Expression::Proc(_, _, body)
         | Expression::Unsafe(body) => strip_block(ast, body),
-        Expression::If(condition, consequence, alternative) => {
+        Expression::If(condition, consequence, alternative, _) => {
             strip_expression(ast, condition);
             strip_block(ast, consequence);
             if let Some(alternative) = alternative {
@@ -647,7 +647,7 @@ impl Checker<'_> {
                     _ => None,
                 }
             }
-            Expression::If(_, consequence, alternative) => {
+            Expression::If(_, consequence, alternative, _) => {
                 [Some(*consequence), *alternative]
                     .into_iter()
                     .flatten()
@@ -1014,7 +1014,7 @@ impl Checker<'_> {
                 self.block(*body);
                 self.scope.pop();
             }
-            Expression::If(condition, consequence, alternative) => {
+            Expression::If(condition, consequence, alternative, _) => {
                 self.expression(*condition, at);
                 self.block(*consequence);
                 if let Some(alternative) = alternative {

@@ -518,7 +518,14 @@ pub enum Expression {
     Boolean(bool),
     Prefix(crate::parser::Operator, ExprId),
     Infix(ExprId, crate::parser::Operator, ExprId),
-    If(ExprId, Range32, Option<Range32>),
+    // The condition, the block taken, the block not taken, and whether the
+    // reader wrote `$if`. A `$if` is answered while the body is expanded and
+    // the branch that cannot run is dropped before anything checks it; an
+    // ordinary `if` is a branch the program takes while it runs. The two used
+    // to be spelled the same, and which one a reader was looking at was
+    // decided by whether a name in the condition happened to be a compile-time
+    // parameter.
+    If(ExprId, Range32, Option<Range32>, bool),
     Function(Range32, SignatureId, Range32),
     Proc(Range32, SignatureId, Range32),
     Call(ExprId, Range32),
@@ -1598,13 +1605,17 @@ impl<'a> Splicer<'a> {
                 operator,
                 self.expression(dest, right, rename),
             ),
-            Expression::If(condition, consequence, alternative) => {
-                Expression::If(
-                    self.expression(dest, condition, rename),
-                    self.block(dest, consequence, rename),
-                    alternative.map(|held| self.block(dest, held, rename)),
-                )
-            }
+            Expression::If(
+                condition,
+                consequence,
+                alternative,
+                expansion_time,
+            ) => Expression::If(
+                self.expression(dest, condition, rename),
+                self.block(dest, consequence, rename),
+                alternative.map(|held| self.block(dest, held, rename)),
+                expansion_time,
+            ),
             Expression::Function(params, signature, body) => {
                 Expression::Function(
                     self.parameters(dest, params, rename),

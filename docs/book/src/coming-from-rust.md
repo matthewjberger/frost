@@ -762,9 +762,9 @@ predicate keeps the branch that survives for that element:
 ```frost,sketch
 printall :: fn(args: $...) {
     for value in args {
-        if (is_float(value)) {
+        $if (is_float(value)) {
             print("{}\n", value)
-        } else if (is_slice(value)) {
+        } else $if (is_slice(value)) {
             print("{}\n", value)
         } else {
             print("{}\n", value)

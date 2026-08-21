@@ -183,7 +183,7 @@ fn expression_has_try(ast: &Ast, expression: ExprId) -> Option<ExprId> {
                     .iter()
                     .find_map(|argument| expression_has_try(ast, *argument))
             }),
-        Expression::If(condition, then_block, else_block) => {
+        Expression::If(condition, then_block, else_block, _) => {
             expression_has_try(ast, *condition)
                 .or_else(|| block_has_try(ast, *then_block))
                 .or_else(|| {
@@ -471,7 +471,7 @@ impl Lowerer {
                 self.rewrite_expression(ast, left, result, error);
                 self.rewrite_expression(ast, right, result, error);
             }
-            Expression::If(condition, then_block, else_block) => {
+            Expression::If(condition, then_block, else_block, _) => {
                 self.rewrite_expression(ast, condition, result, error);
                 self.rewrite_inner_block(ast, then_block, result, error);
                 if let Some(block) = else_block {

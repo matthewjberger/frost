@@ -483,7 +483,7 @@ impl<'a> Region<'a> {
     fn check_conditional(&mut self, expression: ExprId) {
         let ast = self.ast;
         match ast.expr(expression) {
-            Expression::If(_, consequence, alternative) => {
+            Expression::If(_, consequence, alternative, _) => {
                 self.check(*consequence, false);
                 if let Some(block) = alternative {
                     self.check(*block, false);
@@ -563,7 +563,7 @@ impl<'a> Region<'a> {
             // reads the value it names, which is not one.
             Expression::Dereference(inner) => root_identifier(ast, *inner)
                 .is_some_and(|root| self.via_pointer.contains(root)),
-            Expression::If(_, consequence, alternative) => {
+            Expression::If(_, consequence, alternative, _) => {
                 let branches = [Some(*consequence), *alternative];
                 branches.into_iter().flatten().any(|block| {
                     block_value(ast, block)
@@ -1464,7 +1464,7 @@ fn answer_of_branches(
 ) {
     let ast = walk.ast;
     match ast.expr(value) {
-        Expression::If(_, consequence, alternative) => {
+        Expression::If(_, consequence, alternative, _) => {
             answer_of_block(*consequence, walk, environment, answer);
             if let Some(alternative) = alternative {
                 answer_of_block(*alternative, walk, environment, answer);
@@ -1742,7 +1742,7 @@ fn expression_sources(
         Expression::Unsafe(block) => {
             block_value(ast, *block).map_or_else(HashSet::new, of)
         }
-        Expression::If(_, then_block, else_block) => {
+        Expression::If(_, then_block, else_block, _) => {
             let mut held =
                 block_value(ast, *then_block).map_or_else(HashSet::new, of);
             if let Some(other) = else_block
@@ -2101,7 +2101,7 @@ impl Frame<'_> {
     ) {
         let ast = self.ast;
         match ast.expr(value) {
-            Expression::If(_, consequence, alternative) => {
+            Expression::If(_, consequence, alternative, _) => {
                 self.answers_here(*consequence, answers);
                 if let Some(block) = alternative {
                     self.answers_here(*block, answers);
@@ -2620,7 +2620,7 @@ impl Frame<'_> {
                 self.expected_provenance(*inner, element.as_ref())
             }
             Expression::Unsafe(body) => self.block_expected(*body, expected),
-            Expression::If(_, consequence, alternative) => {
+            Expression::If(_, consequence, alternative, _) => {
                 let held = self.block_expected(*consequence, expected);
                 match alternative {
                     Some(block) => {
@@ -3017,7 +3017,7 @@ impl Frame<'_> {
             Expression::Unsafe(body) => self.block_provenance(*body),
             // A block used as a value answers with whichever branch runs, so it
             // is worth the shortest-lived of them.
-            Expression::If(_, consequence, alternative) => {
+            Expression::If(_, consequence, alternative, _) => {
                 let alternative = alternative
                     .map_or(Provenance::Outlives, |block| {
                         self.block_provenance(block)

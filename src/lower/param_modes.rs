@@ -272,7 +272,7 @@ fn read_through_expression(
                 read_through_expression(ast, argument, through, bound);
             }
         }
-        Expression::If(condition, consequence, alternative) => {
+        Expression::If(condition, consequence, alternative, _) => {
             read_through_expression(ast, condition, through, bound);
             read_through_block(ast, consequence, through, bound);
             if let Some(block) = alternative {
@@ -379,7 +379,7 @@ fn rewrite_expression(
         | Expression::ArrayRepeat(inner, _) => {
             rewrite_expression(ast, inner, signatures);
         }
-        Expression::If(condition, then_block, else_block) => {
+        Expression::If(condition, then_block, else_block, _) => {
             rewrite_expression(ast, condition, signatures);
             rewrite_block(ast, then_block, signatures);
             if let Some(block) = else_block {

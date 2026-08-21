@@ -206,11 +206,11 @@ write :: fn($out: fn(str), format fmt: str, args: $...) {
     mut at: i64 = 0
     for value in args {
         at = run_from($out, line, fmt, at)
-        if (is_float(value)) {
+        $if (is_float(value)) {
             put_f64($out, line, cast($f64, value))
-        } else if (is_slice(value)) {
+        } else $if (is_slice(value)) {
             put_bytes($out, line, value)
-        } else if (is_numeric(value)) {
+        } else $if (is_numeric(value)) {
             put_int($out, line, cast($i64, value))
         } else if (value) {
             put_int($out, line, 1)

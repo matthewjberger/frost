@@ -179,7 +179,7 @@ pub(crate) fn names_in_expression(
             names_in_expression(ast, *left, out);
             names_in_expression(ast, *right, out);
         }
-        Expression::If(condition, consequence, alternative) => {
+        Expression::If(condition, consequence, alternative, _) => {
             names_in_expression(ast, *condition, out);
             names_in_block(ast, *consequence, out);
             if let Some(block) = alternative {

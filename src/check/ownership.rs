@@ -1288,7 +1288,7 @@ impl RunWalk<'_> {
         }
         match ast.expr(expression) {
             Expression::Unsafe(body) => self.walk_block(*body),
-            Expression::If(condition, consequence, alternative) => {
+            Expression::If(condition, consequence, alternative, _) => {
                 self.walk_expression(*condition);
                 self.walk_block(*consequence);
                 if let Some(block) = alternative {
@@ -1320,7 +1320,7 @@ impl RunWalk<'_> {
         }
         let ast = self.ast;
         match ast.expr(value) {
-            Expression::If(_, consequence, alternative) => {
+            Expression::If(_, consequence, alternative, _) => {
                 self.note_block_answer(*consequence);
                 if let Some(block) = alternative {
                     self.note_block_answer(*block);
@@ -2428,7 +2428,7 @@ impl MoveChecker<'_> {
 
     fn check_conditional(&mut self, expression: ExprId) -> Result<bool> {
         match self.ast.expr(expression) {
-            Expression::If(condition, consequence, alternative) => {
+            Expression::If(condition, consequence, alternative, _) => {
                 self.check_if(*condition, *consequence, *alternative)
             }
             Expression::Switch(scrutinee, cases) => {

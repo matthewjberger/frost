@@ -279,7 +279,7 @@ fn walk_expression(
             walk_expression(ast, left, declared);
             walk_expression(ast, right, declared);
         }
-        Expression::If(condition, then_block, else_block) => {
+        Expression::If(condition, then_block, else_block, _) => {
             walk_expression(ast, condition, declared);
             walk_block(ast, then_block, declared);
             if let Some(block) = else_block {
