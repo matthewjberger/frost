@@ -12,14 +12,29 @@
 - **Snippets** for the declaration forms, `match`, the loops, `with`, `unsafe`,
   `defer` and `test`.
 - **A schema** for `frost.json`, so the manifest completes and validates.
-- **Findings**, published as warnings in the Problems panel on open and on
-  save, from `frost lint --diagnostics=json`. A build never refuses on one.
-- **Formatting**, which runs `frost fmt -` over the buffer, so Format Document
-  and format-on-save write what a build's `frost fmt --check` accepts. The
+- **Reports**, published in the Problems panel on open and on save. Two passes,
+  because they answer different questions: `frostc <file> --diagnostics=json`
+  says what a build refuses on and what it warns about, and `frostc lint
+  --diagnostics=json` says what a build says nothing about at all.
+- **Quick fixes**, from the edit a report carries. The compiler works out the
+  span to replace and what goes there, and says whether it applies the edit
+  unread; one it is sure of is the preferred action. `Frost: Apply every fix the
+  reports offer` applies all of those at once.
+- **Completion**, from `frostc api <prefix>`: every exported name beginning with
+  what is typed, with the signature its author wrote.
+- **Formatting**, which runs `frostc fmt -` over the buffer, so Format Document
+  and format-on-save write what a build's `frostc fmt --check` accepts. The
   editor and the build run the same code rather than keeping two of it.
-  `frost.compilerPath` names the compiler; a bare name is looked up on PATH.
-- **A problem matcher**, `$frost`, which turns a located compiler diagnostic
-  into an entry in the Problems panel.
+- **Navigation** over the declaration syntax: outline, go to definition, find
+  references and hover, read off the text rather than off a parse.
+- **A problem matcher**, `$frost`, which turns a located compiler report into an
+  entry in the Problems panel.
+
+Everything above that runs a compiler runs the **self-hosted** one. The
+bootstrap is a complete Frost compiler and its one job is to build that one; a
+tool is written in Frost and lives there alone. `just install-self` puts it on
+PATH as `frostc`, which is what `frost.compilerPath` names by default. A bare
+name is looked up on PATH.
 
 `.vscode/tasks.json` uses that matcher. `Ctrl+Shift+B` runs every compiler check
 over the open file, and errors land on the line that caused them.

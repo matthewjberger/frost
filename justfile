@@ -116,15 +116,15 @@ uninstall-hooks:
 uninstall-hooks:
     rm -f .git/hooks/pre-commit
 
-# Checks a frost file without producing an executable, for the editor (Windows)
+# Checks a frost file with frostc, without producing an executable (Windows)
 [windows]
 check-file file:
-    @New-Item -ItemType Directory -Force .frost-build | Out-Null; $env:RUST_BACKTRACE = "0"; cargo run -r -q -p frost --bin frost -- --native -o .frost-build/check.o {{file}}
+    @New-Item -ItemType Directory -Force .frost-build | Out-Null; frostc --native -o .frost-build/check.o {{file}}
 
-# Checks a frost file without producing an executable, for the editor (Unix)
+# Checks a frost file with frostc, without producing an executable (Unix)
 [unix]
 check-file file:
-    @mkdir -p .frost-build && RUST_BACKTRACE=0 cargo run -r -q -p frost --bin frost -- --native -o .frost-build/check.o {{file}}
+    @mkdir -p .frost-build && frostc --native -o .frost-build/check.o {{file}}
 
 # Prints where this VS Code keeps its extensions, portable installs included (Windows)
 [windows]
@@ -339,11 +339,11 @@ deps:
 
 # Writes every file frost.json says a program of this project writes
 generate:
-    cargo run -r -q -p frost --bin frost -- generate
+    frostc generate
 
 # Checks each of those is what its generator would write
 generate-check:
-    cargo run -r -q -p frost --bin frost -- generate --check
+    frostc generate --check
 
 # Builds the self-hosted compiler (frost written in frost)
 #
