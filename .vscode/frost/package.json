@@ -2,7 +2,7 @@
   "name": "frost",
   "displayName": "Frost",
   "description": "Syntax highlighting and navigation for the Frost language",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "frost-lang",
   "license": "MIT",
   "engines": {
@@ -62,8 +62,8 @@
       "properties": {
         "frost.compilerPath": {
           "type": "string",
-          "default": "frost",
-          "description": "The frost compiler the formatter and the linter run. A name is looked up on PATH."
+          "default": "frostc",
+          "description": "The self-hosted Frost compiler, which is what `just install-self` puts on PATH as `frostc`. It is the one that carries the tools this extension runs: the formatter, the check, the lint and `api`. A name is looked up on PATH."
         }
       }
     },

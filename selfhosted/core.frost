@@ -59,7 +59,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     frost_rt_recover_run, frost_rt_recover_escape, frost_rt_recover_note,
     frost_rt_end_line,
     frost_rt_json_reports, frost_rt_json_place, frost_rt_json_close,
-    frost_rt_json_warn, report_warning_end,
+    frost_rt_json_warn, frost_rt_json_fix, report_warning_end,
     json_reports, report_command,
     frost_rt_report_open, frost_rt_report_note,
     frost_rt_recover_failures
@@ -388,6 +388,16 @@ frost_rt_json_close :: safe extern fn()
 // and the escape closes the record it was composing; a warning carries on, so
 // nothing else would and every one of them was composed and dropped.
 frost_rt_json_warn :: safe extern fn()
+
+// The edit that answers the report being composed. The span counts bytes from
+// the start of the file the report names, and `certain` says whether `frost fix`
+// applies it without being asked twice.
+frost_rt_json_fix :: extern fn(
+    start: i64,
+    end: i64,
+    replacement: ^i8,
+    certain: i64
+)
 // Reports held until the run is over, so they go out in the order they are
 // written rather than the order the passes found them. A place opens one and
 // every piece written after it belongs to it; anything written with none open

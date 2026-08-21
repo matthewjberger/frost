@@ -731,6 +731,32 @@ static void frost_rt_json_putc(char byte) {
    it, and the answer goes back to a refusal for the record after. */
 static int64_t frost_rt_json_is_warning = 0;
 
+/* The edit that answers the record being composed, where the report knows one.
+   A reader told what is wrong and where the answer goes has one keystroke left;
+   without this the answer was worked out and dropped. */
+static int64_t frost_rt_json_fix_on = 0;
+static int64_t frost_rt_json_fix_start = 0;
+static int64_t frost_rt_json_fix_end = 0;
+static int64_t frost_rt_json_fix_certain = 0;
+static char frost_rt_json_fix_text[512];
+
+void frost_rt_json_fix(int64_t start, int64_t end, const char *replacement,
+                       int64_t certain) {
+    if (!frost_rt_json_on) {
+        return;
+    }
+    frost_rt_json_fix_on = 1;
+    frost_rt_json_fix_start = start;
+    frost_rt_json_fix_end = end;
+    frost_rt_json_fix_certain = certain;
+    size_t held = strlen(replacement);
+    if (held >= sizeof(frost_rt_json_fix_text)) {
+        held = sizeof(frost_rt_json_fix_text) - 1;
+    }
+    memcpy(frost_rt_json_fix_text, replacement, held);
+    frost_rt_json_fix_text[held] = 0;
+}
+
 void frost_rt_json_close(void) {
     if (!frost_rt_json_on || (!frost_rt_json_open && frost_rt_json_length == 0)) {
         return;
@@ -782,7 +808,41 @@ void frost_rt_json_close(void) {
             frost_rt_json_putc((char)held);
         }
     }
-    frost_rt_json_put("\"}\n");
+    frost_rt_json_put("\"");
+    if (frost_rt_json_fix_on) {
+        frost_rt_json_put(",\"fix\":{\"file\":");
+        if (frost_rt_json_file[0] == 0) {
+            frost_rt_json_put("null");
+        } else {
+            frost_rt_json_putc('\"');
+            for (const char *at = frost_rt_json_file; *at; at++) {
+                if (*at == '\\' || *at == '\"') {
+                    frost_rt_json_putc('\\');
+                }
+                frost_rt_json_putc(*at);
+            }
+            frost_rt_json_putc('\"');
+        }
+        char span[128];
+        int room = snprintf(span, sizeof(span),
+                            ",\"span\":[%lld,%lld],\"replacement\":\"",
+                            (long long)frost_rt_json_fix_start,
+                            (long long)frost_rt_json_fix_end);
+        if (room > 0) {
+            frost_rt_report_append(span, (size_t)room);
+        }
+        for (const char *at = frost_rt_json_fix_text; *at; at++) {
+            if (*at == '\\' || *at == '\"') {
+                frost_rt_json_putc('\\');
+            }
+            frost_rt_json_putc(*at);
+        }
+        frost_rt_json_put("\",\"certain\":");
+        frost_rt_json_put(frost_rt_json_fix_certain ? "true" : "false");
+        frost_rt_json_put("}");
+        frost_rt_json_fix_on = 0;
+    }
+    frost_rt_json_put("}\n");
     frost_rt_json_length = 0;
 }
 

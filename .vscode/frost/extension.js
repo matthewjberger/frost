@@ -2,6 +2,11 @@
 // its line and the namespace is flat, so a workspace search for
 // `^\s*name\s*::` is definition lookup. No language server, no dependencies;
 // the extension stays a plain file copy under `just install-editor`.
+//
+// What it cannot answer from the text it asks the compiler, and the compiler it
+// asks is the self-hosted one. The bootstrap's job is to build that compiler and
+// to be held to the same language; a tool written in Frost lives in the
+// self-hosted compiler alone and has no twin there.
 const vscode = require("vscode");
 
 const FUNCTION_HEAD =
@@ -513,7 +518,7 @@ const documentFormattingProvider = {
     } catch (error) {
       const reason =
         error && error.code === "ENOENT"
-          ? `'${compiler}' was not found; set frost.compilerPath to the compiler`
+          ? `'${compiler}' was not found; run 'just install-self' or set frost.compilerPath to the self-hosted compiler`
           : (error && error.stderr) || (error && error.message) || "it failed";
       vscode.window.showErrorMessage(`frost fmt did not run: ${reason}`);
       return undefined;
@@ -541,10 +546,13 @@ const findings = vscode.languages.createDiagnosticCollection("frost");
 // does not survive the trip.
 const offered = new Map();
 
+// The compiler this extension runs. The self-hosted one, which is where the
+// tools live: the bootstrap's job is to build it, and a tool written in Frost
+// has no twin there. `just install-self` puts it on PATH under this name.
 function compilerPath() {
   return vscode.workspace
     .getConfiguration("frost")
-    .get("compilerPath", "frost");
+    .get("compilerPath", "frostc");
 }
 
 // The compiler's output, whichever stream it wrote on and whether or not it
@@ -766,7 +774,15 @@ async function surfaceUnder(prefix, directory) {
     if (!/^(.+):(\d+)$/.test(lines[index])) {
       continue;
     }
-    const signature = withoutBody((lines[index + 1] || "").trim());
+    // A head carries over the lines its parameters run onto, and the blank line
+    // after it is what ends it.
+    const parts = [];
+    let at = index + 1;
+    while (at < lines.length && lines[at].trim() !== "") {
+      parts.push(lines[at].trim());
+      at += 1;
+    }
+    const signature = withoutBody(parts.join(" "));
     const named = signature.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*::/);
     if (!named) {
       continue;
@@ -807,18 +823,41 @@ const completionItemProvider = {
   },
 };
 
-// `frost fix` applies every edit a report carried that it applies unread. The
-// file on disk is what it rewrites, so the buffer is written first and read
-// back after.
+// Every edit the compiler applies unread, applied at once. The reports are the
+// ones already published, so this offers exactly what the lightbulbs offer and
+// asks the compiler nothing new.
+//
+// Highest offset first, so applying one leaves the offsets of the ones not yet
+// applied standing, and two edits over the same bytes are one edit twice.
 async function applyEveryFix() {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== "frost") {
     return;
   }
-  await editor.document.save();
-  await runCompiler(["fix", editor.document.uri.fsPath]);
-  await vscode.commands.executeCommand("workbench.action.files.revert");
+  const held = (offered.get(editor.document.uri.toString()) || []).filter(
+    (fix) => fix.certain
+  );
+  if (held.length === 0) {
+    vscode.window.showInformationMessage("frost: nothing to apply here");
+    return;
+  }
+  held.sort((one, other) => other.edit.start.compareTo(one.edit.start));
+  const edit = new vscode.WorkspaceEdit();
+  let last = null;
+  let written = 0;
+  for (const fix of held) {
+    if (last && fix.edit.end.compareTo(last) > 0) {
+      continue;
+    }
+    edit.replace(editor.document.uri, fix.edit, fix.replacement);
+    last = fix.edit.start;
+    written += 1;
+  }
+  await vscode.workspace.applyEdit(edit);
   await publishFindings(editor.document);
+  vscode.window.showInformationMessage(
+    `frost: applied ${written} fix(es)`
+  );
 }
 
 function activate(context) {

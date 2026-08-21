@@ -8,6 +8,7 @@ export SOURCE_ROOM, SYNTH_ROOM, copy_name,
     directory_part, emit_position,
     file_name,
     joined_path, join_path, module_at, report_where, report_note_where,
+    report_fix,
     line_of, column_of, file_of,
     resolve_imports, search_roots_from, manifest_roots, manifest_generators,
     source_with_room,
@@ -553,6 +554,38 @@ report_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     // one report and still sorts where it belongs.
     frost_rt_report_open(offset)
     report_place(modules, src, offset)
+}
+
+// The edit that answers the report being composed, where the site that wrote it
+// knows one. The span counts bytes from the start of the file, and the offsets a
+// pass holds count from the start of the one buffer every module was laid into,
+// so the module's own start is what comes off them.
+//
+// Said only where a run asks for records. At a terminal the report is the text
+// and the reader is the one who applies it.
+report_fix :: fn(
+    mut modules: Arena<Module>,
+    offset: i64,
+    length: i64,
+    replacement: ^i8,
+    certain: i64
+) {
+    if (json_reports() == false || modules.count == 0) {
+        return
+    }
+    index := module_at(modules, offset)
+    if (index < 0) {
+        return
+    }
+    start := arena_at(modules, index).start
+    unsafe {
+        frost_rt_json_fix(
+            offset - start,
+            offset - start + length,
+            replacement,
+            certain
+        )
+    }
 }
 
 // The block a report opens with: the file, the line and the column, the line of

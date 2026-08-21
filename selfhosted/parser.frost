@@ -6254,6 +6254,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
                 && peek_kind(p, 1) == TokenKind::Ident) {
                 report_where(p.modules, p.src, cur_off(p))
                 report("a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries")
+                report_fix(p.modules, cur_off(p), 3, "mut", 1)
                 frost_rt_recover_escape()
             }
             mut assignable: i64 = 0
@@ -6348,6 +6349,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             || peek_kind(p, 2) == TokenKind::Comma)) {
         report_where(p.modules, p.src, cur_off(p))
         report("a local that is reassigned is declared with `mut`, the word a parameter that writes the caller's value carries")
+        report_fix(p.modules, cur_off(p), 3, "mut", 1)
         frost_rt_recover_escape()
     }
     if (kind == TokenKind::KwMut) {
@@ -6837,6 +6839,10 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         report("expected a statement, found '")
         report_src(p.src, cur_off(p), cur_len(p))
         report("'")
+        // Taking the token away is what a reader does with a stray bracket, and
+        // it is a guess: the same report is what a missing operator two lines
+        // above looks like.
+        report_fix(p.modules, cur_off(p), cur_len(p), "", 0)
         frost_rt_recover_escape()
     }
     expr := parse_expr(p)
