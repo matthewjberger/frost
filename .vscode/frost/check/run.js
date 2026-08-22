@@ -1,0 +1,268 @@
+// Loads the extension against a stub VS Code, activates it, and asks every
+// provider it registers, over a workspace it writes itself.
+//
+// The server has its own gate: a driver that speaks the protocol on a pipe.
+// This is the other half. An extension whose `activate` throws registers
+// nothing and the editor says nothing about it, so the failure a reader sees is
+// that the language has no support at all.
+//
+//     node .vscode/frost/check/run.js [compiler]
+//
+// The compiler defaults to `frostc` on PATH, which is what `just install-self`
+// puts there and what the extension asks for.
+
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const Module = require("module");
+
+const here = __dirname;
+const root = path.resolve(here, "..", "..", "..");
+
+if (process.argv[2]) {
+  process.env.FROST_COMPILER = process.argv[2];
+}
+
+// `require("vscode")` inside the extension resolves to the stub beside this.
+const load = Module._load;
+Module._load = function (request, parent, isMain) {
+  if (request === "vscode") {
+    return require(path.join(here, "vscode.js"));
+  }
+  return load(request, parent, isMain);
+};
+
+const vscode = require(path.join(here, "vscode.js"));
+const extension = require(path.join(root, ".vscode", "frost", "extension.js"));
+const held = vscode.held;
+
+// A workspace of its own, so what an answer names is what this wrote and
+// nothing a previous run left behind.
+const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "frost-editor-"));
+const sample = path.join(workspace, "sample.frost");
+const TEXT = [
+  "// What a greeting costs.",
+  "//",
+  "// Counted rather than measured.",
+  "greeting_cost :: fn(n: i64) -> i64 {",
+  "    n * 2",
+  "}",
+  "",
+  "Point :: struct { x: i64, y: i64 }",
+  "",
+  "main :: fn() -> i64 {",
+  "    var total: i64 = greeting_cost(2)",
+  "    total",
+  "}",
+  "",
+].join("\n");
+fs.writeFileSync(sample, TEXT, "utf8");
+
+const uri = vscode.Uri.file(sample);
+const lines = TEXT.split("\n");
+const document = {
+  languageId: "frost",
+  uri,
+  version: 1,
+  lineCount: lines.length,
+  getText: () => TEXT,
+  lineAt: (index) => ({
+    range: { end: new vscode.Position(index, lines[index].length) },
+  }),
+};
+
+held.workspaceFolders.push({ uri: vscode.Uri.file(workspace) });
+held.documents.push(document);
+
+function provider(name) {
+  const entry = held.registered[name];
+  if (!entry) {
+    throw new Error(`nothing registered a ${name} provider`);
+  }
+  // A workspace-symbol provider is registered on its own; every other one
+  // carries a selector in front of it.
+  return entry[0].length === 1 ? entry[0][0] : entry[0][1];
+}
+
+function at(needle, offset = 0) {
+  const index = TEXT.indexOf(needle) + offset;
+  const line = TEXT.slice(0, index).split("\n").length - 1;
+  return new vscode.Position(
+    line,
+    index - (TEXT.lastIndexOf("\n", index - 1) + 1)
+  );
+}
+
+// A path out of a URI is written with the separator the URI uses, and the one
+// this wrote is written with the platform's.
+function same_file(one, other) {
+  return (
+    one.replace(/\\/g, "/").toLowerCase() ===
+    other.replace(/\\/g, "/").toLowerCase()
+  );
+}
+
+const wrong = [];
+
+function want(label, held, ok, shown) {
+  const passed = ok(held);
+  console.log(`${passed ? "ok  " : "BAD "} ${label.padEnd(16)} ${shown(held)}`);
+  if (!passed) {
+    wrong.push(label);
+  }
+}
+
+const some = (held) => Array.isArray(held) && held.length > 0;
+const count = (held) => (Array.isArray(held) ? String(held.length) : "-");
+
+async function main() {
+  extension.activate({ subscriptions: [] });
+  const names = Object.keys(held.registered).sort();
+  want(
+    "registered",
+    names,
+    (found) => found.length >= 13,
+    (found) => found.join(" ")
+  );
+
+  // `activate` tells the server about the buffer; the first answer follows.
+  await new Promise((settle) => setTimeout(settle, 5000));
+
+  want(
+    "diagnostics",
+    held.diagnostics.get(uri.toString()) || [],
+    (found) => found.some((one) => one.message.includes("`mut`")),
+    (found) => found.map((one) => one.message.slice(0, 40)).join(" | ")
+  );
+
+  const caret = at("greeting_cost(2)", 2);
+  want(
+    "definition",
+    await provider("definition").provideDefinition(document, caret),
+    (found) =>
+      found && same_file(found.uri.fsPath, sample) && found.range.start.line === 3,
+    (found) => (found ? `${found.uri.fsPath}:${found.range.start.line}` : "none")
+  );
+  want(
+    "hover",
+    await provider("hover").provideHover(document, caret),
+    (found) =>
+      found && found.contents.value.includes("greeting_cost :: fn(n: i64)"),
+    (found) => (found ? JSON.stringify(found.contents.value.slice(0, 44)) : "none")
+  );
+  want(
+    "references",
+    await provider("references").provideReferences(document, caret),
+    (found) => found.length === 2,
+    count
+  );
+  want(
+    "highlight",
+    await provider("highlight").provideDocumentHighlights(document, caret),
+    (found) => found.length === 2,
+    count
+  );
+  want(
+    "documentSymbol",
+    await provider("documentSymbol").provideDocumentSymbols(document),
+    (found) => found.length === 3,
+    (found) => found.map((one) => `${one.name}:${one.kind}`).join(" ")
+  );
+  want(
+    "workspaceSymbol",
+    await provider("workspaceSymbol").provideWorkspaceSymbols("point"),
+    (found) => found.length === 1 && found[0].name === "Point",
+    (found) => found.map((one) => one.name).join(" ")
+  );
+  want(
+    "formatting",
+    await provider("formatting").provideDocumentFormattingEdits(document),
+    some,
+    count
+  );
+  want(
+    "folding",
+    await provider("folding").provideFoldingRanges(document),
+    some,
+    count
+  );
+  want(
+    "prepareRename",
+    await provider("rename").prepareRename(document, caret),
+    (found) => found && found.start.line === 10,
+    (found) => (found ? JSON.stringify(found) : "none")
+  );
+  want(
+    "rename",
+    await provider("rename").provideRenameEdits(document, caret, "cost_of"),
+    (found) => found && found.edits.length === 2,
+    (found) => (found ? String(found.edits.length) : "none")
+  );
+  want(
+    "completion",
+    await provider("completion").provideCompletionItems(
+      document,
+      at("greeting_cost(2)", 6)
+    ),
+    (found) => found.some((one) => one.label === "greeting_cost"),
+    (found) => found.map((one) => `${one.label}:${one.kind}`).join(" ")
+  );
+  want(
+    "signatureHelp",
+    await provider("signatureHelp").provideSignatureHelp(
+      document,
+      at("greeting_cost(2)", 14)
+    ),
+    (found) =>
+      found &&
+      found.signatures.length === 1 &&
+      found.signatures[0].parameters.length === 1,
+    (found) => (found ? found.signatures[0].label : "none")
+  );
+  want(
+    "codeAction",
+    await provider("codeAction").provideCodeActions(
+      document,
+      new vscode.Range(at("var total"), at("var total", 3)),
+      { diagnostics: held.diagnostics.get(uri.toString()) || [] }
+    ),
+    (found) => found.length === 1 && found[0].edit.edits.length === 1,
+    (found) => found.map((one) => one.title).join(" | ")
+  );
+
+  vscode.window.activeTextEditor = { document };
+  const command = held.registered.command.find(
+    (one) => one[0] === "frost.applyEveryFix"
+  )[1];
+  await command();
+  want(
+    "applyEveryFix",
+    held.shown,
+    (found) => found.some((one) => one[0] === "edit" && one[1] === 1),
+    (found) => JSON.stringify(found)
+  );
+
+  extension.deactivate();
+  // The server is stopped, not gone; it was started with this directory as its
+  // own, so the system keeps it until the process has.
+  await new Promise((settle) => setTimeout(settle, 500));
+  try {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  } catch (problem) {
+    console.log(`(left ${workspace} behind)`);
+  }
+  if (wrong.length > 0) {
+    console.error(`\n${wrong.length} wrong: ${wrong.join(", ")}`);
+    return 1;
+  }
+  console.log("\nthe editor half answers");
+  return 0;
+}
+
+main().then(
+  (code) => process.exit(code),
+  (problem) => {
+    console.error("FAILED:", problem && problem.stack);
+    process.exit(1);
+  }
+);

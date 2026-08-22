@@ -162,6 +162,10 @@ install-editor:
     ln -s "$PWD/.vscode/frost" "$DIR/frost"
     echo "Linked $DIR/frost. Reload the VS Code window to pick it up."
 
+# Asks the editor half every question a reader asks, without an editor
+check-editor:
+    node .vscode/frost/check/run.js
+
 # Remove the VS Code syntax highlighting for .frost files (Windows)
 [windows]
 uninstall-editor:
