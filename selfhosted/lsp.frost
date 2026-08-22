@@ -931,17 +931,29 @@ answer_one :: fn(mut s: Server) {
     }
 }
 
-// A request the server could not finish.
+// What a turn that did not finish leaves behind.
 //
 // Whatever half a reply was being written is dropped, since a message the
 // header does not measure is one the editor cannot read past. What the fault
 // wrote is dropped with it, or it would be read as a report about the file the
-// next check runs on. Then whoever asked is told there is nothing, rather than
-// left waiting for a reply that is not coming.
-say_gave_up :: fn(mut s: Server) {
+// next check runs on.
+//
+// Then the scope the turn was taking memory in is closed. A check takes its
+// arenas inside one and hands them back at the end, and a fault escapes to the
+// mark without reaching that end, so nothing else would. `lint_one` closes its
+// scope around the mark for the same reason; here the scope opens deeper than
+// the mark does, so the close belongs on this side of it.
+drop_what_the_turn_took :: fn() {
     emit_memory_text()
     unsafe { frost_rt_report_take() }
+    frost_rt_take_close()
     frost_rt_recover_clear()
+}
+
+// A request the server could not finish. Whoever asked is told there is
+// nothing, rather than left waiting for a reply that is not coming.
+say_gave_up :: fn(mut s: Server) {
+    drop_what_the_turn_took()
     mut document := json_parse(bytes_view(s.body))
     request := json_root(document)
     if (request >= 0 && json_member(document, request, "id") >= 0) {
@@ -1172,9 +1184,9 @@ answer_initialize :: fn(mut s: Server, mut document: Json, request: i64) {
     say_open()
     say_result_head(document, request)
     emit_text("{\"capabilities\":{")
-    // The whole document arrives on every change. A Frost source is read end to
-    // end by every pass anyway, so keeping a copy up to date by ranges would
-    // save nothing the check does not spend.
+    // An edit arrives as the range it covers and the text that takes its place,
+    // which is what a reader typing into a large file sends thousands of. A
+    // change carrying no range carries the whole document instead.
     emit_text("\"textDocumentSync\":{\"openClose\":true,\"change\":2,\"save\":true},")
     emit_text("\"hoverProvider\":true,")
     emit_text("\"definitionProvider\":true,")
@@ -1287,9 +1299,7 @@ settle_one :: fn(mut s: Server) {
         frost_rt_recover_run(settle_guarded, ptr_cast($u8, ptr_to(turn)))
     }
     if (escaped == 1) {
-        emit_memory_text()
-        unsafe { frost_rt_report_take() }
-        frost_rt_recover_clear()
+        drop_what_the_turn_took()
     }
 }
 
