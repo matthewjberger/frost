@@ -24,10 +24,6 @@ export LightType, Light, LightIds, LightCounts, light_ids, sun, lamp, spot,
 
 // Which of the three a light is. Directional is the sun: everywhere at once and
 // no falloff. Point is a lamp. Spot is a lamp inside a cone.
-//
-// Nightshade has a fourth, an area light shaded with linearly transformed
-// cosines. That is a different technique rather than another case of this one,
-// so it is not here yet and is not pretended to be.
 LightType :: enum { Directional, Point, Spot }
 
 // A light source. Attach it to an entity that has a transform.

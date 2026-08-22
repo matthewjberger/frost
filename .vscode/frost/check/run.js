@@ -145,6 +145,23 @@ async function main() {
     (found) => found.join(" ")
   );
 
+  // What a stock editor leaves off, which the server answers for anyway. The
+  // manifest turns each on for Frost files, and a reader who wants one off
+  // still says so in their own settings.
+  const manifest = require(path.join(root, ".vscode", "frost", "package.json"));
+  const defaults =
+    (manifest.contributes.configurationDefaults || {})["[frost]"] || {};
+  want(
+    "editor defaults",
+    defaults,
+    (found) =>
+      found["editor.linkedEditing"] === true &&
+      found["editor.formatOnType"] === true &&
+      found["editor.semanticHighlighting.enabled"] === true &&
+      found["editor.inlayHints.enabled"] === "on",
+    (found) => Object.keys(found).length + " on"
+  );
+
   // `activate` tells the server about the buffer; the first answer follows.
   await new Promise((settle) => setTimeout(settle, 5000));
 

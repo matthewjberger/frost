@@ -40,9 +40,16 @@ file is highlighted the same way.
 
 Everything else comes from the compiler. The extension starts one `frostc lsp`
 and asks it: the reports as you type and the fixes they carry, go to
-definition, hover, references, the outline, workspace search, rename,
-completion, folding and formatting. The passes that build a program are what
+definition, declaration, type definition and implementation, hover, references,
+the outline, workspace search, rename, completion and what a call takes,
+folding, selection ranges, document links, colouring by what a name is, inlay
+hints, code lenses, the call and type hierarchies, and layout of a file, of a
+range, or of a line as you close it. The passes that build a program are what
 answer, so a report the editor underlines is a report the build refuses on.
+
+For a `.frost` file the extension turns on four settings a stock window leaves
+off: linked editing, layout as you type, semantic highlighting, and inlay
+hints. Say otherwise in your own settings to turn one back off.
 
 `Ctrl+Shift+B` runs every compiler check over the open file and puts what it
 finds in the Problems panel, on the line that caused it.

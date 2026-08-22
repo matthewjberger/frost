@@ -451,9 +451,9 @@ format_source :: fn(src: str, length: i64) {
     // The run of tokens waiting to be laid out, what it is indented by, and the
     // gaps holding the comments that sit at the end of its last line.
     //
-    // The gaps are kept apart rather than as one span from the first to the
-    // last. The source between two gaps is the tokens of the line, and a walk
-    // for a comment across it reads the `//` inside a string as one opening.
+    // Each gap is recorded on its own, so a walk for a comment stays inside
+    // one. The source between two gaps is the tokens of the line, where a `//`
+    // inside a string reads as a comment opening.
     mut pending_from: i64 = -1
     mut pending_to: i64 = 0
     mut pending_indent: i64 = 0

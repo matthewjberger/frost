@@ -1,44 +1,29 @@
-// The pass that draws a run of things, lit. The one a program gets by composing
-// the renderer rather than by writing a shader.
+// The pass that draws a run of things, lit. A program composes it: declare it
+// into a graph, hand it the run and the lights.
 //
-// Every demo before this wrote its own WGSL, its own pipeline and its own pass
-// body, which is the right thing when the demo is about what a pass can be. It
-// is the wrong thing when the program just wants its world on the screen, and
-// that is what this is for: declare it into a graph, hand it the run and the
-// lights, and there is nothing else to write.
+// It draws from the tables `render_world.frost` fills, of transforms, materials
+// and objects, and from the set of draws the compute passes build.
 //
-// What it draws with is what `render_world.frost` filled: tables of transforms,
-// materials and objects, and a set of draws the compute passes built. Nothing
-// here counts anything and nothing here decides what is drawn.
+// The frame is two passes. The first writes depth alone, for the things that
+// cover what is behind them. The second shades, comparing depth for equality,
+// so a fragment that something ends up in front of is shaded once. What goes in
+// the first is the solid lane of the batch tables, where a surface keeps every
+// fragment it makes.
 //
-// The frame is two passes. The first writes depth and nothing else, for the
-// things that certainly cover what is behind them; the second shades, comparing
-// depth for equality rather than for nearness, so a fragment that something else
-// ends up in front of is shaded once instead of once per thing that covers it.
-// What may go in the first is what the batch tables call the solid lane: a
-// surface that drops fragments of its own has no fragment stage there to drop
-// them in, so it would write depth over its own holes.
-//
-// Three pipelines for the second pass, because a batch is a run of instances
-// sharing a pipeline and the classes exist to keep them apart:
+// The second pass issues three pipelines, since a batch is a run of instances
+// sharing one:
 //
 //   opaque        back faces dropped, depth written
-//   double sided  neither face dropped, depth written
-//   transparent   blended over what is behind it, depth tested and not written
+//   double sided  both faces kept, depth written
+//   transparent   blended over what is behind it, depth tested, depth write off
 //
-// Which one draws a thing is its material's business, decided in the classify
-// pass, and this reads the answer as the order it issues the classes in: what
-// is opaque before what is blended, and the overlay classes after the world.
+// Which one draws a thing is its material's business, settled in the classify
+// pass. The order here reads that answer: opaque before blended, and the
+// overlay classes after the world. The overlay classes share the world's depth
+// buffer, so an overlay behind something is hidden by it.
 //
-// The overlay classes share the world's depth buffer, so an overlay behind
-// something is still hidden by it. Nightshade gives them a depth target of
-// their own, which is what makes an overlay sit on top whatever depth it is at;
-// that target is not here yet, so what the layer buys today is draw order and
-// nothing more.
-//
-// Lights arrive as a run of records rather than as a component, because this is
-// the renderer and a component belongs to the world. `lib/engine/light.frost` is
-// what turns one into the other.
+// Lights arrive as a run of records. `lib/engine/light.frost` turns a component
+// into one.
 
 import "wgpu.frost"
 import "frame.frost"
@@ -172,15 +157,12 @@ lit_free :: fn(mut held: Lit) {
     render_pipeline_release(held.transparent_pipeline)
 }
 
-// The pass, into a graph. One node: what it writes is the colour and depth it
-// was given, and what it reads is nothing the graph has to know about, because
-// everything it needs it builds itself.
+// The pass, into a graph. One node: it writes the colour and depth it was
+// given, and builds everything else it needs itself.
 //
-// That is the shape nightshade has. Clustering the lights, laying the batches
-// out, writing the depth and drawing the classes are one thing that happens in
-// an order of its own; declaring them as separate graph passes would put that
-// order in every program that draws a view, and a program with two views would
-// assemble it twice.
+// Clustering the lights, laying the batches out, writing the depth and drawing
+// the classes happen in an order of their own, which this node keeps. It is the
+// shape nightshade has.
 lit_declare :: fn(
     mut g: Graph,
     which: i64,

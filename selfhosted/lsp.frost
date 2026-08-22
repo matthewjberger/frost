@@ -933,16 +933,14 @@ answer_one :: fn(mut s: Server) {
 
 // What a turn that did not finish leaves behind.
 //
-// Whatever half a reply was being written is dropped, since a message the
-// header does not measure is one the editor cannot read past. What the fault
-// wrote is dropped with it, or it would be read as a report about the file the
-// next check runs on.
+// Half a reply is dropped: the header measures a whole one, and the editor
+// reads by that measure. What the fault wrote goes with it, so the next check's
+// reports stand alone.
 //
 // Then the scope the turn was taking memory in is closed. A check takes its
-// arenas inside one and hands them back at the end, and a fault escapes to the
-// mark without reaching that end, so nothing else would. `lint_one` closes its
-// scope around the mark for the same reason; here the scope opens deeper than
-// the mark does, so the close belongs on this side of it.
+// arenas inside one and hands them back at its end; a fault reaches the mark
+// instead, so the close belongs here. `lint_one` puts its close around the
+// mark for the same reason.
 drop_what_the_turn_took :: fn() {
     emit_memory_text()
     unsafe { frost_rt_report_take() }
@@ -951,7 +949,7 @@ drop_what_the_turn_took :: fn() {
 }
 
 // A request the server could not finish. Whoever asked is told there is
-// nothing, rather than left waiting for a reply that is not coming.
+// nothing, so the editor stops waiting on it.
 say_gave_up :: fn(mut s: Server) {
     drop_what_the_turn_took()
     mut document := json_parse(bytes_view(s.body))

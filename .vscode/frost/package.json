@@ -12,9 +12,6 @@
     "Programming Languages"
   ],
   "main": "./extension.js",
-  "activationEvents": [
-    "onLanguage:frost"
-  ],
   "contributes": {
     "languages": [
       {
@@ -71,6 +68,14 @@
           "default": "frostc",
           "description": "The self-hosted Frost compiler, which is what `just install-self` puts on PATH as `frostc`. The extension starts it once as `frostc lsp` and asks it everything: the reports, the places, the names and the layout. A bare name is looked up on PATH."
         }
+      }
+    },
+    "configurationDefaults": {
+      "[frost]": {
+        "editor.linkedEditing": true,
+        "editor.formatOnType": true,
+        "editor.semanticHighlighting.enabled": true,
+        "editor.inlayHints.enabled": "on"
       }
     },
     "jsonValidation": [
