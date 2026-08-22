@@ -33,7 +33,12 @@ lint_program :: fn(mut p: Parser) -> i64 {
             // this program is not the only one that will. Reported, an exported
             // function nothing here calls sent a reader to delete what another
             // program is written against.
-            if (mentions_of(p, sym.off, sym.len) <= 1
+            // A function a C caller names is emitted under the name it was
+            // written under, and what names it is outside this program. The
+            // Frost half of the runtime is written this way, and reported it
+            // sends a reader to delete what every program is linked against.
+            if (sym.keeps_name == 0
+                && mentions_of(p, sym.off, sym.len) <= 1
                 && offered_to_importers(p, sym.off, sym.len) == false
                 && begins_with(p.src, sym.off, sym.len, "__test") == false
                 && str_range_eq(p.src, sym.off, sym.len, "main") == false) {

@@ -53,9 +53,14 @@ fn mentions(tokens: &[Token]) -> std::collections::HashMap<&str, usize> {
 
 /// A function nothing reaches.
 ///
-/// `main`, an exported name and a test body are roots. Every other name written
-/// anywhere but its own declaration is reached. A wrong finding here sends a
-/// reader to delete working code, so the question asked is the conservative one.
+/// `main`, an exported name, a test body and a function a C caller names are
+/// roots. Every other name written anywhere but its own declaration is reached.
+/// A wrong finding here sends a reader to delete working code, so the question
+/// asked is the conservative one.
+///
+/// A function written as `extern fn` with a body keeps the name it was written
+/// under, because something outside the program calls it by that name. The
+/// Frost half of the runtime is written that way.
 fn unreachable_functions(
     ast: &Ast,
     roots: &[StmtId],
@@ -79,6 +84,7 @@ fn unreachable_functions(
         if name == "main"
             || name.contains(crate::parser::TEST_PREFIX)
             || exported.contains(name)
+            || ast.is_exported_symbol(name)
             || written.get(name).copied().unwrap_or(0) > 1
         {
             continue;

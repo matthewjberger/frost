@@ -265,6 +265,12 @@ A path that is a directory is every `.frost` file under it, so `frost lint .`
 reads a whole project. A file the compiler refuses is one it already has
 something to say about, so a refusal ends that file rather than the run.
 
+`frostc lint` is the slower of the two by a wide margin. A finding about a name
+nothing reaches has to know what the modules around it name, so the self-hosted
+one resolves each file's imports and checks it the way a build would. The
+bootstrap reads each file on its own. Over a whole project that is seconds
+against minutes, for the same findings.
+
 - an `unsafe` block that holds nothing unchecked
 - a function nothing reaches
 - an exported name outside the prefix its directory declares, where `frost.json`

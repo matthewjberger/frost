@@ -20526,6 +20526,18 @@ fn both_compilers_lint_a_directory() {
 ",
     )
     .unwrap();
+    // A directory with no Frost file in it says nothing, rather than reading
+    // as a run that was asked about nothing at all.
+    std::fs::create_dir_all(directory.join("empty")).unwrap();
+    // A function a C caller names is emitted under the name it was written
+    // under. What names it is outside the program, so nothing inside naming it
+    // says nothing about whether it is reached.
+    std::fs::write(
+        directory.join("outside.frost"),
+        "probe_from_c :: extern fn(n: i64) -> i64 { n }
+",
+    )
+    .unwrap();
 
     let said = |output: std::process::Output| -> Vec<String> {
         let text = String::from_utf8_lossy(&output.stdout).to_string()

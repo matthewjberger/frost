@@ -1023,22 +1023,35 @@ lint_paths :: fn(mut options: Options) -> i64 {
     frost_rt_refusal_returns()
     mut files: Arena<Held> = arena_make($Held, 256)
     count := frost_rt_arg_count()
+    mut named: i64 = 0
     mut index: i64 = 2
     while (index < count) {
         argument := frost_rt_arg_at(index)
         if (dashed(argument) == false) {
+            named = named + 1
             frost_files_under(files, argument, 0)
         }
         index = index + 1
     }
-    if (files.count == 0) {
+    // What is asked for is a path. A directory holding no Frost file is one
+    // with nothing to say about it, which is not the same as being asked
+    // about nothing at all.
+    if (named == 0) {
         // Named the way the bootstrap names it. A line already carrying the
         // command is not given the compiler's name in front of it as well.
         report("frost lint: which files?\n")
         frost_rt_die()
     }
+    // What the command line named, which every file keeps. A build adds what
+    // the manifest above its own file declares, and those belong to that file
+    // rather than to the next one: without cutting back to here, a project of
+    // any size fills both arenas partway through.
+    named_roots := options.roots.count
+    named_layers := options.layers.count
     mut at: i64 = 0
     while (at < files.count) {
+        options.roots.count = named_roots
+        options.layers.count = named_layers
         lint_one(options, arena_at(files, at).at)
         at = at + 1
     }
