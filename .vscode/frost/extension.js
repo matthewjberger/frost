@@ -49,8 +49,9 @@ class Server {
     const folder = vscode.workspace.workspaceFolders
       ? vscode.workspace.workspaceFolders[0].uri.fsPath
       : undefined;
+    let child;
     try {
-      this.child = spawn(compilerPath(), ["lsp"], {
+      child = spawn(compilerPath(), ["lsp"], {
         cwd: folder,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -58,9 +59,26 @@ class Server {
       this.report(error);
       return false;
     }
-    this.child.on("error", (error) => this.report(error));
-    this.child.stdout.on("data", (piece) => this.read(piece));
-    this.child.on("exit", () => {
+    this.child = child;
+    // Whatever half a message the one before it left behind is not the start of
+    // this one's first.
+    this.held = Buffer.alloc(0);
+    child.on("error", (error) => this.report(error));
+    // Each handler answers for the process it was given, and says nothing once
+    // a later one has taken its place. A restart starts the next server while
+    // the one before it is still ending, and its exit arrives after: without
+    // this, it forgets the buffers the new server was just told about, and the
+    // reader is left with a server that answers nothing.
+    child.stdout.on("data", (piece) => {
+      if (this.child !== child) {
+        return;
+      }
+      this.read(piece);
+    });
+    child.on("exit", () => {
+      if (this.child !== child) {
+        return;
+      }
       this.child = null;
       for (const settle of this.waiting.values()) {
         settle(null);

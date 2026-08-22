@@ -242,6 +242,29 @@ async function main() {
     (found) => JSON.stringify(found)
   );
 
+  // A server that stopped, on purpose or otherwise, is started again by the
+  // next thing asked of it, and what it was told about the open buffers goes
+  // to the new one. Without that a reader whose server died sees the language
+  // lose its support with nothing said about it.
+  const restart = held.registered.command.find(
+    (one) => one[0] === "frost.restartServer"
+  )[1];
+  await restart();
+  await new Promise((settle) => setTimeout(settle, 4000));
+  want(
+    "restarted",
+    await provider("hover").provideHover(document, caret),
+    (found) =>
+      found && found.contents.value.includes("greeting_cost :: fn(n: i64)"),
+    (found) => (found ? "answering" : "silent")
+  );
+  want(
+    "restarted diagnostics",
+    held.diagnostics.get(uri.toString()) || [],
+    (found) => found.some((one) => one.message.includes("`mut`")),
+    (found) => found.length + " diagnostics"
+  );
+
   extension.deactivate();
   // The server is stopped, not gone; it was started with this directory as its
   // own, so the system keeps it until the process has.
