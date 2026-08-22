@@ -281,6 +281,24 @@ directory it is run in.
 A flat namespace has no `.` to narrow a guess with, and a family is named by its
 prefix here, so this asks for that narrowing directly.
 
+### `frostc lsp`
+
+Speaks the Language Server Protocol on standard input and output. One process,
+started once by an editor and asked about a file after every keystroke.
+
+What it answers with is what a build would say about the same text: the same
+passes run over the buffer on screen, so a report an editor underlines is a
+report the build refuses on. It serves the reports, the fixes they carry, go to
+definition, hover, references, highlights, the outline, workspace search,
+rename, completion, folding ranges and the formatter.
+
+A burst of keystrokes costs one check rather than one for each: what is already
+on the way in says which change is the last one, and the check runs when the
+stream goes quiet.
+
+The self-hosted compiler only. The bootstrap is a complete Frost compiler and
+its one job is to build that one; a tool written in Frost lives there alone.
+
 ### `frost generate [--check]`
 
 Writes every file the project's `frost.json` says a program of its own writes,

@@ -12,29 +12,40 @@
 - **Snippets** for the declaration forms, `match`, the loops, `with`, `unsafe`,
   `defer` and `test`.
 - **A schema** for `frost.json`, so the manifest completes and validates.
-- **Reports**, published in the Problems panel on open and on save. Two passes,
-  because they answer different questions: `frostc <file> --diagnostics=json`
-  says what a build refuses on and what it warns about, and `frostc lint
-  --diagnostics=json` says what a build says nothing about at all.
-- **Quick fixes**, from the edit a report carries. The compiler works out the
-  span to replace and what goes there, and says whether it applies the edit
-  unread; one it is sure of is the preferred action. `Frost: Apply every fix the
-  reports offer` applies all of those at once.
-- **Completion**, from `frostc api <prefix>`: every exported name beginning with
-  what is typed, with the signature its author wrote.
-- **Formatting**, which runs `frostc fmt -` over the buffer, so Format Document
-  and format-on-save write what a build's `frostc fmt --check` accepts. The
-  editor and the build run the same code rather than keeping two of it.
-- **Navigation** over the declaration syntax: outline, go to definition, find
-  references and hover, read off the text rather than off a parse.
+- **Everything the compiler knows**, from one `frostc lsp` started once and
+  asked over its own streams. The passes that build a program are what answer,
+  so a report the editor underlines is a report the build refuses on, and a
+  definition is the row in the symbol table rather than a line a pattern
+  matched. What it serves:
+
+  - Reports in the Problems panel, published as you type. A burst of keystrokes
+    is one check: what is already on the way in says which change is the last
+    one. A file an import reports about gets its own entry.
+  - Quick fixes, from the edit a report carries. The compiler works out the span
+    to replace and what goes there, and says whether it applies the edit unread;
+    one it is sure of is the preferred action. `Frost: Apply every fix the
+    reports offer` applies all of those at once.
+  - Go to definition, hover with the declaration head and the comment above it,
+    find references, and the highlight under every other place a name is
+    written.
+  - The outline, and workspace search over every open file.
+  - Rename, which changes every place a name is written: the namespace is flat,
+    so a name means one thing across the whole program.
+  - Completion over the names the workspace declares, each carrying the head its
+    author wrote.
+  - Folding ranges, and formatting, which is the same code `frostc fmt --check`
+    runs in a build.
+
 - **A problem matcher**, `$frost`, which turns a located compiler report into an
   entry in the Problems panel.
 
-Everything above that runs a compiler runs the **self-hosted** one. The
-bootstrap is a complete Frost compiler and its one job is to build that one; a
-tool is written in Frost and lives there alone. `just install-self` puts it on
-PATH as `frostc`, which is what `frost.compilerPath` names by default. A bare
-name is looked up on PATH.
+The compiler it talks to is the **self-hosted** one. The bootstrap is a complete
+Frost compiler and its one job is to build that one; a tool is written in Frost
+and lives there alone. `just install-self` puts it on PATH as `frostc`, which is
+what `frost.compilerPath` names by default. A bare name is looked up on PATH.
+
+`Frost: Restart the language server` starts a fresh one, which is what to reach
+for after rebuilding the compiler.
 
 `.vscode/tasks.json` uses that matcher. `Ctrl+Shift+B` runs every compiler check
 over the open file, and errors land on the line that caused them.

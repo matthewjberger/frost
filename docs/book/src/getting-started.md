@@ -36,9 +36,16 @@ just install-editor    # link the VS Code extension, then reload the window
 
 A `.frost` file gets syntax highlighting, snippets for the declaration forms,
 and validation for `frost.json`. A fenced block tagged `frost` in a markdown
-file is highlighted the same way. `Ctrl+Shift+B` runs every compiler check over
-the open file and puts what it finds in the Problems panel, on the line that
-caused it.
+file is highlighted the same way.
+
+Everything else comes from the compiler. The extension starts one `frostc lsp`
+and asks it: the reports as you type and the fixes they carry, go to
+definition, hover, references, the outline, workspace search, rename,
+completion, folding and formatting. The passes that build a program are what
+answer, so a report the editor underlines is a report the build refuses on.
+
+`Ctrl+Shift+B` runs every compiler check over the open file and puts what it
+finds in the Problems panel, on the line that caused it.
 
 The extension lives in `.vscode/frost` instead of the marketplace, and
 `just install-editor` links it into place. `just editor-dir` prints the

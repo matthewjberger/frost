@@ -377,7 +377,9 @@ hand-maintained header. `just generate` regenerates it.
 just install-editor    # link the VS Code extension, then reload the window
 ```
 
-A `.frost` file gets syntax highlighting, snippets for the declaration forms, and validation for `frost.json`. A fenced block tagged `frost` in a markdown file is highlighted the same way. `Ctrl+Shift+B` runs every compiler check over the open file and puts what it finds in the Problems panel, on the line that caused it.
+A `.frost` file gets syntax highlighting, snippets for the declaration forms, and validation for `frost.json`. A fenced block tagged `frost` in a markdown file is highlighted the same way.
+
+Everything else comes from the compiler itself. The extension starts one `frostc lsp` and asks it: the reports as you type and the fixes they carry, go to definition, hover, references, the outline, workspace search, rename, completion, folding and formatting. The passes that build a program are what answer, so a report the editor underlines is a report the build refuses on.
 
 The extension lives in [`.vscode/frost`](.vscode) and is linked into your VS Code, since it is not on the marketplace. `just editor-dir` prints where this VS Code reads its extensions, which for a portable install is somewhere other than `~/.vscode/extensions`. A test holds the grammar's keywords and builtins to the compiler's own lists, so the two cannot drift apart.
 
