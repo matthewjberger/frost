@@ -7,8 +7,9 @@ set -e
 apt-get update -qq
 # gcc and binutils are what a build and the assembler oracle need. clang is what
 # the ELF oracle needs, and without it that test skips itself, which is the
-# difference between checking the object this compiler writes and not.
-apt-get install -y -qq gcc binutils clang
+# difference between checking the object this compiler writes and not. nodejs
+# runs the two drivers that ask the editor support its questions.
+apt-get install -y -qq gcc binutils clang nodejs
 rustup component add clippy >/dev/null 2>&1 || true
 
 # The runner leaves the target directory inside the checkout, which is how
@@ -26,6 +27,9 @@ export FROST_RUNTIME_FROST=/w/runtime/runtime.frost
 # A toolchain that went missing would otherwise hide behind tests that skip
 # themselves, and the run would be green for the wrong reason.
 export FROST_REQUIRE_LINKER=1
+# And so would a missing JavaScript runtime, which is what the editor test
+# needs to reach either half of the editor support.
+export FROST_REQUIRE_NODE=1
 
 echo "=== build"
 cargo build --verbose >/dev/null

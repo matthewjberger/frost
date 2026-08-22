@@ -14,6 +14,9 @@ env:
   # Without this they would silently no-op, so a toolchain that went missing
   # would hide behind a green run rather than failing it.
   FROST_REQUIRE_LINKER: "1"
+  # The editor drivers need a JavaScript runtime. The runner has one, and
+  # without this the editor test would pass by doing nothing.
+  FROST_REQUIRE_NODE: "1"
 
 jobs:
   build:
