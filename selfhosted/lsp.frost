@@ -942,6 +942,30 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
         answer_definition(s, document, request)
         return
     }
+    if (json_text_eq(document, method, "textDocument/declaration")) {
+        answer_declaration(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/typeDefinition")) {
+        answer_type_definition(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/implementation")) {
+        answer_implementation(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/selectionRange")) {
+        answer_selection_range(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/documentLink")) {
+        answer_document_links(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/linkedEditingRange")) {
+        answer_linked_editing(s, document, request)
+        return
+    }
     if (json_text_eq(document, method, "textDocument/hover")) {
         answer_hover(s, document, request)
         return
@@ -1013,6 +1037,12 @@ answer_initialize :: fn(mut s: Server, mut document: Json, request: i64) {
     emit_text("\"textDocumentSync\":{\"openClose\":true,\"change\":1,\"save\":true},")
     emit_text("\"hoverProvider\":true,")
     emit_text("\"definitionProvider\":true,")
+    emit_text("\"declarationProvider\":true,")
+    emit_text("\"typeDefinitionProvider\":true,")
+    emit_text("\"implementationProvider\":true,")
+    emit_text("\"selectionRangeProvider\":true,")
+    emit_text("\"linkedEditingRangeProvider\":true,")
+    emit_text("\"documentLinkProvider\":{\"resolveProvider\":false},")
     emit_text("\"referencesProvider\":true,")
     emit_text("\"documentHighlightProvider\":true,")
     emit_text("\"documentSymbolProvider\":true,")
@@ -3260,4 +3290,572 @@ flatten_head :: fn(mut s: Server) {
         }
         at = at + 1
     }
+}
+
+// ---------------------------------------------------------------------------
+// Where a name is declared, what its type is, and what works on it
+// ---------------------------------------------------------------------------
+
+// The place a name was declared, written as one Location.
+//
+// Shared by go to definition and go to declaration. A Frost name space is flat
+// and a name is declared once, so the two questions have one answer and an
+// editor that asks either gets it.
+say_declaration_place :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    walk_sources(s)
+    if (name_at_position(s, document, request, doc) < 0) {
+        say_null_result(document, request)
+        return
+    }
+    if (find_declaration(s) == false) {
+        say_null_result(document, request)
+        return
+    }
+    say_found_place(s, document, request)
+}
+
+// The declaration the last lookup found, as one Location.
+say_found_place :: fn(mut s: Server, mut document: Json, request: i64) {
+    text := text_of_path(s, bytes_view(s.found))
+    uri_of_path(s.scratch, bytes_view(s.found))
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"uri\":")
+    say_string(bytes_view(s.scratch))
+    emit_text(",\"range\":")
+    ends := s.found_off + s.found_len
+    say_range(
+        place_line(text, s.found_off),
+        place_character(text, s.found_off),
+        place_line(text, ends),
+        place_character(text, ends)
+    )
+    emit_text("}}")
+    say_send()
+}
+
+answer_declaration :: fn(mut s: Server, mut document: Json, request: i64) {
+    say_declaration_place(s, document, request)
+}
+
+// Whether the head a name is declared under says the name is a type.
+//
+// A reader who asks for the type of a type is asking about that same
+// declaration, so the question ends where it started.
+head_declares_a_type :: fn(text: str, head_off: i64, named: i64) -> bool {
+    length := str_len(text)
+    mut at := head_off + named
+    while (at < length && cast($i64, text[at]) == CH_SPACE) {
+        at = at + 1
+    }
+    if (at + 1 < length && cast($i64, text[at]) == CH_COLON
+        && cast($i64, text[at + 1]) == CH_COLON) {
+        at = at + 2
+    }
+    while (at < length && cast($i64, text[at]) == CH_SPACE) {
+        at = at + 1
+    }
+    text_is(text, at, "struct") || text_is(text, at, "enum") ||
+        text_is(text, at, "distinct") || text_is(text, at, "flags") ||
+        text_is(text, at, "packed") || text_is(text, at, "linear") ||
+        text_is(text, at, "type")
+}
+
+// The type a name was written with, put in `s.named`.
+//
+// Read off the text rather than off a check, since the question is asked while
+// a file is being edited and often does not compile. Two shapes carry a type:
+// `name: Type` and `name := Type {`, which covers a local, a field and a
+// parameter.
+type_written_for :: fn(mut s: Server, text: str, wanted: str) -> bool {
+    length := str_len(text)
+    width := str_len(wanted)
+    mut at: i64 = 0
+    while (at < length) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+        } else {
+            found := name_written_at(text, at, wanted)
+            if (found >= 0) {
+                if (type_after(s, text, found + width)) {
+                    return true
+                }
+                at = found + width
+            } else {
+                at = at + 1
+            }
+        }
+    }
+    false
+}
+
+// The name of the type written after this offset, where one is.
+type_after :: fn(mut s: Server, text: str, from: i64) -> bool {
+    length := str_len(text)
+    mut walk := from
+    while (walk < length && cast($i64, text[walk]) == CH_SPACE) {
+        walk = walk + 1
+    }
+    if (walk + 1 >= length || cast($i64, text[walk]) != CH_COLON) {
+        return false
+    }
+    next := cast($i64, text[walk + 1])
+    if (next == CH_COLON) {
+        return false
+    }
+    mut starts := walk + 1
+    if (next == CH_EQ) {
+        starts = walk + 2
+    }
+    while (starts < length && cast($i64, text[starts]) == CH_SPACE) {
+        starts = starts + 1
+    }
+    // A view, a pointer or an array of a type is that type, as far as a reader
+    // asking where it is declared is concerned.
+    while (starts < length
+        && (cast($i64, text[starts]) == CH_LBRACKET
+            || cast($i64, text[starts]) == CH_RBRACKET
+            || cast($i64, text[starts]) == CH_CARET)) {
+        starts = starts + 1
+    }
+    ends := name_end(text, starts)
+    if (ends == starts) {
+        return false
+    }
+    bytes_reset(s.named)
+    mut copy := starts
+    while (copy < ends) {
+        bytes_byte(s.named, cast($i64, text[copy]))
+        copy = copy + 1
+    }
+    true
+}
+
+answer_type_definition :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    walk_sources(s)
+    if (name_at_position(s, document, request, doc) < 0) {
+        say_null_result(document, request)
+        return
+    }
+    if (find_declaration(s)) {
+        held := text_of_path(s, bytes_view(s.found))
+        if (head_declares_a_type(held, s.head_off, s.found_len)) {
+            say_found_place(s, document, request)
+            return
+        }
+    }
+    ref about := arena_at(s.docs, doc)
+    if (type_written_for(s, bytes_view(about.text), bytes_view(s.other))
+        == false) {
+        say_null_result(document, request)
+        return
+    }
+    bytes_reset(s.other)
+    bytes_str(s.other, bytes_view(s.named))
+    if (find_declaration(s) == false) {
+        say_null_result(document, request)
+        return
+    }
+    say_found_place(s, document, request)
+}
+
+// Whether a declaration head between two offsets names a type.
+head_takes :: fn(text: str, from: i64, to: i64, wanted: str) -> bool {
+    mut at := from
+    while (at < to) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+        } else {
+            found := name_written_at(text, at, wanted)
+            if (found >= 0 && found < to) {
+                return true
+            }
+            at = at + 1
+        }
+    }
+    false
+}
+
+// Every function written against a type: the ones whose head names it.
+//
+// Frost has no methods, so what stands in for them is the set of functions
+// that take the type. A reader on a struct asking for its implementations is
+// asking what operates on it.
+say_workers_on :: fn(text: str, uri: str, wanted: str, already: i64) -> i64 {
+    length := str_len(text)
+    mut written: i64 = 0
+    mut at: i64 = 0
+    mut commented: bool = false
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (!commented && named > 0) {
+            head := head_end(text, length, at, ends)
+            if (head_takes(text, at + named, head, wanted)) {
+                if (already + written > 0) {
+                    emit_text(",")
+                }
+                emit_text("{\"uri\":")
+                say_string(uri)
+                emit_text(",\"range\":")
+                say_range(
+                    place_line(text, at),
+                    place_character(text, at),
+                    place_line(text, at + named),
+                    place_character(text, at + named)
+                )
+                emit_text("}")
+                written = written + 1
+            }
+        }
+        commented = comment_runs_past(text, at, ends, commented)
+        at = ends + 1
+    }
+    written
+}
+
+answer_implementation :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    walk_sources(s)
+    if (name_at_position(s, document, request, doc) < 0) {
+        say_null_result(document, request)
+        return
+    }
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    mut written: i64 = 0
+    count := source_count(s)
+    mut index: i64 = 0
+    while (index < count) {
+        if (source_into(s, index)) {
+            text := text_of_path(s, bytes_view(s.each))
+            uri_of_path(s.scratch, bytes_view(s.each))
+            written = written + say_workers_on(
+                text,
+                bytes_view(s.scratch),
+                bytes_view(s.other),
+                written
+            )
+        }
+        index = index + 1
+    }
+    // A function is its own implementation. Nothing takes it, and a reader
+    // who asked is owed the place it is written rather than an empty list.
+    if (written == 0 && find_declaration(s)) {
+        held := text_of_path(s, bytes_view(s.found))
+        uri_of_path(s.scratch, bytes_view(s.found))
+        emit_text("{\"uri\":")
+        say_string(bytes_view(s.scratch))
+        emit_text(",\"range\":")
+        stops := s.found_off + s.found_len
+        say_range(
+            place_line(held, s.found_off),
+            place_character(held, s.found_off),
+            place_line(held, stops),
+            place_character(held, stops)
+        )
+        emit_text("}")
+    }
+    emit_text("]}")
+    say_send()
+}
+
+// ---------------------------------------------------------------------------
+// Widening a selection
+// ---------------------------------------------------------------------------
+
+// The runs a caret sits inside, innermost first: the name it is on, then each
+// bracket that holds it, then the declaration, then the file.
+//
+// An editor widens a selection one step at a time by walking this chain, so
+// each range holds the one in front of it.
+answer_selection_range :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    params := json_member(document, request, "params")
+    places := json_member(document, params, "positions")
+    count := json_count(document, places)
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    mut index: i64 = 0
+    while (index < count) {
+        if (index > 0) {
+            emit_text(",")
+        }
+        place := json_at(document, places, index)
+        line := json_number(document, json_member(document, place, "line"))
+        character := json_number(
+            document,
+            json_member(document, place, "character")
+        )
+        say_widening(text, place_offset(text, line, character))
+        index = index + 1
+    }
+    emit_text("]}")
+    say_send()
+}
+
+// One chain, innermost first. The protocol reads the range at the top as the
+// one a first widening gives, and each `parent` as the step after it.
+say_widening :: fn(text: str, caret: i64) {
+    length := str_len(text)
+    from := name_start(text, caret)
+    to := name_end(text, from)
+    starts := declaration_around(text, caret)
+    mut opened: i64 = 0
+    if (to > from) {
+        emit_text("{\"range\":")
+        say_range(
+            place_line(text, from),
+            place_character(text, from),
+            place_line(text, to),
+            place_character(text, to)
+        )
+        opened = opened + 1
+    }
+    if (starts >= 0) {
+        if (opened > 0) {
+            emit_text(",\"parent\":")
+        }
+        ends := line_end(text, length, starts)
+        stops := declaration_extent(text, starts, ends, length)
+        emit_text("{\"range\":")
+        say_range(
+            place_line(text, starts),
+            0,
+            place_line(text, stops),
+            place_character(text, stops)
+        )
+        opened = opened + 1
+    }
+    if (opened > 0) {
+        emit_text(",\"parent\":")
+    }
+    emit_text("{\"range\":")
+    say_range(0, 0, place_line(text, length), place_character(text, length))
+    opened = opened + 1
+    mut shut: i64 = 0
+    while (shut < opened) {
+        emit_text("}")
+        shut = shut + 1
+    }
+}
+
+// Where the declaration holding this offset opens, or -1 where the offset is
+// between declarations.
+declaration_around :: fn(text: str, caret: i64) -> i64 {
+    length := str_len(text)
+    mut at: i64 = 0
+    mut held: i64 = -1
+    mut commented: bool = false
+    while (at < length && at <= caret) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (!commented && named > 0) {
+            held = at
+        }
+        commented = comment_runs_past(text, at, ends, commented)
+        at = ends + 1
+    }
+    if (held < 0) {
+        return -1
+    }
+    ends := line_end(text, length, held)
+    if (declaration_extent(text, held, ends, length) < caret) {
+        return -1
+    }
+    held
+}
+
+// ---------------------------------------------------------------------------
+// The files a file names
+// ---------------------------------------------------------------------------
+
+// Every `import` line, as a link to the file it names.
+//
+// A path is written relative to the file that holds it, so it is joined onto
+// that file's own directory before it is given as a URI.
+answer_document_links :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    length := str_len(text)
+    bytes_reset(s.walking)
+    bytes_str(s.walking, bytes_view(held.path))
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    mut written: i64 = 0
+    mut at: i64 = 0
+    mut commented: bool = false
+    while (at < length) {
+        ends := line_end(text, length, at)
+        if (!commented && text_is(text, at, "import")) {
+            opens := quote_after(text, at, ends)
+            if (opens >= 0) {
+                closes := quote_after(text, opens + 1, ends)
+                if (closes > opens) {
+                    if (written > 0) {
+                        emit_text(",")
+                    }
+                    emit_text("{\"range\":")
+                    say_range(
+                        place_line(text, opens + 1),
+                        place_character(text, opens + 1),
+                        place_line(text, closes),
+                        place_character(text, closes)
+                    )
+                    emit_text(",\"target\":")
+                    beside(s, bytes_view(s.walking), text, opens + 1, closes)
+                    uri_of_path(s.scratch, bytes_view(s.other))
+                    say_string(bytes_view(s.scratch))
+                    emit_text("}")
+                    written = written + 1
+                }
+            }
+        }
+        commented = comment_runs_past(text, at, ends, commented)
+        at = ends + 1
+    }
+    emit_text("]}")
+    say_send()
+}
+
+// Where the next quote on this line is, or -1.
+quote_after :: fn(text: str, from: i64, to: i64) -> i64 {
+    mut at := from
+    while (at < to) {
+        if (cast($i64, text[at]) == CH_DQUOTE) {
+            return at
+        }
+        at = at + 1
+    }
+    -1
+}
+
+// A path written beside a file, put in `s.other`: the file's own directory
+// with the written path joined onto it, and each `..` walked back out.
+beside :: fn(mut s: Server, holder: str, text: str, from: i64, to: i64) {
+    bytes_reset(s.other)
+    length := str_len(holder)
+    mut cut := length
+    while (cut > 0 && separator(cast($i64, holder[cut - 1])) == false) {
+        cut = cut - 1
+    }
+    mut at: i64 = 0
+    while (at < cut) {
+        bytes_byte(s.other, cast($i64, holder[at]))
+        at = at + 1
+    }
+    mut walk := from
+    while (walk < to) {
+        if (text_is(text, walk, "../")) {
+            s.other.count = one_back(s.other)
+            walk = walk + 3
+        } else {
+            bytes_byte(s.other, cast($i64, text[walk]))
+            walk = walk + 1
+        }
+    }
+}
+
+separator :: fn(byte: i64) -> bool {
+    byte == CH_SLASH || byte == CH_BACKSLASH
+}
+
+// Where a path ends one directory back: past the separator it ends on, then
+// back to the one before that.
+one_back :: fn(mut a: Arena<u8>) -> i64 {
+    held := bytes_view(a)
+    mut back := str_len(held)
+    if (back > 0) {
+        back = back - 1
+    }
+    while (back > 0 && separator(cast($i64, held[back - 1])) == false) {
+        back = back - 1
+    }
+    back
+}
+
+// ---------------------------------------------------------------------------
+// Editing one name in several places at once
+// ---------------------------------------------------------------------------
+
+// Where the name under the caret is written in this file, so an editor changes
+// every one of them as the reader types.
+//
+// This file only. A change that has to reach other files is a rename, which is
+// its own request and its own undo step.
+answer_linked_editing :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    if (name_at_position(s, document, request, doc) < 0) {
+        say_null_result(document, request)
+        return
+    }
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    wanted := bytes_view(s.other)
+    width := str_len(wanted)
+    length := str_len(text)
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"ranges\":[")
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < length) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+        } else {
+            found := name_written_at(text, at, wanted)
+            if (found >= 0) {
+                if (written > 0) {
+                    emit_text(",")
+                }
+                say_range(
+                    place_line(text, found),
+                    place_character(text, found),
+                    place_line(text, found + width),
+                    place_character(text, found + width)
+                )
+                written = written + 1
+                at = found + width
+            } else {
+                at = at + 1
+            }
+        }
+    }
+    emit_text("]}}")
+    say_send()
 }

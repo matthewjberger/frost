@@ -81,6 +81,10 @@ fs.writeFileSync(
     "",
     '/* A brace, a quote and the name, all of them text: { " tally */',
     "",
+    "Weight :: struct { grams: i64 }",
+    "",
+    "heavier :: fn(w: Weight) -> i64 { w.grams + 1 }",
+    "",
   ].join("\n"),
   "utf8"
 );
@@ -95,7 +99,8 @@ const READER = [
   "    held := tally(",
   "        /* ) */",
   "        2)",
-  "    tally(1) + held",
+  "    w := Weight { grams = 3 }",
+  "    tally(1) + held + heavier(w)",
   "}",
   "",
 ].join("\n");
@@ -436,6 +441,44 @@ async function main() {
         : "none"
   );
 
+  want(
+    "declaration",
+    await talk.ask(34, "textDocument/declaration", doc({ position: caret })),
+    (held) => held && held.uri === uri && held.range.start.line === 3,
+    (held) => (held ? "line " + held.range.start.line : "none")
+  );
+  want(
+    "type definition",
+    await talk.ask(35, "textDocument/typeDefinition", {
+      textDocument: { uri },
+      position: at(CLEAN, "    p := Point", 4),
+    }),
+    (held) => held && held.uri === uri && held.range.start.line === 7,
+    (held) => (held ? "line " + held.range.start.line : "none")
+  );
+  want(
+    "selection range",
+    await talk.ask(37, "textDocument/selectionRange", {
+      textDocument: { uri },
+      positions: [caret],
+    }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 1 &&
+      held[0].range.start.line === 11 &&
+      held[0].parent &&
+      held[0].parent.parent &&
+      held[0].parent.parent.parent === undefined,
+    (held) => {
+      let walk = held && held[0];
+      const steps = [];
+      while (walk) {
+        steps.push(walk.range.end.line - walk.range.start.line);
+        walk = walk.parent;
+      }
+      return steps.join(" then ");
+    }
+  );
   // A fault arrives.
   want(
     "diagnostics",
@@ -762,6 +805,53 @@ async function main() {
       held && held.signatures && held.signatures[0]
         ? held.signatures[0].label
         : "none"
+  );
+  want(
+    "implementation",
+    await talk.ask(36, "textDocument/implementation", {
+      textDocument: { uri: reader_uri },
+      position: at(READER, "    w := Weight", 9),
+    }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 1 &&
+      held[0].uri === shared_uri,
+    many
+  );
+  want(
+    "implementation of a function",
+    await talk.ask(40, "textDocument/implementation", {
+      textDocument: { uri: reader_uri },
+      position: at(READER, "    tally(1)", 5),
+    }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 1 &&
+      held[0].uri === shared_uri &&
+      held[0].range.start.line === 0,
+    many
+  );
+  want(
+    "document link",
+    await talk.ask(38, "textDocument/documentLink", {
+      textDocument: { uri: reader_uri },
+    }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 1 &&
+      held[0].target === shared_uri &&
+      held[0].range.start.line === 0,
+    (held) =>
+      Array.isArray(held) && held[0] ? held[0].target.split("/").pop() : "none"
+  );
+  want(
+    "linked editing",
+    await talk.ask(39, "textDocument/linkedEditingRange", {
+      textDocument: { uri: reader_uri },
+      position: at(READER, "    tally(1)", 5),
+    }),
+    (held) => held && Array.isArray(held.ranges) && held.ranges.length === 2,
+    (held) => (held && held.ranges ? held.ranges.length + " ranges" : "none")
   );
   want(
     "references across files",

@@ -158,6 +158,26 @@ class ParameterInformation {
   }
 }
 
+class SelectionRange {
+  constructor(range, parent) {
+    this.range = range;
+    this.parent = parent;
+  }
+}
+
+class DocumentLink {
+  constructor(range, target) {
+    this.range = range;
+    this.target = target;
+  }
+}
+
+class LinkedEditingRanges {
+  constructor(ranges) {
+    this.ranges = ranges;
+  }
+}
+
 class CompletionItem {
   constructor(label, kind) {
     this.label = label;
@@ -204,6 +224,9 @@ module.exports = {
   SignatureInformation,
   ParameterInformation,
   CompletionItem,
+  SelectionRange,
+  DocumentLink,
+  LinkedEditingRanges,
   languages: {
     createDiagnosticCollection() {
       return {
@@ -220,6 +243,12 @@ module.exports = {
       };
     },
     registerDefinitionProvider: keep("definition"),
+    registerDeclarationProvider: keep("declaration"),
+    registerTypeDefinitionProvider: keep("typeDefinition"),
+    registerImplementationProvider: keep("implementation"),
+    registerSelectionRangeProvider: keep("selectionRange"),
+    registerDocumentLinkProvider: keep("documentLink"),
+    registerLinkedEditingRangeProvider: keep("linkedEditing"),
     registerHoverProvider: keep("hover"),
     registerReferenceProvider: keep("references"),
     registerDocumentHighlightProvider: keep("highlight"),

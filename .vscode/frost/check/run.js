@@ -121,7 +121,7 @@ async function main() {
   want(
     "registered",
     names,
-    (found) => found.length >= 13,
+    (found) => found.length >= 19,
     (found) => found.join(" ")
   );
 
@@ -142,6 +142,54 @@ async function main() {
     (found) =>
       found && same_file(found.uri.fsPath, sample) && found.range.start.line === 3,
     (found) => (found ? `${found.uri.fsPath}:${found.range.start.line}` : "none")
+  );
+  want(
+    "declaration",
+    await provider("declaration").provideDeclaration(document, caret),
+    (found) => found && found.range.start.line === 3,
+    (found) => (found ? "line " + found.range.start.line : "none")
+  );
+  want(
+    "type definition",
+    await provider("typeDefinition").provideTypeDefinition(
+      document,
+      at("var total", 5)
+    ),
+    (found) => found === undefined || found.range !== undefined,
+    (found) => (found ? "line " + found.range.start.line : "none")
+  );
+  want(
+    "implementation",
+    await provider("implementation").provideImplementation(document, caret),
+    (found) => Array.isArray(found) && found.length === 1,
+    (found) => (Array.isArray(found) ? String(found.length) : "none")
+  );
+  want(
+    "selection range",
+    await provider("selectionRange").provideSelectionRanges(document, [caret]),
+    (found) =>
+      Array.isArray(found) && found.length === 1 && found[0].parent !== undefined,
+    (found) => {
+      let walk = found && found[0];
+      let steps = 0;
+      while (walk) {
+        steps = steps + 1;
+        walk = walk.parent;
+      }
+      return steps + " steps";
+    }
+  );
+  want(
+    "document link",
+    await provider("documentLink").provideDocumentLinks(document),
+    (found) => Array.isArray(found),
+    (found) => (Array.isArray(found) ? String(found.length) : "none")
+  );
+  want(
+    "linked editing",
+    await provider("linkedEditing").provideLinkedEditingRanges(document, caret),
+    (found) => found && found.ranges.length === 2,
+    (found) => (found ? found.ranges.length + " ranges" : "none")
   );
   want(
     "hover",

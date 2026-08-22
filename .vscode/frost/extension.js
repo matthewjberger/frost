@@ -328,6 +328,89 @@ const definitionProvider = {
   },
 };
 
+const declarationProvider = {
+  async provideDeclaration(document, position) {
+    const held = await server.request("textDocument/declaration", {
+      ...named(document),
+      position: at(position),
+    });
+    return held ? locationOf(held) : undefined;
+  },
+};
+
+const typeDefinitionProvider = {
+  async provideTypeDefinition(document, position) {
+    const held = await server.request("textDocument/typeDefinition", {
+      ...named(document),
+      position: at(position),
+    });
+    return held ? locationOf(held) : undefined;
+  },
+};
+
+const implementationProvider = {
+  async provideImplementation(document, position) {
+    const held = await server.request("textDocument/implementation", {
+      ...named(document),
+      position: at(position),
+    });
+    return Array.isArray(held) ? held.map(locationOf) : [];
+  },
+};
+
+// The chain the server writes, turned inside out: VS Code holds the parent as
+// an object of its own, built from the outside in.
+function widening(held) {
+  if (!held) {
+    return undefined;
+  }
+  const steps = [];
+  for (let walk = held; walk; walk = walk.parent) {
+    steps.push(rangeOf(walk.range));
+  }
+  let built;
+  for (let index = steps.length - 1; index >= 0; index--) {
+    built = new vscode.SelectionRange(steps[index], built);
+  }
+  return built;
+}
+
+const selectionRangeProvider = {
+  async provideSelectionRanges(document, positions) {
+    const held = await server.request("textDocument/selectionRange", {
+      ...named(document),
+      positions: positions.map(at),
+    });
+    return Array.isArray(held) ? held.map(widening).filter(Boolean) : [];
+  },
+};
+
+const documentLinkProvider = {
+  async provideDocumentLinks(document) {
+    const held = await server.request("textDocument/documentLink", named(document));
+    if (!Array.isArray(held)) {
+      return [];
+    }
+    return held.map(
+      (one) =>
+        new vscode.DocumentLink(rangeOf(one.range), vscode.Uri.parse(one.target))
+    );
+  },
+};
+
+const linkedEditingProvider = {
+  async provideLinkedEditingRanges(document, position) {
+    const held = await server.request("textDocument/linkedEditingRange", {
+      ...named(document),
+      position: at(position),
+    });
+    if (!held || !Array.isArray(held.ranges) || held.ranges.length === 0) {
+      return undefined;
+    }
+    return new vscode.LinkedEditingRanges(held.ranges.map(rangeOf));
+  },
+};
+
 const hoverProvider = {
   async provideHover(document, position) {
     const held = await server.request("textDocument/hover", {
@@ -583,6 +666,27 @@ function activate(context) {
 
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(selector, definitionProvider),
+    vscode.languages.registerDeclarationProvider(selector, declarationProvider),
+    vscode.languages.registerTypeDefinitionProvider(
+      selector,
+      typeDefinitionProvider
+    ),
+    vscode.languages.registerImplementationProvider(
+      selector,
+      implementationProvider
+    ),
+    vscode.languages.registerSelectionRangeProvider(
+      selector,
+      selectionRangeProvider
+    ),
+    vscode.languages.registerDocumentLinkProvider(
+      selector,
+      documentLinkProvider
+    ),
+    vscode.languages.registerLinkedEditingRangeProvider(
+      selector,
+      linkedEditingProvider
+    ),
     vscode.languages.registerHoverProvider(selector, hoverProvider),
     vscode.languages.registerReferenceProvider(selector, referenceProvider),
     vscode.languages.registerDocumentHighlightProvider(
