@@ -10536,6 +10536,94 @@ fn corpus() -> Vec<std::path::PathBuf> {
     found
 }
 
+// What each compiler refuses about every library and example in the tree.
+//
+// The self-hosting fixpoint compares the C two generations emit for the
+// compiler own source. That says the two agree about one program, and the two
+// generations are built from different C: the first from the bootstrap, the
+// second from the first. A divergence that does not reach the compiler own
+// source survived it untouched, and one did: a name bound to what `arena_at`
+// answers with, assigned another one, pointed the name elsewhere in the
+// bootstrap and wrote a node over a node in the self-hosted compiler. The
+// walk that finds the leftmost of a field chain overwrote what it walked, so
+// no program using `std/map`, `std/sort` or `std/ecs` could be built by the
+// self-hosted compiler at all. Twenty-two of the files below read
+// differently, and every gate the tree had was green.
+//
+// The reports rather than the output: each compiler names what it wrote
+// differently, and what a build refuses is the thing the two have to agree
+// about.
+#[test]
+fn both_compilers_read_the_corpus_the_same_way() {
+    let Some(compiler) = support::build_second_generation("readparity") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let files: Vec<std::path::PathBuf> = corpus()
+        .into_iter()
+        // The compiler own source is what the fixpoint reads end to end, and
+        // each file of it pulls in the whole of the rest.
+        .filter(|path| !path.starts_with(root.join("selfhosted")))
+        .collect();
+    let differing: Vec<String> = support::in_parallel(&files, |path| {
+        let shown = path
+            .strip_prefix(&root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        let one = reports_of(env!("CARGO_BIN_EXE_frost").as_ref(), path);
+        let other = reports_of(&compiler, path);
+        if one == other {
+            return None;
+        }
+        Some(format!(
+            "{shown}\n  bootstrap:\n{}\n  self-hosted:\n{}",
+            indented(&one),
+            indented(&other)
+        ))
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    assert!(
+        differing.is_empty(),
+        "the two compilers read {} of {} files differently:\n{}",
+        differing.len(),
+        files.len(),
+        differing.join("\n")
+    );
+}
+
+// What one compiler says about one file. The output goes to scratch rather
+// than beside the source, so a run leaves the tree as it found it.
+fn reports_of(compiler: &std::path::Path, source: &std::path::Path) -> String {
+    let out = std::env::temp_dir()
+        .join(support::unique("frost_read"))
+        .with_extension("c");
+    let ran = Command::new(compiler)
+        .arg(source)
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(&out)
+        .output();
+    let _ = std::fs::remove_file(&out);
+    match ran {
+        Ok(held) => String::from_utf8_lossy(&held.stderr).trim().to_string(),
+        Err(problem) => format!("did not run: {problem}"),
+    }
+}
+
+fn indented(text: &str) -> String {
+    if text.is_empty() {
+        return "    (accepted)".to_string();
+    }
+    text.lines()
+        .take(6)
+        .map(|line| format!("    {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn both_compilers_agree_on_these_programs() {
     let Some(compiler) = build_self_hosted_compiler("samelanguage") else {

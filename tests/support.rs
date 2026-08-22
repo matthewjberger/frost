@@ -228,6 +228,58 @@ pub fn build_self_hosted_compiler(name: &str) -> Option<PathBuf> {
     Some(compiler)
 }
 
+/// The compiler the compiler built: the bootstrap builds one, and that one
+/// builds this.
+///
+/// What comes out of the bootstrap reads the way the bootstrap does, since
+/// the bootstrap is what emitted its code. Only the generation after it is
+/// the self-hosted compiler as it ships, and a divergence between the two
+/// backends shows in that one alone.
+pub fn build_second_generation(name: &str) -> Option<PathBuf> {
+    let compiler = c_compiler()?;
+    let first = build_self_hosted_compiler(name)?;
+    let directory = std::env::temp_dir();
+    let stem = unique(&format!("frost_secondgen_{name}"));
+    let written = directory.join(format!("{stem}.c"));
+    let emitted = Command::new(&first)
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(&written)
+        .arg(self_hosted_source())
+        .output()
+        .ok()?;
+    let _ = std::fs::remove_file(&first);
+    assert!(
+        emitted.status.success(),
+        "the first generation did not emit its own source:\n{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let out =
+        directory.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(compiler)
+        .arg("-std=c11")
+        .arg(&written)
+        .arg(format!(
+            "{}/runtime/frost_runtime.c",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .arg(frost_runtime_object())
+        .arg("-o")
+        .arg(&out)
+        // The math functions `std/math.frost` reaches live in libm where the
+        // platform keeps them out of the C runtime.
+        .arg("-lm")
+        .output()
+        .ok()?;
+    let _ = std::fs::remove_file(&written);
+    assert!(
+        built.status.success(),
+        "the second generation failed to build:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    Some(out)
+}
+
 /// Compiles `source` with the self-hosted compiler through one of its backends,
 /// builds what it emitted, runs it, and answers with what it printed.
 pub fn selfhosted_default_output(
