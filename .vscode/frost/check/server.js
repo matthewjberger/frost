@@ -545,6 +545,30 @@ async function main() {
     (held) => (held ? "yes" : "no")
   );
 
+  // Half-typed. A reader in the middle of writing a function still wants the
+  // outline and the names, so a file that does not parse has to be answered
+  // rather than go blank.
+  want(
+    "half-typed reported",
+    await talk.told(
+      "textDocument/didChange",
+      {
+        textDocument: { uri, version: 5 },
+        contentChanges: [{ text: CLEAN + "\nlater :: fn(n: i64" }],
+      },
+      uri
+    ),
+    (held) => held.diagnostics.length >= 1,
+    (held) => held.diagnostics.length + " diagnostics"
+  );
+  want(
+    "half-typed still named",
+    await talk.ask(27, "textDocument/documentSymbol", doc({})),
+    (held) => Array.isArray(held) && held.length >= 3,
+    (held) =>
+      Array.isArray(held) ? held.map((one) => one.name).join(" ") : "none"
+  );
+
   // Closed while something is still underlined. What was said about a file no
   // open document reports about goes with the document that said it.
   want(
