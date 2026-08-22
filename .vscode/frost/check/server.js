@@ -54,7 +54,10 @@ const wide = path.join(workspace, "wide.frost");
 const WIDE = [
   "wide :: fn(text: str, n: i64) -> i64 { n }",
   "",
-  "/* A brace that opens nothing: { */",
+  "/*",
+  "wide_dropped :: fn() -> i64 { 2 }",
+  "A brace that opens nothing: {",
+  "*/",
   "",
   "main :: fn() -> i64 {",
   '    wide("héllo 🌍", 1) + wide("x", 2)',
@@ -635,6 +638,44 @@ async function main() {
       contentChanges: [{ text: WIDE }],
     },
     wide_uri
+  );
+  want(
+    "names past a comment",
+    await talk.ask(31, "textDocument/documentSymbol", {
+      textDocument: { uri: wide_uri },
+    }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 2 &&
+      held.every((one) => one.name !== "wide_dropped"),
+    (held) =>
+      Array.isArray(held) ? held.map((one) => one.name).join(" ") : "none"
+  );
+  want(
+    "finds nothing in a comment",
+    await talk.ask(32, "workspace/symbol", { query: "wide_dropped" }),
+    (held) => Array.isArray(held) && held.length === 0,
+    many
+  );
+  want(
+    "offers nothing from a comment",
+    await talk.ask(33, "textDocument/completion", {
+      textDocument: { uri: wide_uri },
+      position: at(WIDE, 'wide("x"', 4),
+    }),
+    (held) => {
+      const found = Array.isArray(held) ? held : (held || {}).items;
+      return (
+        Array.isArray(found) &&
+        found.every((one) => one.label !== "wide_dropped")
+      );
+    },
+    (held) => {
+      const found = Array.isArray(held) ? held : (held || {}).items;
+      return Array.isArray(found)
+        ? found.map((one) => one.label).join(" ")
+        : "none";
+    }
   );
   want(
     "folds past a comment",

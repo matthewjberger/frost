@@ -1843,16 +1843,18 @@ say_symbols_of :: fn(text: str, prefix: str) {
     length := source_end_of(text)
     mut at: i64 = 0
     mut written: i64 = 0
+    mut commented: bool = false
     while (at < length) {
         ends := line_end(text, length, at)
         named := declaration_head(text, at, ends)
-        if (named > 0) {
+        if (!commented && named > 0) {
             if (written > 0) {
                 emit_text(",")
             }
             say_one_symbol(text, at, named, ends, length)
             written = written + 1
         }
+        commented = comment_runs_past(text, at, ends, commented)
         at = ends + 1
     }
 }
@@ -1900,10 +1902,11 @@ say_workspace_symbols_of :: fn(
     length := source_end_of(text)
     mut at: i64 = 0
     mut written: i64 = 0
+    mut commented: bool = false
     while (at < length) {
         ends := line_end(text, length, at)
         named := declaration_head(text, at, ends)
-        if (named > 0 && name_holds(text, at, named, wanted)) {
+        if (!commented && named > 0 && name_holds(text, at, named, wanted)) {
             if (already + written > 0) {
                 emit_text(",")
             }
@@ -1923,6 +1926,7 @@ say_workspace_symbols_of :: fn(
             emit_text("}}")
             written = written + 1
         }
+        commented = comment_runs_past(text, at, ends, commented)
         at = ends + 1
     }
     written
@@ -2151,6 +2155,47 @@ past_non_code :: fn(text: str, at: i64) -> i64 {
         return length
     }
     at
+}
+
+// Whether a block comment is still open where this line ends, given whether
+// one was open where it started.
+//
+// A walk that reads a file a line at a time carries this from line to line. A
+// declaration written inside a block comment reads exactly like one written
+// beside it, and an outline that lists it sends a reader to a line that is
+// text.
+comment_runs_past :: fn(text: str, at: i64, ends: i64, open: bool) -> bool {
+    mut inside := open
+    mut walk := at
+    while (walk < ends) {
+        byte := cast($i64, text[walk])
+        if (inside) {
+            if (byte == CH_STAR && walk + 1 < ends
+                && cast($i64, text[walk + 1]) == CH_SLASH) {
+                inside = false
+                walk = walk + 2
+            } else {
+                walk = walk + 1
+            }
+        } else {
+            if (byte == CH_DQUOTE) {
+                walk = past_non_code(text, walk)
+            } else {
+                if (byte == CH_SLASH && walk + 1 < ends
+                    && cast($i64, text[walk + 1]) == CH_SLASH) {
+                    return false
+                }
+                if (byte == CH_SLASH && walk + 1 < ends
+                    && cast($i64, text[walk + 1]) == CH_STAR) {
+                    inside = true
+                    walk = walk + 2
+                } else {
+                    walk = walk + 1
+                }
+            }
+        }
+    }
+    inside
 }
 
 // Whether the name starts exactly here, as a whole word rather than as part of
@@ -2493,10 +2538,12 @@ say_completions_in :: fn(text: str, prefix: str, already: i64) -> i64 {
     length := str_len(text)
     mut written: i64 = 0
     mut at: i64 = 0
+    mut commented: bool = false
     while (at < length) {
         ends := line_end(text, length, at)
         named := declaration_head(text, at, ends)
-        if (named > 0 && begins_with_prefix(text, at, named, prefix)) {
+        if (!commented && named > 0
+            && begins_with_prefix(text, at, named, prefix)) {
             if (already + written > 0) {
                 emit_text(",")
             }
@@ -2510,6 +2557,7 @@ say_completions_in :: fn(text: str, prefix: str, already: i64) -> i64 {
             emit_text("}")
             written = written + 1
         }
+        commented = comment_runs_past(text, at, ends, commented)
         at = ends + 1
     }
     written
@@ -3108,10 +3156,11 @@ declared_in :: fn(mut s: Server, text: str) -> bool {
     wanted := bytes_view(s.other)
     length := str_len(text)
     mut at: i64 = 0
+    mut commented: bool = false
     while (at < length) {
         ends := line_end(text, length, at)
         held := declaration_head(text, at, ends)
-        if (held == str_len(wanted)
+        if (!commented && held == str_len(wanted)
             && name_written_at(text, at, wanted) == at) {
             s.found_off = at
             s.found_len = held
@@ -3119,6 +3168,7 @@ declared_in :: fn(mut s: Server, text: str) -> bool {
             s.head_to = head_end(text, length, at, ends)
             return true
         }
+        commented = comment_runs_past(text, at, ends, commented)
         at = ends + 1
     }
     false
