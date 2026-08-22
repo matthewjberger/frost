@@ -54,6 +54,8 @@ const wide = path.join(workspace, "wide.frost");
 const WIDE = [
   "wide :: fn(text: str, n: i64) -> i64 { n }",
   "",
+  "/* A brace that opens nothing: { */",
+  "",
   "main :: fn() -> i64 {",
   '    wide("héllo 🌍", 1) + wide("x", 2)',
   "}",
@@ -74,6 +76,8 @@ fs.writeFileSync(
     "    total",
     "}",
     "",
+    '/* A brace, a quote and the name, all of them text: { " tally */',
+    "",
   ].join("\n"),
   "utf8"
 );
@@ -85,7 +89,10 @@ const READER = [
   "// tally is what this calls.",
   "start :: fn() -> i64 {",
   '    label := "tally"',
-  "    tally(1)",
+  "    held := tally(",
+  "        /* ) */",
+  "        2)",
+  "    tally(1) + held",
   "}",
   "",
 ].join("\n");
@@ -630,6 +637,14 @@ async function main() {
     wide_uri
   );
   want(
+    "folds past a comment",
+    await talk.ask(29, "textDocument/foldingRange", {
+      textDocument: { uri: wide_uri },
+    }),
+    (held) => Array.isArray(held) && held.length === 1,
+    many
+  );
+  want(
     "wide line caret",
     await talk.ask(26, "textDocument/definition", {
       textDocument: { uri: wide_uri },
@@ -681,14 +696,30 @@ async function main() {
       held &&
       held.changes &&
       held.changes[shared_uri] &&
-      held.changes[shared_uri].length >= 1 &&
+      held.changes[shared_uri].length === 1 &&
       held.changes[reader_uri] &&
-      held.changes[reader_uri].length === 1,
+      held.changes[reader_uri].length === 2,
     (held) =>
       held && held.changes
         ? Object.keys(held.changes)
             .map((one) => one.split("/").pop() + ":" + held.changes[one].length)
             .join(" ")
+        : "none"
+  );
+  want(
+    "signature past a comment",
+    await talk.ask(30, "textDocument/signatureHelp", {
+      textDocument: { uri: reader_uri },
+      position: at(READER, "        2)", 8),
+    }),
+    (held) =>
+      held &&
+      Array.isArray(held.signatures) &&
+      held.signatures.length === 1 &&
+      held.signatures[0].label.includes("tally"),
+    (held) =>
+      held && held.signatures && held.signatures[0]
+        ? held.signatures[0].label
         : "none"
   );
   want(
@@ -700,7 +731,7 @@ async function main() {
     }),
     (held) =>
       Array.isArray(held) &&
-      held.length === 2 &&
+      held.length === 3 &&
       held.some((one) => one.uri === shared_uri) &&
       held.some((one) => one.uri === reader_uri),
     many

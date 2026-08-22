@@ -2365,16 +2365,12 @@ answer_folding :: fn(mut s: Server, mut document: Json, request: i64) {
     mut written: i64 = 0
     mut at: i64 = 0
     while (at < length) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+            continue
+        }
         byte := cast($i64, text[at])
-        if (byte == CH_DQUOTE) {
-            at = past_string(text, at)
-            continue
-        }
-        if (byte == CH_SLASH && at + 1 < length
-            && cast($i64, text[at + 1]) == CH_SLASH) {
-            at = line_end(text, length, at)
-            continue
-        }
         if (byte == CH_LBRACE) {
             closes := matching_brace(text, at)
             from := place_line(text, at)
@@ -2405,16 +2401,12 @@ matching_brace :: fn(text: str, opens: i64) -> i64 {
     mut depth: i64 = 0
     mut at := opens
     while (at < length) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+            continue
+        }
         byte := cast($i64, text[at])
-        if (byte == CH_DQUOTE) {
-            at = past_string(text, at)
-            continue
-        }
-        if (byte == CH_SLASH && at + 1 < length
-            && cast($i64, text[at + 1]) == CH_SLASH) {
-            at = line_end(text, length, at)
-            continue
-        }
         if (byte == CH_LBRACE) {
             depth = depth + 1
         }
@@ -2423,25 +2415,6 @@ matching_brace :: fn(text: str, opens: i64) -> i64 {
             if (depth == 0) {
                 return at
             }
-        }
-        at = at + 1
-    }
-    length
-}
-
-// Past the text that opens here, whose closing quote is the first one a
-// backslash does not stand in front of.
-past_string :: fn(text: str, opens: i64) -> i64 {
-    length := str_len(text)
-    mut at := opens + 1
-    while (at < length) {
-        byte := cast($i64, text[at])
-        if (byte == CH_BACKSLASH) {
-            at = at + 2
-            continue
-        }
-        if (byte == CH_DQUOTE) {
-            return at + 1
         }
         at = at + 1
     }
@@ -3059,16 +3032,12 @@ call_opens :: fn(text: str, caret: i64) -> i64 {
     mut opens: Arena<i64> = arena_make($i64, 64)
     mut at: i64 = 0
     while (at < caret) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+            continue
+        }
         byte := cast($i64, text[at])
-        if (byte == CH_DQUOTE) {
-            at = past_string(text, at)
-            continue
-        }
-        if (byte == CH_SLASH && at + 1 < caret
-            && cast($i64, text[at + 1]) == CH_SLASH) {
-            at = line_end(text, caret, at)
-            continue
-        }
         if (byte == CH_LPAREN) {
             arena_push(opens, at)
         }
@@ -3090,11 +3059,12 @@ argument_at :: fn(text: str, opens: i64, caret: i64) -> i64 {
     mut seen: i64 = 0
     mut at := opens + 1
     while (at < caret) {
-        byte := cast($i64, text[at])
-        if (byte == CH_DQUOTE) {
-            at = past_string(text, at)
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
             continue
         }
+        byte := cast($i64, text[at])
         if (byte == CH_LPAREN || byte == CH_LBRACKET || byte == CH_LBRACE) {
             depth = depth + 1
         }
