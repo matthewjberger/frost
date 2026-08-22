@@ -449,12 +449,15 @@ format_source :: fn(src: str, length: i64) {
     mut brackets: i64 = 0
     mut at: i64 = 0
     // The run of tokens waiting to be laid out, what it is indented by, and the
-    // span holding the comments that sit at the end of its last line.
+    // gaps holding the comments that sit at the end of its last line.
+    //
+    // The gaps are kept apart rather than as one span from the first to the
+    // last. The source between two gaps is the tokens of the line, and a walk
+    // for a comment across it reads the `//` inside a string as one opening.
     mut pending_from: i64 = -1
     mut pending_to: i64 = 0
     mut pending_indent: i64 = 0
-    mut trail_from: i64 = 0
-    mut trail_to: i64 = 0
+    mut trail := arena_make($LocalVar, 4096)
     index = 0
     while (index < tokens.count) {
         token := arena_at(tokens, index)
@@ -474,10 +477,15 @@ format_source :: fn(src: str, length: i64) {
         if (pending_from >= 0) {
             rest_from = first_break_at(src, gap_from, gap_to)
             if (rest_from > gap_from) {
-                if (trail_to <= trail_from) {
-                    trail_from = gap_from
-                }
-                trail_to = rest_from
+                arena_push(
+                    trail,
+                    LocalVar {
+                        name_off = gap_from,
+                        name_len = rest_from,
+                        ty = 0,
+                        slot = 0
+                    }
+                )
             }
         }
         wrote_break := breaks_in(src, rest_from, gap_to)
@@ -498,10 +506,9 @@ format_source :: fn(src: str, length: i64) {
                     pending_to,
                     pending_indent
                 )
-                emit_trailing_span(src, trail_from, trail_to)
+                emit_trailing_gaps(src, trail)
                 emit_text("\n")
-                trail_from = 0
-                trail_to = 0
+                trail.count = 0
             }
             write_between(src, rest_from, gap_to, line_depth)
             mut open_braces := braces
@@ -564,7 +571,7 @@ format_source :: fn(src: str, length: i64) {
             pending_to,
             pending_indent
         )
-        emit_trailing_span(src, trail_from, trail_to)
+        emit_trailing_gaps(src, trail)
     }
     // The line the last run sits on is ended by whatever followed it, which is
     // where the newline every file ends with comes from.
@@ -1024,6 +1031,16 @@ comment_ends :: fn(src: str, pos: i64, to: i64) -> i64 {
 }
 
 // The comments in a span, each put at the end of the line already written.
+// The comments in the gaps that end a line, in the order they were written.
+emit_trailing_gaps :: fn(src: str, mut gaps: Arena<LocalVar>) {
+    mut index: i64 = 0
+    while (index < gaps.count) {
+        held := arena_at(gaps, index)
+        emit_trailing_span(src, held.name_off, held.name_len)
+        index = index + 1
+    }
+}
+
 emit_trailing_span :: fn(src: str, from: i64, to: i64) {
     mut index := from
     while (index + 1 < to) {
