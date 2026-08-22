@@ -569,6 +569,40 @@ async function main() {
     (held) => held.diagnostics.length + " diagnostics on shared.frost"
   );
   want(
+    "definition across files",
+    await talk.ask(
+      24,
+      "textDocument/definition",
+      {
+        textDocument: { uri: reader_uri },
+        position: at(READER, "    tally(1)", 5),
+      }
+    ),
+    (held) => held && held.uri === shared_uri && held.range.start.line === 0,
+    (held) => (held ? held.uri.split("/").pop() + ":" + held.range.start.line : "none")
+  );
+  want(
+    "rename across files",
+    await talk.ask(25, "textDocument/rename", {
+      textDocument: { uri: reader_uri },
+      position: at(READER, "    tally(1)", 5),
+      newName: "counted",
+    }),
+    (held) =>
+      held &&
+      held.changes &&
+      held.changes[shared_uri] &&
+      held.changes[shared_uri].length >= 1 &&
+      held.changes[reader_uri] &&
+      held.changes[reader_uri].length >= 1,
+    (held) =>
+      held && held.changes
+        ? Object.keys(held.changes)
+            .map((one) => one.split("/").pop() + ":" + held.changes[one].length)
+            .join(" ")
+        : "none"
+  );
+  want(
     "closing takes back the import",
     await talk.told(
       "textDocument/didClose",
