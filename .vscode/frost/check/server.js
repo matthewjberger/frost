@@ -47,6 +47,21 @@ const FAULTY = CLEAN.replace("    p := Point", "    var p := Point");
 
 fs.writeFileSync(sample, CLEAN, "utf8");
 
+// A line whose characters are wider than a byte. The compiler counts a column
+// in bytes and the editor counts one in UTF-16 units, so a name after this
+// string sits at two different numbers and only one of them is the answer.
+const wide = path.join(workspace, "wide.frost");
+const WIDE = [
+  "wide :: fn(text: str, n: i64) -> i64 { n }",
+  "",
+  "main :: fn() -> i64 {",
+  '    wide("héllo 🌍", 1) + wide("x", 2)',
+  "}",
+  "",
+].join("\n");
+const WIDE_FAULT = WIDE.replace('wide("x", 2)', "nosuch(2)");
+fs.writeFileSync(wide, WIDE, "utf8");
+
 // A pair: what one file says wrong is reported under that file while the
 // other is the one being read.
 const shared = path.join(workspace, "shared.frost");
@@ -94,6 +109,7 @@ const uri = uri_of(sample);
 const empty_uri = uri_of(path.join(workspace, "empty.frost"));
 const unwritten_uri = uri_of(path.join(workspace, "never-written.frost"));
 const unopened_uri = uri_of(path.join(workspace, "never-opened.frost"));
+const wide_uri = uri_of(wide);
 const shared_uri = uri_of(shared);
 const reader_uri = uri_of(reader);
 
@@ -550,6 +566,51 @@ async function main() {
     (held) => held.diagnostics.length === 0,
     (held) => held.diagnostics.length + " diagnostics"
   );
+  // A report and a caret on a line of wide characters.
+  want(
+    "wide line reported",
+    await talk.told(
+      "textDocument/didOpen",
+      {
+        textDocument: {
+          uri: wide_uri,
+          languageId: "frost",
+          version: 1,
+          text: WIDE_FAULT,
+        },
+      },
+      wide_uri
+    ),
+    (held) =>
+      held.diagnostics.length >= 1 &&
+      held.diagnostics[0].range.start.character ===
+        at(WIDE_FAULT, "nosuch(2)").character,
+    (held) =>
+      held.diagnostics.length > 0
+        ? "character " +
+          held.diagnostics[0].range.start.character +
+          ", wanted " +
+          at(WIDE_FAULT, "nosuch(2)").character
+        : "none"
+  );
+  await talk.told(
+    "textDocument/didChange",
+    {
+      textDocument: { uri: wide_uri, version: 2 },
+      contentChanges: [{ text: WIDE }],
+    },
+    wide_uri
+  );
+  want(
+    "wide line caret",
+    await talk.ask(26, "textDocument/definition", {
+      textDocument: { uri: wide_uri },
+      position: at(WIDE, 'wide("x"', 1),
+    }),
+    (held) => held && held.uri === wide_uri && held.range.start.line === 0,
+    (held) => (held ? "line " + held.range.start.line : "none")
+  );
+
   // What one file says wrong, reported while another is the one being read.
   want(
     "reports the import",

@@ -1206,6 +1206,12 @@ void frost_rt_recover_note(void) {
 
 int64_t frost_rt_recover_failures(void) { return frost_rt_recover_count; }
 
+/* Starts the count over. One compile per process is what the count was for, and
+   a server checks buffer after buffer in one. A build is refused for what this
+   check found; without this the second buffer is refused at the first gate for
+   what the first buffer said, so it is told nothing about itself. */
+void frost_rt_recover_clear(void) { frost_rt_recover_count = 0; }
+
 /* An assertion outside a test has nowhere to escape to, so it still aborts.
    Inside one it fails that test and the run carries on. */
 static void frost_rt_assert_failed(const char *where) {

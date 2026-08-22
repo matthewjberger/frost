@@ -1161,6 +1161,9 @@ check_guarded :: fn(raw: ^u8) {
 // What is read out of the parser has to be read before the close: every table
 // it names is inside the scope.
 run_check :: fn(mut s: Server, doc: i64, mut parser: Parser, linting: i64) {
+    // What earlier checks recovered from, given up. The count is what a build
+    // is refused on, and a buffer is refused for what is wrong with it.
+    frost_rt_recover_clear()
     ref held := arena_at(s.docs, doc)
     path := bytes_cstr(held.path)
     text := bytes_cstr(held.text)

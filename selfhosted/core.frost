@@ -68,7 +68,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     frost_rt_json_warn, frost_rt_json_fix, report_warning_end,
     json_reports, json_reports_asked, report_command,
     frost_rt_report_open, frost_rt_report_note,
-    frost_rt_recover_failures
+    frost_rt_recover_failures, frost_rt_recover_clear
 
 // The runtime's allocator rather than the C library's, so a request that cannot
 // be met stops here with a message instead of answering null and leaving the
@@ -471,6 +471,7 @@ frost_rt_report_open :: safe extern fn(at: i64)
 // to read wherever each of them points.
 frost_rt_report_note :: safe extern fn()
 frost_rt_recover_failures :: safe extern fn() -> i64
+frost_rt_recover_clear :: safe extern fn()
 frost_rt_remove_file :: extern fn(path: ^i8) -> i64
 frost_rt_file_exists :: extern fn(path: ^i8) -> i64
 frost_rt_absolute_path :: extern fn(path: ^i8) -> ^i8
