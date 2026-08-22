@@ -74,10 +74,22 @@ Server :: struct {
     other: Arena<u8>,
     named: Arena<u8>,
     reports: Arena<u8>,
+    // The records the last check wrote, and which document they are about.
+    // An editor asks for the fixes at the caret every time it moves, and the
+    // answer is what the check already found.
+    held_reports: Arena<u8>,
+    held_for: i64,
     modules: Arena<u8>,
     sources: Arena<u8>,
     walking: Arena<u8>,
     each: Arena<u8>,
+    // Where the last name looked up is declared: the file, the name in it,
+    // and the head it was written under.
+    found: Arena<u8>,
+    found_off: i64,
+    found_len: i64,
+    head_off: i64,
+    head_to: i64,
     read_back: Arena<u8>,
     body: Arena<u8>,
     going: i64,
@@ -98,10 +110,17 @@ lsp_command :: fn() -> i64 {
         other = arena_make($u8, 65536),
         named = arena_make($u8, 4096),
         reports = arena_make($u8, 262144),
+        held_reports = arena_make($u8, 262144),
+        held_for = -1,
         modules = arena_make($u8, 65536),
         sources = arena_make($u8, 262144),
         walking = arena_make($u8, 65536),
         each = arena_make($u8, 4096),
+        found = arena_make($u8, 4096),
+        found_off = 0,
+        found_len = 0,
+        head_off = 0,
+        head_to = 0,
         read_back = arena_make($u8, DOC_ROOM),
         body = arena_make($u8, DOC_ROOM),
         going = 1,
@@ -1176,6 +1195,11 @@ publish_findings :: fn(mut s: Server, doc: i64) {
     hold_modules(s, parser)
     frost_rt_take_close()
     records_as_array(s.reports, records)
+    // Kept, so the fixes at the caret are answered from what
+    // this check found rather than from one of their own.
+    bytes_reset(s.held_reports)
+    bytes_str(s.held_reports, bytes_view(s.reports))
+    s.held_for = doc
     mut found := json_parse(bytes_view(s.reports))
     publish_each(s, doc, found)
     json_free(found)
@@ -1610,28 +1634,31 @@ answer_definition :: fn(mut s: Server, mut document: Json, request: i64) {
         say_null_result(document, request)
         return
     }
+    walk_sources(s)
     if (name_at_position(s, document, request, doc) < 0) {
         say_null_result(document, request)
         return
     }
-    frost_rt_take_open()
-    mut parser := new_parser(lsp_options(s, doc))
-    run_check(s, doc, parser, 0)
-    site := declaration_of(parser, bytes_view(s.other))
-    mut said: i64 = 0
-    if (site >= 0) {
-        say_open()
-        say_result_head(document, request)
-        say_location(s, parser, site, site + s.other.count)
-        emit_text("}")
-        said = 1
-    }
-    frost_rt_take_close()
-    if (said == 1) {
-        say_send()
+    if (find_declaration(s) == false) {
+        say_null_result(document, request)
         return
     }
-    say_null_result(document, request)
+    text := text_of_path(s, bytes_view(s.found))
+    uri_of_path(s.scratch, bytes_view(s.found))
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"uri\":")
+    say_string(bytes_view(s.scratch))
+    emit_text(",\"range\":")
+    ends := s.found_off + s.found_len
+    say_range(
+        place_line(text, s.found_off),
+        place_character(text, s.found_off),
+        place_line(text, ends),
+        place_character(text, ends)
+    )
+    emit_text("}}")
+    say_send()
 }
 
 say_null_result :: fn(mut document: Json, request: i64) {
@@ -1639,92 +1666,6 @@ say_null_result :: fn(mut document: Json, request: i64) {
     say_result_head(document, request)
     emit_text("null}")
     say_send()
-}
-
-// Where a name is declared, as an offset into the one buffer every module's
-// text was laid into, or -1. The namespace is flat, so at most one table holds
-// it.
-declaration_of :: fn(mut parser: Parser, wanted: str) -> i64 {
-    length := str_len(wanted)
-    mut si: i64 = 0
-    while (si < parser.structs.count) {
-        def := arena_at(parser.structs, si)
-        if (def.declared == 1 && def.instance_id < 0 && def.name_len == length
-            && same_bytes(parser.src, def.name_off, wanted)) {
-            return def.name_off
-        }
-        si = si + 1
-    }
-    mut fi: i64 = 0
-    while (fi < parser.fns.count) {
-        sym := arena_at(parser.fns, fi)
-        if (sym.len == length && same_bytes(parser.src, sym.off, wanted)) {
-            return sym.off
-        }
-        fi = fi + 1
-    }
-    mut ci: i64 = 0
-    while (ci < parser.consts.count) {
-        held := arena_at(parser.consts, ci)
-        if (held.name_len == length
-            && same_bytes(parser.src, held.name_off, wanted)) {
-            return held.name_off
-        }
-        ci = ci + 1
-    }
-    mut vi: i64 = 0
-    while (vi < parser.value_consts.count) {
-        held := arena_at(parser.value_consts, vi)
-        if (held.name_len == length
-            && same_bytes(parser.src, held.name_off, wanted)) {
-            return held.name_off
-        }
-        vi = vi + 1
-    }
-    -1
-}
-
-// Whether the text at an offset in the one buffer is this name.
-same_bytes :: fn(src: str, off: i64, wanted: str) -> bool {
-    length := str_len(wanted)
-    if (off < 0 || off + length > str_len(src)) {
-        return false
-    }
-    mut k: i64 = 0
-    while (k < length) {
-        if (cast($i64, src[off + k]) != cast($i64, wanted[k])) {
-            return false
-        }
-        k = k + 1
-    }
-    true
-}
-
-// A range in the one buffer, written as a place in the file it came out of.
-// Every module's text is laid end to end, so the file and the line are asked of
-// the module table the way a diagnostic's header asks.
-say_location :: fn(mut s: Server, mut parser: Parser, off: i64, ends: i64) {
-    bytes_reset(s.named)
-    bytes_cstr_in(s.named, path_at(parser.modules, off))
-    uri_of_path(s.scratch, bytes_view(s.named))
-    emit_text("{\"uri\":")
-    say_string(bytes_view(s.scratch))
-    emit_text(",\"range\":")
-    line := line_of(parser.modules, parser.src, off) - 1
-    from := column_of(parser.modules, parser.src, off) - 1
-    say_range(line, from, line, from + ends - off)
-    emit_text("}")
-}
-
-// Where the file holding an offset is on this machine. The name beside it in
-// the table is what a report calls the file, which is not always where it is.
-path_at :: fn(mut modules: Arena<Module>, off: i64) -> ^i8 {
-    index := module_at(modules, off)
-    if (index < 0) {
-        return ""
-    }
-    entry := arena_at(modules, index)
-    entry.path
 }
 
 // ---------------------------------------------------------------------------
@@ -1739,46 +1680,36 @@ answer_hover :: fn(mut s: Server, mut document: Json, request: i64) {
         say_null_result(document, request)
         return
     }
+    walk_sources(s)
     if (name_at_position(s, document, request, doc) < 0) {
         say_null_result(document, request)
         return
     }
-    frost_rt_take_open()
-    mut parser := new_parser(lsp_options(s, doc))
-    run_check(s, doc, parser, 0)
-    site := declaration_of(parser, bytes_view(s.other))
-    mut said: i64 = 0
-    if (site >= 0) {
-        say_open()
-        say_result_head(document, request)
-        emit_text("{\"contents\":{\"kind\":\"markdown\",\"value\":")
-        say_hover_text(parser, site)
-        emit_text("}}}")
-        said = 1
-    }
-    frost_rt_take_close()
-    if (said == 1) {
-        say_send()
+    if (find_declaration(s) == false) {
+        say_null_result(document, request)
         return
     }
-    say_null_result(document, request)
+    text := text_of_path(s, bytes_view(s.found))
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"contents\":{\"kind\":\"markdown\",\"value\":")
+    say_hover_text(text, s.head_off, s.head_to)
+    emit_text("}}}")
+    say_send()
 }
 
 // A fenced block holding the declaration, with whatever the author wrote above
 // it under the fence.
-say_hover_text :: fn(mut parser: Parser, off: i64) {
-    src := parser.src
-    length := source_end(src)
-    starts := line_start_of(src, off)
-    first := line_end(src, length, starts)
-    ends := head_end(src, length, starts, first)
+// A fenced block holding the declaration, with whatever the author wrote
+// above it under the fence.
+say_hover_text :: fn(text: str, head_off: i64, head_to: i64) {
     emit_text("\"```frost\\n")
-    say_escaped_range(src, starts, ends)
+    say_escaped_range(text, head_off, head_to)
     emit_text("\\n```")
-    notes := comment_above(src, starts)
-    if (notes < starts) {
+    notes := comment_above(text, head_off)
+    if (notes < head_off) {
         emit_text("\\n\\n")
-        say_comment_range(src, notes, starts)
+        say_comment_range(text, notes, head_off)
     }
     emit_text("\"")
 }
@@ -2621,8 +2552,25 @@ say_keyword_completions :: fn(prefix: str, already: i64) -> i64 {
 // answer goes has one keystroke left.
 answer_code_actions :: fn(mut s: Server, mut document: Json, request: i64) {
     doc := doc_of_request(s, document, request)
-    if (doc < 0) {
-        say_null_result(document, request)
+    // A change whose check is still waiting is one this answer would be about
+    // the wrong text of. The edit an editor applies is a range, and a range
+    // read off text that has been replaced lands somewhere else.
+    if (doc >= 0) {
+        mut wanted: i64 = -1
+        ref about := arena_at(s.docs, doc)
+        if (about.dirty == 1) {
+            about.dirty = 0
+            wanted = doc
+        }
+        if (wanted >= 0) {
+            publish_findings(s, wanted)
+        }
+    }
+    if (doc < 0 || doc != s.held_for) {
+        say_open()
+        say_result_head(document, request)
+        emit_text("[]}")
+        say_send()
         return
     }
     params := json_member(document, request, "params")
@@ -2631,14 +2579,7 @@ answer_code_actions :: fn(mut s: Server, mut document: Json, request: i64) {
     to := json_member(document, asked, "end")
     from_line := json_number(document, json_member(document, from, "line"))
     to_line := json_number(document, json_member(document, to, "line"))
-    frost_rt_take_open()
-    mut parser := new_parser(lsp_options(s, doc))
-    run_check(s, doc, parser, 0)
-    records := unsafe { frost_rt_report_take() }
-    hold_modules(s, parser)
-    frost_rt_take_close()
-    records_as_array(s.reports, records)
-    mut found := json_parse(bytes_view(s.reports))
+    mut found := json_parse(bytes_view(s.held_reports))
     ref held := arena_at(s.docs, doc)
     say_open()
     say_result_head(document, request)
@@ -2992,13 +2933,14 @@ answer_signature :: fn(mut s: Server, mut document: Json, request: i64) {
         bytes_byte(s.other, cast($i64, text[k]))
         k = k + 1
     }
-    if (find_head(s) == false) {
+    if (find_declaration(s) == false) {
         say_null_result(document, request)
         return
     }
     say_open()
     say_result_head(document, request)
     emit_text("{\"signatures\":[{\"label\":")
+    flatten_head(s)
     say_string(bytes_view(s.reports))
     emit_text(",\"parameters\":[")
     say_parameters(bytes_view(s.reports))
@@ -3066,13 +3008,22 @@ argument_at :: fn(text: str, opens: i64, caret: i64) -> i64 {
 }
 
 // The declaration head of the name held, put where the answer reads it from.
-find_head :: fn(mut s: Server) -> bool {
+// Where the name held is declared, and the head it was written under. The
+// namespace is flat, so at most one declaration answers to a name and the
+// first one found is it.
+//
+// Read off the source rather than off a parse, so a file that does not
+// compile still answers, which is what an editor asking while a line is
+// half-written needs.
+find_declaration :: fn(mut s: Server) -> bool {
     count := source_count(s)
     mut index: i64 = 0
     while (index < count) {
         if (source_into(s, index)) {
             text := text_of_path(s, bytes_view(s.each))
-            if (head_of_name(s, text)) {
+            if (declared_in(s, text)) {
+                bytes_reset(s.found)
+                bytes_str(s.found, bytes_view(s.each))
                 return true
             }
         }
@@ -3081,26 +3032,19 @@ find_head :: fn(mut s: Server) -> bool {
     false
 }
 
-head_of_name :: fn(mut s: Server, text: str) -> bool {
+declared_in :: fn(mut s: Server, text: str) -> bool {
     wanted := bytes_view(s.other)
     length := str_len(text)
     mut at: i64 = 0
     while (at < length) {
         ends := line_end(text, length, at)
-        named := declaration_head(text, at, ends)
-        if (named == str_len(wanted) && name_written_at(text, at, wanted) == at) {
-            head := head_end(text, length, at, ends)
-            bytes_reset(s.reports)
-            mut k := at
-            while (k < head) {
-                byte := cast($i64, text[k])
-                if (byte == CH_LF) {
-                    bytes_byte(s.reports, CH_SPACE)
-                } else {
-                    bytes_byte(s.reports, byte)
-                }
-                k = k + 1
-            }
+        held := declaration_head(text, at, ends)
+        if (held == str_len(wanted)
+            && name_written_at(text, at, wanted) == at) {
+            s.found_off = at
+            s.found_len = held
+            s.head_off = at
+            s.head_to = head_end(text, length, at, ends)
             return true
         }
         at = ends + 1
@@ -3170,4 +3114,28 @@ say_one_parameter :: fn(head: str, from: i64, to: i64, already: i64) -> i64 {
     say_string_range(head, starts, ends)
     emit_text("}")
     1
+}
+
+
+// The head that was found, on one line, which is what a signature is shown
+// as. A head written across several lines carries its breaks; the panel it
+// goes in has one line.
+flatten_head :: fn(mut s: Server) {
+    text := text_of_path(s, bytes_view(s.found))
+    bytes_reset(s.reports)
+    mut at := s.head_off
+    mut spaced: i64 = 0
+    while (at < s.head_to) {
+        byte := cast($i64, text[at])
+        if (byte == CH_LF || byte == CH_SPACE) {
+            if (spaced == 0) {
+                bytes_byte(s.reports, CH_SPACE)
+                spaced = 1
+            }
+        } else {
+            bytes_byte(s.reports, byte)
+            spaced = 0
+        }
+        at = at + 1
+    }
 }
