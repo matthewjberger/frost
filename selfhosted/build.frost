@@ -25,6 +25,16 @@ export read_and_check
 // the same question over and over and has to reach exactly what a build
 // reaches. Read as part of the driver, an editor could only ask by starting
 // a compiler of its own.
+// Whether the assembly backend writes what its scan found about each name into
+// the emitted text. An environment variable rather than an option, because what
+// it produces is for reading rather than for assembling.
+asm_debug_names_wanted :: fn() -> i64 {
+    if (cstr_len(unsafe { frost_rt_getenv("FROST_ASM_NAMES") }) != 0) {
+        return 1
+    }
+    0
+}
+
 read_and_check :: fn(options: Options) -> Parser {
     // With no file named anywhere, the built-in demonstration program is what
     // gets compiled, which is what makes the compiler runnable with no
