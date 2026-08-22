@@ -709,43 +709,15 @@ asm_debug_names_wanted :: fn() -> i64 {
     0
 }
 
-main :: fn() -> i64 {
-    if (json_reports()) {
-        frost_rt_json_reports()
-    }
-    // `fmt` is read off the arguments before the flags, since the compiler has
-    // taken a file as its first argument since before it took anything else.
-    if (frost_rt_arg_count() > 1
-        && cstr_eq(frost_rt_arg_at(1), "fmt")) {
-        return format_command()
-    }
-    // The same for `api`, which names a prefix rather than a file and reads
-    // every source under the directory the command was run in.
-    if (frost_rt_arg_count() > 1 && cstr_eq(frost_rt_arg_at(1), "api")) {
-        return api_command()
-    }
-    // The same for `generate`, which names no file at all: what it writes comes
-    // out of the project's manifest rather than off the command line.
-    if (frost_rt_arg_count() > 1
-        && cstr_eq(frost_rt_arg_at(1), "generate")) {
-        return generate_command()
-    }
-    options := options_from_command_line()
-    if (options.help == 1) {
-        usage()
-        return 0
-    }
-    if (options.ok == 0) {
-        frost_rt_die()
-    }
-
-    // `--assemble` does not compile anything: it reads assembly and writes the
-    // object that text stands for, which is what lets a build reach an object
-    // without a separate assembler.
-    if (options.assemble == 1) {
-        return assemble_file(options.input, options.output)
-    }
-
+// Everything a build does before it emits: the imports resolved into one
+// buffer, the program parsed out of it, and every check run over it. The
+// parser it answers with holds the program it read.
+//
+// A function rather than the first half of `main`, because a server answers
+// the same question over and over and has to reach exactly what a build
+// reaches. Read as part of the driver, an editor could only ask by starting
+// a compiler of its own.
+read_and_check :: fn(options: Options) -> Parser {
     // With no file named anywhere, the built-in demonstration program is what
     // gets compiled, which is what makes the compiler runnable with no
     // arguments at all.
@@ -878,6 +850,7 @@ main :: fn() -> i64 {
 
     mut parser := Parser {
         src = source,
+        program = -1,
         tokens = arena_make($Token, 262144),
         ti = 0,
         arena = arena_make($Node, 262144),
@@ -1288,6 +1261,50 @@ main :: fn() -> i64 {
     if (frost_rt_recover_failures() > 0) {
         frost_rt_die()
     }
+    parser.program = program
+    parser
+}
+main :: fn() -> i64 {
+    if (json_reports_asked()) {
+        frost_rt_json_reports()
+    }
+    // `fmt` is read off the arguments before the flags, since the compiler has
+    // taken a file as its first argument since before it took anything else.
+    if (frost_rt_arg_count() > 1
+        && cstr_eq(frost_rt_arg_at(1), "fmt")) {
+        return format_command()
+    }
+    // The same for `api`, which names a prefix rather than a file and reads
+    // every source under the directory the command was run in.
+    if (frost_rt_arg_count() > 1 && cstr_eq(frost_rt_arg_at(1), "api")) {
+        return api_command()
+    }
+    // The same for `generate`, which names no file at all: what it writes comes
+    // out of the project's manifest rather than off the command line.
+    if (frost_rt_arg_count() > 1
+        && cstr_eq(frost_rt_arg_at(1), "generate")) {
+        return generate_command()
+    }
+    options := options_from_command_line()
+    if (options.help == 1) {
+        usage()
+        return 0
+    }
+    if (options.ok == 0) {
+        frost_rt_die()
+    }
+
+    // `--assemble` does not compile anything: it reads assembly and writes the
+    // object that text stands for, which is what lets a build reach an object
+    // without a separate assembler.
+    if (options.assemble == 1) {
+        return assemble_file(options.input, options.output)
+    }
+
+    // Everything before a backend writes a word: the imports read, the
+    // program parsed, and every check run over it.
+    mut parser := read_and_check(options)
+    mut program := parser.program
 
     // `frost lint <file>` says what is worth a look and refuses nothing, so it
     // runs after the checks and before anything is emitted.

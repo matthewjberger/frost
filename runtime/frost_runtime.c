@@ -518,7 +518,79 @@ int64_t frost_rt_setenv(const char *name, const char *value) {
 #endif
 }
 
+/* One file answered from memory rather than from disk.
+
+   An editor holds a buffer that has not been written, and asking what is wrong
+   with it means compiling what is on screen. Writing it out first would put a
+   file in the reader's tree and read the imports of a file that is not where
+   they think it is, so the read of that one path answers with what is held
+   instead and every other read is a read.
+
+   The two paths are compared as the platform compares them: a separator is a
+   separator, and case does not tell two files apart on Windows. */
+static char *frost_rt_held_path = 0;
+static char *frost_rt_held_text = 0;
+
+static int frost_rt_same_file(const char *one, const char *other) {
+    while (*one != 0 && *other != 0) {
+        char left = *one;
+        char right = *other;
+        if (left == '\\') {
+            left = '/';
+        }
+        if (right == '\\') {
+            right = '/';
+        }
+#if defined(_WIN32)
+        if (left >= 'A' && left <= 'Z') {
+            left = (char)(left - 'A' + 'a');
+        }
+        if (right >= 'A' && right <= 'Z') {
+            right = (char)(right - 'A' + 'a');
+        }
+#endif
+        if (left != right) {
+            return 0;
+        }
+        one++;
+        other++;
+    }
+    return *one == 0 && *other == 0;
+}
+
+void frost_rt_hold_file(const char *path, const char *text) {
+    free(frost_rt_held_path);
+    free(frost_rt_held_text);
+    frost_rt_held_path = 0;
+    frost_rt_held_text = 0;
+    if (path == 0 || *path == 0) {
+        return;
+    }
+    size_t path_room = strlen(path) + 1;
+    size_t text_room = strlen(text) + 1;
+    frost_rt_held_path = (char *)malloc(path_room);
+    frost_rt_held_text = (char *)malloc(text_room);
+    if (frost_rt_held_path == 0 || frost_rt_held_text == 0) {
+        free(frost_rt_held_path);
+        free(frost_rt_held_text);
+        frost_rt_held_path = 0;
+        frost_rt_held_text = 0;
+        return;
+    }
+    memcpy(frost_rt_held_path, path, path_room);
+    memcpy(frost_rt_held_text, text, text_room);
+}
+
 const char *frost_rt_read_file(const char *path) {
+    if (frost_rt_held_path != 0 && frost_rt_same_file(path, frost_rt_held_path)) {
+        size_t room = strlen(frost_rt_held_text) + 1;
+        char *copy = (char *)malloc(room);
+        if (copy == 0) {
+            return "";
+        }
+        memcpy(copy, frost_rt_held_text, room);
+        return copy;
+    }
     FILE *file = fopen(path, "rb");
     if (file == 0) {
         return "";
@@ -813,6 +885,11 @@ static int64_t frost_rt_json_column = 0;
 static int64_t frost_rt_json_offset = 0;
 
 void frost_rt_json_reports(void) { frost_rt_json_on = 1; }
+
+/* Whether records are what this run writes. Asked by the compiler as well as by
+   the runtime, so a server that turns them on has every pass agreeing with it
+   rather than each reading the command line for itself. */
+int64_t frost_rt_json_reporting(void) { return frost_rt_json_on; }
 
 static void frost_rt_json_hold(const char *data, size_t length) {
     if (frost_rt_json_length + length + 1 > frost_rt_json_room) {
