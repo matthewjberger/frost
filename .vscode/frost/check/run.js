@@ -121,7 +121,7 @@ async function main() {
   want(
     "registered",
     names,
-    (found) => found.length >= 22,
+    (found) => found.length >= 24,
     (found) => found.join(" ")
   );
 
@@ -227,6 +227,29 @@ async function main() {
     await provider("formatting").provideDocumentFormattingEdits(document),
     some,
     count
+  );
+  want(
+    "inlay hints",
+    await provider("inlayHint").provideInlayHints(
+      document,
+      new vscode.Range(at("greeting_cost :: fn"), at("total", 5))
+    ),
+    (found) => Array.isArray(found) && found.length === 1,
+    (found) =>
+      Array.isArray(found) ? found.map((one) => one.label).join(" ") : "none"
+  );
+  const lenses = await provider("codeLens").provideCodeLenses(document);
+  want(
+    "code lenses",
+    lenses,
+    (found) => Array.isArray(found) && found.length === 3,
+    count
+  );
+  want(
+    "code lens resolve",
+    await provider("codeLens").resolveCodeLens(lenses[0]),
+    (found) => found && found.command && found.command.title.includes("use"),
+    (found) => (found && found.command ? found.command.title : "none")
   );
   want(
     "semantic legend",

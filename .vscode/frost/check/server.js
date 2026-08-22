@@ -488,6 +488,42 @@ async function main() {
     }
   );
   want(
+    "inlay hints",
+    await talk.ask(46, "textDocument/inlayHint", {
+      textDocument: { uri },
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 12, character: 0 },
+      },
+    }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 2 &&
+      held[0].label === "n:" &&
+      held[0].position.line === 11,
+    (held) =>
+      Array.isArray(held)
+        ? held.map((one) => one.label + "@" + one.position.character).join(" ")
+        : "none"
+  );
+  const lenses = await talk.ask(47, "textDocument/codeLens", doc({}));
+  want(
+    "code lenses",
+    lenses,
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 3 &&
+      held[0].data.name === "greeting_cost",
+    (held) =>
+      Array.isArray(held) ? held.map((one) => one.data.name).join(" ") : "none"
+  );
+  want(
+    "code lens resolve",
+    await talk.ask(48, "codeLens/resolve", lenses[0]),
+    (held) => held && held.command && held.command.title === "2 uses",
+    (held) => (held && held.command ? held.command.title : "none")
+  );
+  want(
     "semantic tokens",
     await talk.ask(45, "textDocument/semanticTokens/full", doc({})),
     (held) => {

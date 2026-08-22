@@ -158,6 +158,19 @@ class ParameterInformation {
   }
 }
 
+class InlayHint {
+  constructor(position, label, kind) {
+    Object.assign(this, { position, label, kind });
+  }
+}
+
+class CodeLens {
+  constructor(range, command) {
+    this.range = range;
+    this.command = command;
+  }
+}
+
 class SemanticTokensLegend {
   constructor(tokenTypes, tokenModifiers) {
     this.tokenTypes = tokenTypes;
@@ -240,6 +253,8 @@ module.exports = {
   CompletionItem,
   SelectionRange,
   SemanticTokensLegend,
+  InlayHint,
+  CodeLens,
   SemanticTokens,
   DocumentLink,
   LinkedEditingRanges,
@@ -275,6 +290,8 @@ module.exports = {
     registerOnTypeFormattingEditProvider: keep("onTypeFormatting"),
     registerFoldingRangeProvider: keep("folding"),
     registerDocumentSemanticTokensProvider: keep("semanticTokens"),
+    registerInlayHintsProvider: keep("inlayHint"),
+    registerCodeLensProvider: keep("codeLens"),
     registerRenameProvider: keep("rename"),
     registerCompletionItemProvider: keep("completion"),
     registerSignatureHelpProvider: keep("signatureHelp"),

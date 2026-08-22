@@ -1045,6 +1045,18 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
         answer_code_actions(s, document, request)
         return
     }
+    if (json_text_eq(document, method, "textDocument/inlayHint")) {
+        answer_inlay_hints(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/codeLens")) {
+        answer_code_lenses(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "codeLens/resolve")) {
+        answer_code_lens_resolve(s, document, request)
+        return
+    }
     if (json_text_eq(document, method, "workspace/symbol")) {
         answer_workspace_symbols(s, document, request)
         return
@@ -1096,6 +1108,8 @@ answer_initialize :: fn(mut s: Server, mut document: Json, request: i64) {
     emit_text(",\"full\":true},")
     emit_text("\"renameProvider\":{\"prepareProvider\":true},")
     emit_text("\"codeActionProvider\":true,")
+    emit_text("\"inlayHintProvider\":true,")
+    emit_text("\"codeLensProvider\":{\"resolveProvider\":true},")
     emit_text("\"completionProvider\":{\"resolveProvider\":true},")
     emit_text("\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]}")
     emit_text("},\"serverInfo\":{\"name\":\"frost\",\"version\":\"1\"}}}")
@@ -4571,4 +4585,413 @@ is_word_token :: fn(kind: TokenKind) -> bool {
         kind == TokenKind::KwInline || kind == TokenKind::KwDefer ||
         kind == TokenKind::KwErrDefer || kind == TokenKind::KwFor ||
         kind == TokenKind::KwIn
+}
+
+// ---------------------------------------------------------------------------
+// The parameter names a call leaves out
+// ---------------------------------------------------------------------------
+
+// A hint in front of each argument, naming the parameter it is given to.
+//
+// A call reads `wide("x", 2)` and says nothing about which of the two is
+// which. The head does, and it is in another file.
+answer_inlay_hints :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    walk_sources(s)
+    ref held := arena_at(s.docs, doc)
+    bytes_reset(s.walking)
+    bytes_str(s.walking, bytes_view(held.text))
+    params := json_member(document, request, "params")
+    span := json_member(document, params, "range")
+    from := json_number(
+        document,
+        json_member(document, json_member(document, span, "start"), "line")
+    )
+    to := json_number(
+        document,
+        json_member(document, json_member(document, span, "end"), "line")
+    )
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    say_call_hints(s, from, to)
+    emit_text("]}")
+    say_send()
+}
+
+// Each call written between two lines, with the name of every parameter its
+// arguments go to.
+say_call_hints :: fn(mut s: Server, from: i64, to: i64) {
+    text := bytes_view(s.walking)
+    length := str_len(text)
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < length) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+        } else {
+            starts := name_start(text, at)
+            ends := name_end(text, starts)
+            if (ends > starts && starts == at && ends < length &&
+                cast($i64, text[ends]) == CH_LPAREN) {
+                line := place_line(text, starts)
+                if (line >= from && line <= to) {
+                    written = written + say_hints_of_call(s, starts, ends,
+                        written)
+                }
+                at = ends
+            } else {
+                at = at + 1
+            }
+        }
+    }
+}
+
+// The hints for one call, which needs the head the name was declared under.
+say_hints_of_call :: fn(
+    mut s: Server,
+    starts: i64,
+    opens: i64,
+    already: i64
+) -> i64 {
+    held := bytes_view(s.walking)
+    bytes_reset(s.other)
+    mut at := starts
+    while (at < opens) {
+        bytes_byte(s.other, cast($i64, held[at]))
+        at = at + 1
+    }
+    if (find_declaration(s) == false) {
+        return 0
+    }
+    flatten_head(s)
+    // Copied out, since the walk over the arguments reads the buffer the head
+    // is in while it names each one.
+    bytes_reset(s.scratch)
+    bytes_str(s.scratch, bytes_view(s.reports))
+    say_argument_hints(s, opens, already)
+}
+
+// One hint for each argument, at the byte it opens on.
+say_argument_hints :: fn(mut s: Server, opens: i64, already: i64) -> i64 {
+    text := bytes_view(s.walking)
+    head := bytes_view(s.scratch)
+    length := str_len(text)
+    mut written: i64 = 0
+    mut which: i64 = 0
+    mut depth: i64 = 0
+    mut from := opens + 1
+    mut walk := opens + 1
+    while (walk < length) {
+        byte := cast($i64, text[walk])
+        if (byte == CH_LPAREN || byte == CH_LBRACKET || byte == CH_LBRACE) {
+            depth = depth + 1
+        }
+        if (byte == CH_RBRACKET || byte == CH_RBRACE) {
+            depth = depth - 1
+        }
+        if (byte == CH_RPAREN && depth == 0) {
+            written = written + say_one_hint(text, head, from, walk, which,
+                already + written)
+            return written
+        }
+        if (byte == CH_RPAREN) {
+            depth = depth - 1
+        }
+        if (byte == CH_COMMA && depth == 0) {
+            written = written + say_one_hint(text, head, from, walk, which,
+                already + written)
+            which = which + 1
+            from = walk + 1
+        }
+        walk = walk + 1
+    }
+    written
+}
+
+// The hint for one argument, where the head names a parameter for it and the
+// argument is not already written as that name.
+say_one_hint :: fn(
+    text: str,
+    head: str,
+    from: i64,
+    to: i64,
+    which: i64,
+    already: i64
+) -> i64 {
+    mut opens := from
+    while (opens < to && cast($i64, text[opens]) == CH_SPACE) {
+        opens = opens + 1
+    }
+    if (opens >= to) {
+        return 0
+    }
+    named := parameter_named(head, which)
+    if (str_len(named) == 0) {
+        return 0
+    }
+    if (name_written_at(text, opens, named) == opens) {
+        return 0
+    }
+    if (already > 0) {
+        emit_text(",")
+    }
+    emit_text("{\"position\":")
+    emit_text("{\"line\":")
+    frost_rt_emit_int(place_line(text, opens))
+    emit_text(",\"character\":")
+    frost_rt_emit_int(place_character(text, opens))
+    emit_text("},\"label\":")
+    say_labelled(named)
+    emit_text(",\"kind\":2,\"paddingRight\":true}")
+    1
+}
+
+// The label a hint carries, which is the name and the colon a reader reads it
+// with.
+say_labelled :: fn(named: str) {
+    emit_text("\"")
+    mut at: i64 = 0
+    while (at < str_len(named)) {
+        say_escaped(cast($i64, named[at]))
+        at = at + 1
+    }
+    emit_text(":\"")
+}
+
+// The name of the nth parameter of a head, or nothing where the head has no
+// such parameter.
+//
+// A parameter is written as a name, then a colon, then its type, and the
+// permission words in front of the name are not the name.
+parameter_named :: fn(head: str, which: i64) -> str {
+    length := str_len(head)
+    mut opens: i64 = -1
+    mut at: i64 = 0
+    while (at < length && opens < 0) {
+        if (cast($i64, head[at]) == CH_LPAREN) {
+            opens = at
+        }
+        at = at + 1
+    }
+    if (opens < 0) {
+        return ""
+    }
+    mut depth: i64 = 0
+    mut seen: i64 = 0
+    mut from := opens + 1
+    mut walk := opens + 1
+    while (walk < length) {
+        byte := cast($i64, head[walk])
+        if (byte == CH_LPAREN || byte == CH_LBRACKET || byte == CH_LT) {
+            depth = depth + 1
+        }
+        if (byte == CH_RBRACKET || byte == CH_GT) {
+            depth = depth - 1
+        }
+        if (byte == CH_RPAREN && depth == 0) {
+            if (seen == which) {
+                return parameter_name_in(head, from, walk)
+            }
+            return ""
+        }
+        if (byte == CH_RPAREN) {
+            depth = depth - 1
+        }
+        if (byte == CH_COMMA && depth == 0) {
+            if (seen == which) {
+                return parameter_name_in(head, from, walk)
+            }
+            seen = seen + 1
+            from = walk + 1
+        }
+        walk = walk + 1
+    }
+    ""
+}
+
+// The name inside one parameter: the last word written before its colon.
+parameter_name_in :: fn(head: str, from: i64, to: i64) -> str {
+    mut colon := -1
+    mut at := from
+    while (at < to && colon < 0) {
+        if (cast($i64, head[at]) == CH_COLON) {
+            colon = at
+        }
+        at = at + 1
+    }
+    if (colon < 0) {
+        return ""
+    }
+    mut ends := colon
+    while (ends > from && cast($i64, head[ends - 1]) == CH_SPACE) {
+        ends = ends - 1
+    }
+    mut starts := ends
+    while (starts > from && name_byte(cast($i64, head[starts - 1]))) {
+        starts = starts - 1
+    }
+    if (ends == starts) {
+        return ""
+    }
+    source_text(head, starts, ends - starts)
+}
+
+// ---------------------------------------------------------------------------
+// How much of a program names a declaration
+// ---------------------------------------------------------------------------
+
+// One lens over each declaration, with nothing written on it yet.
+//
+// Counting what names a declaration means reading every file, and a file holds
+// many declarations. The editor asks for the one it is about to show, and that
+// is what is counted.
+answer_code_lenses :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    length := str_len(text)
+    bytes_reset(s.scratch)
+    bytes_str(s.scratch, bytes_view(held.uri))
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    mut written: i64 = 0
+    mut at: i64 = 0
+    mut commented: bool = false
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (!commented && named > 0) {
+            if (written > 0) {
+                emit_text(",")
+            }
+            emit_text("{\"range\":")
+            say_range(
+                place_line(text, at),
+                place_character(text, at),
+                place_line(text, at + named),
+                place_character(text, at + named)
+            )
+            emit_text(",\"data\":{\"uri\":")
+            say_string(bytes_view(s.scratch))
+            emit_text(",\"name\":")
+            say_string_range(text, at, at + named)
+            emit_text("}}")
+            written = written + 1
+        }
+        commented = comment_runs_past(text, at, ends, commented)
+        at = ends + 1
+    }
+    emit_text("]}")
+    say_send()
+}
+
+// The lens as it arrived, with the count written onto it.
+answer_code_lens_resolve :: fn(
+    mut s: Server,
+    mut document: Json,
+    request: i64
+) {
+    params := json_member(document, request, "params")
+    data := json_member(document, params, "data")
+    named := json_member(document, data, "name")
+    span := json_member(document, params, "range")
+    if (named < 0 || span < 0) {
+        say_null_result(document, request)
+        return
+    }
+    walk_sources(s)
+    bytes_reset(s.other)
+    bytes_json(s.other, document, named)
+    count := times_written(s)
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"range\":")
+    say_raw_range(document, span)
+    emit_text(",\"command\":{\"title\":")
+    say_use_count(count)
+    emit_text(",\"command\":\"\"}}}")
+    say_send()
+}
+
+// A range as it arrived, written back out.
+say_raw_range :: fn(mut document: Json, span: i64) {
+    starts := json_member(document, span, "start")
+    ends := json_member(document, span, "end")
+    say_range(
+        json_number(document, json_member(document, starts, "line")),
+        json_number(document, json_member(document, starts, "character")),
+        json_number(document, json_member(document, ends, "line")),
+        json_number(document, json_member(document, ends, "character"))
+    )
+}
+
+// What the lens says: how many places name it, counting the declaration
+// itself out.
+say_use_count :: fn(count: i64) {
+    emit_text("\"")
+    if (count == 0) {
+        emit_text("no uses")
+        emit_text("\"")
+        return
+    }
+    frost_rt_emit_int(count)
+    if (count == 1) {
+        emit_text(" use")
+    } else {
+        emit_text(" uses")
+    }
+    emit_text("\"")
+}
+
+// How many places across the workspace write the name in `s.other`, less the
+// one that declares it.
+times_written :: fn(mut s: Server) -> i64 {
+    mut total: i64 = 0
+    count := source_count(s)
+    mut index: i64 = 0
+    while (index < count) {
+        if (source_into(s, index)) {
+            text := text_of_path(s, bytes_view(s.each))
+            total = total + written_in(text, bytes_view(s.other))
+        }
+        index = index + 1
+    }
+    if (total > 0) {
+        return total - 1
+    }
+    0
+}
+
+// How many times a name is written in one text, comments and strings aside.
+written_in :: fn(text: str, wanted: str) -> i64 {
+    length := str_len(text)
+    width := str_len(wanted)
+    mut seen: i64 = 0
+    mut at: i64 = 0
+    while (at < length) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+        } else {
+            found := name_written_at(text, at, wanted)
+            if (found >= 0) {
+                seen = seen + 1
+                at = found + width
+            } else {
+                at = at + 1
+            }
+        }
+    }
+    seen
 }

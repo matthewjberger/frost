@@ -524,6 +524,52 @@ const onTypeFormattingProvider = {
   },
 };
 
+const inlayHintProvider = {
+  async provideInlayHints(document, range) {
+    const held = await server.request("textDocument/inlayHint", {
+      ...named(document),
+      range: { start: at(range.start), end: at(range.end) },
+    });
+    if (!Array.isArray(held)) {
+      return [];
+    }
+    return held.map((one) => {
+      const hint = new vscode.InlayHint(
+        positionOf(one.position),
+        one.label,
+        one.kind
+      );
+      hint.paddingRight = one.paddingRight === true;
+      return hint;
+    });
+  },
+};
+
+// A lens over each declaration, saying how much of the program names it. The
+// count is what resolving one costs, so it is counted for the ones on screen
+// rather than for every declaration of the file.
+const codeLensProvider = {
+  async provideCodeLenses(document) {
+    const held = await server.request("textDocument/codeLens", named(document));
+    if (!Array.isArray(held)) {
+      return [];
+    }
+    return held.map((one) => {
+      const lens = new vscode.CodeLens(rangeOf(one.range));
+      lens.frostData = one;
+      return lens;
+    });
+  },
+
+  async resolveCodeLens(lens) {
+    const held = await server.request("codeLens/resolve", lens.frostData);
+    if (held && held.command) {
+      lens.command = held.command;
+    }
+    return lens;
+  },
+};
+
 // The names the server sends its colours as numbers of. The order is the
 // meaning, so this list and `say_token_legend` in the server are one thing
 // written twice, and both gates weigh it.
@@ -800,6 +846,8 @@ function activate(context) {
       semanticTokensProvider,
       semanticLegend
     ),
+    vscode.languages.registerInlayHintsProvider(selector, inlayHintProvider),
+    vscode.languages.registerCodeLensProvider(selector, codeLensProvider),
     vscode.languages.registerRenameProvider(selector, renameProvider),
     vscode.languages.registerCompletionItemProvider(
       selector,
