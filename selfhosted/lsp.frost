@@ -56,6 +56,11 @@ Doc :: struct {
 // last report is gone has to be told there are none rather than left as it was.
 Published :: struct {
     path: Arena<u8>,
+    // Which document the check that reported about this file was about.
+    // A file is told there is nothing left only by the document whose
+    // check last found something in it: checking one file has nothing to
+    // say about what another file was told.
+    doc: i64,
     live: i64,
 }
 
@@ -1148,7 +1153,9 @@ publish_findings :: fn(mut s: Server, doc: i64) {
     mut at: i64 = 0
     while (at < s.published.count) {
         ref seen := arena_at(s.published, at)
-        seen.live = 0
+        if (seen.doc == doc) {
+            seen.live = 0
+        }
         at = at + 1
     }
     frost_rt_take_open()
@@ -1164,8 +1171,8 @@ publish_findings :: fn(mut s: Server, doc: i64) {
     // A file with nothing wrong is told so, or what it was last told about
     // stays under text that no longer says it.
     ref about := arena_at(s.docs, doc)
-    if (already_published(s, bytes_view(about.path)) == false) {
-        note_published(s, bytes_view(about.path))
+    if (already_published(s, doc, bytes_view(about.path)) == false) {
+        note_published(s, doc, bytes_view(about.path))
         uri_of_path(s.other, bytes_view(about.path))
         say_open()
         emit_text("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":")
@@ -1178,7 +1185,11 @@ publish_findings :: fn(mut s: Server, doc: i64) {
     mut index: i64 = 0
     while (index < s.published.count) {
         ref seen := arena_at(s.published, index)
-        if (seen.live == 0 && seen.path.count > 0) {
+        // Told there is nothing left only where nothing else still has
+        // something to say about it: two documents that import one file both
+        // report about it, and one of them going quiet is not both.
+        if (seen.doc == doc && seen.live == 0 && seen.path.count > 0
+            && spoken_for(s, doc, bytes_view(seen.path)) == false) {
             uri_of_path(s.other, bytes_view(seen.path))
             say_open()
             emit_text("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":")
@@ -1192,11 +1203,11 @@ publish_findings :: fn(mut s: Server, doc: i64) {
 }
 
 // Whether this round has already told the editor about a file.
-already_published :: fn(mut s: Server, path: str) -> bool {
+already_published :: fn(mut s: Server, doc: i64, path: str) -> bool {
     mut at: i64 = 0
     while (at < s.published.count) {
         ref held := arena_at(s.published, at)
-        if (held.live == 1 && held.path.count > 0
+        if (held.doc == doc && held.live == 1 && held.path.count > 0
             && same_path(bytes_view(held.path), path)) {
             return true
         }
@@ -1390,7 +1401,7 @@ publish_file :: fn(
         ref held := arena_at(s.docs, doc)
         bytes_str(s.other, bytes_view(held.path))
     }
-    note_published(s, bytes_view(s.other))
+    note_published(s, doc, bytes_view(s.other))
     text := text_of_path(s, bytes_view(s.other))
     uri_of_path(s.scratch, bytes_view(s.other))
     say_open()
@@ -1431,11 +1442,12 @@ name_as_path :: fn(mut s: Server) {
 
 // This file is one the editor has been told about, so it can be told there is
 // nothing left when the last report about it goes.
-note_published :: fn(mut s: Server, path: str) {
+note_published :: fn(mut s: Server, doc: i64, path: str) {
     mut at: i64 = 0
     while (at < s.published.count) {
         ref held := arena_at(s.published, at)
-        if (held.path.count > 0 && same_path(bytes_view(held.path), path)) {
+        if (held.doc == doc && held.path.count > 0
+            && same_path(bytes_view(held.path), path)) {
             held.live = 1
             return
         }
@@ -1447,6 +1459,7 @@ note_published :: fn(mut s: Server, path: str) {
         if (held.path.count == 0) {
             bytes_reset(held.path)
             bytes_str(held.path, path)
+            held.doc = doc
             held.live = 1
             return
         }
@@ -1454,7 +1467,7 @@ note_published :: fn(mut s: Server, path: str) {
     }
     made := arena_push(
         s.published,
-        Published { path = arena_make($u8, 1024), live = 1 }
+        Published { path = arena_make($u8, 1024), doc = doc, live = 1 }
     )
     ref held := arena_at(s.published, made)
     bytes_reset(held.path)
@@ -2595,7 +2608,9 @@ answer_code_actions :: fn(mut s: Server, mut document: Json, request: i64) {
     params := json_member(document, request, "params")
     asked := json_member(document, params, "range")
     from := json_member(document, asked, "start")
+    to := json_member(document, asked, "end")
     from_line := json_number(document, json_member(document, from, "line"))
+    to_line := json_number(document, json_member(document, to, "line"))
     frost_rt_take_open()
     mut parser := new_parser(lsp_options(s, doc))
     run_check(s, doc, parser, 0)
@@ -2608,7 +2623,7 @@ answer_code_actions :: fn(mut s: Server, mut document: Json, request: i64) {
     say_open()
     say_result_head(document, request)
     emit_text("[")
-    say_fixes(s, found, doc, from_line, bytes_view(held.text))
+    say_fixes(s, found, doc, from_line, to_line, bytes_view(held.text))
     emit_text("]}")
     say_send()
     json_free(found)
@@ -2618,7 +2633,8 @@ say_fixes :: fn(
     mut s: Server,
     mut found: Json,
     doc: i64,
-    wanted_line: i64,
+    from_line: i64,
+    to_line: i64,
     text: str
 ) {
     root := json_root(found)
@@ -2629,7 +2645,7 @@ say_fixes :: fn(
         record := json_at(found, root, index)
         fix := json_member(found, record, "fix")
         line := json_number(found, json_member(found, record, "line")) - 1
-        if (fix >= 0 && line == wanted_line) {
+        if (fix >= 0 && line >= from_line && line <= to_line) {
             if (written > 0) {
                 emit_text(",")
             }
@@ -2719,4 +2735,19 @@ declaration_extent :: fn(
         walk = walk + 1
     }
     head
+}
+
+// Whether a file some other document reported about still has something said
+// about it.
+spoken_for :: fn(mut s: Server, doc: i64, path: str) -> bool {
+    mut at: i64 = 0
+    while (at < s.published.count) {
+        ref held := arena_at(s.published, at)
+        if (held.doc != doc && held.live == 1 && held.path.count > 0
+            && same_path(bytes_view(held.path), path)) {
+            return true
+        }
+        at = at + 1
+    }
+    false
 }

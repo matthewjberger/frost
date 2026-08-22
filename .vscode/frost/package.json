@@ -1,8 +1,8 @@
 {
   "name": "frost",
   "displayName": "Frost",
-  "description": "Syntax highlighting and navigation for the Frost language",
-  "version": "0.6.0",
+  "description": "The Frost language, served by the Frost compiler",
+  "version": "1.0.0",
   "publisher": "frost-lang",
   "license": "MIT",
   "engines": {
@@ -38,7 +38,9 @@
       {
         "scopeName": "markdown.frost.codeblock",
         "path": "./syntaxes/frost.markdown.tmLanguage.json",
-        "injectTo": ["text.html.markdown"],
+        "injectTo": [
+          "text.html.markdown"
+        ],
         "embeddedLanguages": {
           "meta.embedded.block.frost": "frost"
         }
@@ -55,6 +57,10 @@
         "command": "frost.applyEveryFix",
         "title": "Frost: Apply every fix the reports offer",
         "enablement": "editorLangId == frost"
+      },
+      {
+        "command": "frost.restartServer",
+        "title": "Frost: Restart the language server"
       }
     ],
     "configuration": {
@@ -63,7 +69,7 @@
         "frost.compilerPath": {
           "type": "string",
           "default": "frostc",
-          "description": "The self-hosted Frost compiler, which is what `just install-self` puts on PATH as `frostc`. It is the one that carries the tools this extension runs: the formatter, the check, the lint and `api`. A name is looked up on PATH."
+          "description": "The self-hosted Frost compiler, which is what `just install-self` puts on PATH as `frostc`. The extension starts it once as `frostc lsp` and asks it everything: the reports, the places, the names and the layout. A bare name is looked up on PATH."
         }
       }
     },
@@ -78,7 +84,10 @@
         "name": "frost",
         "owner": "frost",
         "source": "frost",
-        "fileLocation": ["autoDetect", "${workspaceFolder}"],
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
         "severity": "error",
         "pattern": [
           {

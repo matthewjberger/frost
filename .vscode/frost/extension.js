@@ -1,935 +1,612 @@
-// Navigation over the declaration syntax alone: every declaration head opens
-// its line and the namespace is flat, so a workspace search for
-// `^\s*name\s*::` is definition lookup. No language server, no dependencies;
-// the extension stays a plain file copy under `just install-editor`.
+// The editor's half of the Frost language server.
 //
-// What it cannot answer from the text it asks the compiler, and the compiler it
-// asks is the self-hosted one. The bootstrap's job is to build that compiler and
-// to be held to the same language; a tool written in Frost lives in the
-// self-hosted compiler alone and has no twin there.
+// Everything an answer needs is what the compiler already built, so the
+// compiler answers: `frostc lsp` is one process, started once, asked over its
+// own streams. What is here is the wiring between that conversation and what
+// VS Code hands a provider.
+//
+// Written against the protocol directly rather than through a client library,
+// so the extension stays one file with nothing to install beside it and `just
+// install-editor` stays a copy. The protocol is a header carrying a byte count,
+// then that many bytes of JSON-RPC.
+//
+// The compiler it talks to is the self-hosted one. The bootstrap's job is to
+// build that compiler and to be held to the same language; a tool written in
+// Frost lives in the self-hosted compiler alone and has no twin there.
+
 const vscode = require("vscode");
+const { spawn } = require("child_process");
 
-const FUNCTION_HEAD =
-  /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*::\s*(?:(?:safe|extern|inline|unsafe)\s+)*fn\b/;
-const TYPE_HEAD =
-  /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*::\s*(?:(?:linear|distinct)\s+)*(struct|enum|flags|type|distinct)\b/;
-const TEST_HEAD = /^\s*test\s+"([^"]*)"/;
-// A constant head is spaced where `Type::Variant` is written tight, the same
-// rule the grammar uses to tell the two apart.
-const CONSTANT_HEAD = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s+::/;
+const findings = vscode.languages.createDiagnosticCollection("frost");
 
-const TYPE_KINDS = {
-  struct: vscode.SymbolKind.Struct,
-  enum: vscode.SymbolKind.Enum,
-  flags: vscode.SymbolKind.Enum,
-  type: vscode.SymbolKind.Interface,
-  distinct: vscode.SymbolKind.Class,
-};
-
-const EXCLUDED_DIRECTORIES = [".frost-build", "target", ".git"];
-
-// How the compiler ends a line of JSON, either way it was written.
-const LINE_BREAKS = /\r?\n/;
-
-const files = new Map();
-let ready = Promise.resolve();
-
-function isExcluded(uri) {
-  const segments = uri.fsPath.split(/[\\/]/);
-  return EXCLUDED_DIRECTORIES.some((directory) => segments.includes(directory));
+// Where the self-hosted compiler is. It carries the server, the formatter, the
+// check and the lint; a bare name is looked up on PATH.
+function compilerPath() {
+  const held = vscode.workspace
+    .getConfiguration("frost")
+    .get("compilerPath", "frostc");
+  return held && held.trim() ? held.trim() : "frostc";
 }
 
-function classifyHead(line, lineIndex) {
-  let match = line.match(FUNCTION_HEAD);
-  if (match) {
-    return headOf(match[1], vscode.SymbolKind.Function, line, lineIndex);
+// The conversation with one server process.
+//
+// A request carries a number that its answer carries back, so the two are
+// matched by that number rather than by order: the server answers a question
+// about one file while a change to another is still on its way in.
+class Server {
+  constructor() {
+    this.child = null;
+    this.next = 1;
+    this.waiting = new Map();
+    this.held = Buffer.alloc(0);
+    this.open = new Set();
   }
-  match = line.match(TYPE_HEAD);
-  if (match) {
-    return headOf(match[1], TYPE_KINDS[match[2]], line, lineIndex);
-  }
-  match = line.match(TEST_HEAD);
-  if (match) {
-    const head = headOf("test", vscode.SymbolKind.Event, line, lineIndex);
-    head.name = `test "${match[1]}"`;
-    return head;
-  }
-  match = line.match(CONSTANT_HEAD);
-  if (match) {
-    return headOf(match[1], vscode.SymbolKind.Constant, line, lineIndex);
-  }
-  return null;
-}
 
-function headOf(name, kind, line, lineIndex) {
-  const startCharacter = line.indexOf(name);
-  return {
-    name,
-    kind,
-    line: lineIndex,
-    startCharacter,
-    endCharacter: startCharacter + name.length,
-    endLine: lineIndex,
-  };
-}
-
-// One pass over a line: how its braces move the depth, and which of its columns
-// are code rather than the inside of a string or a comment. Both answers come
-// from the same walk, so a reader of one cannot disagree with a reader of the
-// other about where a string ends.
-function readLine(line, state) {
-  let delta = 0;
-  const code = [];
-  let open = state.inString || state.inBlockComment ? -1 : 0;
-  for (let index = 0; index < line.length; index += 1) {
-    const character = line[index];
-    if (state.inBlockComment) {
-      if (character === "*" && line[index + 1] === "/") {
-        state.inBlockComment = false;
-        index += 1;
-        open = index + 1;
-      }
-      continue;
+  start() {
+    if (this.child) {
+      return true;
     }
-    if (state.inString) {
-      if (character === "\\") {
-        index += 1;
-      } else if (character === '"') {
-        state.inString = false;
-        open = index + 1;
-      }
-      continue;
-    }
-    if (character === "/" && line[index + 1] === "/") {
-      if (open >= 0) {
-        code.push([open, index]);
-        open = -1;
-      }
-      return { delta, code };
-    }
-    if (character === "/" && line[index + 1] === "*") {
-      state.inBlockComment = true;
-      if (open >= 0) {
-        code.push([open, index]);
-        open = -1;
-      }
-      index += 1;
-      continue;
-    }
-    if (character === '"') {
-      state.inString = true;
-      if (open >= 0) {
-        code.push([open, index]);
-        open = -1;
-      }
-    } else if (character === "{") {
-      delta += 1;
-    } else if (character === "}") {
-      delta -= 1;
-    }
-  }
-  if (open >= 0) {
-    code.push([open, line.length]);
-  }
-  return { delta, code };
-}
-
-function braceDelta(line, state) {
-  return readLine(line, state).delta;
-}
-
-// Where a name is written as a name. A file's lines are walked in order, since
-// a string or a block comment opened on one line runs into the next.
-function codeRunsOf(lines) {
-  const state = { inString: false, inBlockComment: false };
-  return lines.map((line) => readLine(line, state).code);
-}
-
-function insideCode(runs, column, length) {
-  return runs.some(([start, end]) => column >= start && column + length <= end);
-}
-
-// One pass over the file, tracking strings, comments and brace depth, so a
-// head is only read at the top level and a body's extent is known for the
-// outline. A head that never opens a brace ends on its own line.
-function scanDeclarations(lines) {
-  const declarations = [];
-  const state = { inString: false, inBlockComment: false };
-  let depth = 0;
-  let current = null;
-  let started = false;
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex];
-    if (depth === 0 && !state.inString && !state.inBlockComment) {
-      const head = classifyHead(line, lineIndex);
-      if (head) {
-        if (current) {
-          current.endLine = started ? lineIndex - 1 : current.line;
-          declarations.push(current);
-        }
-        current = head;
-        started = false;
-      }
-    }
-    depth += braceDelta(line, state);
-    if (depth < 0) {
-      depth = 0;
-    }
-    if (current) {
-      if (depth > 0) {
-        started = true;
-      } else if (started) {
-        current.endLine = lineIndex;
-        declarations.push(current);
-        current = null;
-      }
-    }
-  }
-  if (current) {
-    current.endLine = started ? lines.length - 1 : current.line;
-    declarations.push(current);
-  }
-  return declarations;
-}
-
-function setFile(uri, text) {
-  const lines = text.split(/\r?\n/);
-  files.set(uri.toString(), {
-    uri,
-    lines,
-    declarations: scanDeclarations(lines),
-  });
-}
-
-async function indexFile(uri) {
-  if (isExcluded(uri)) {
-    return;
-  }
-  let bytes;
-  try {
-    bytes = await vscode.workspace.fs.readFile(uri);
-  } catch {
-    files.delete(uri.toString());
-    return;
-  }
-  setFile(uri, new TextDecoder("utf-8").decode(bytes));
-}
-
-function indexDocument(document) {
-  if (document.uri.scheme !== "file" || isExcluded(document.uri)) {
-    return;
-  }
-  setFile(document.uri, document.getText());
-}
-
-async function indexWorkspace() {
-  const uris = await vscode.workspace.findFiles(
-    "**/*.frost",
-    "{**/.frost-build/**,**/target/**,**/.git/**}"
-  );
-  await Promise.all(uris.map(indexFile));
-  for (const document of vscode.workspace.textDocuments) {
-    if (document.languageId === "frost") {
-      indexDocument(document);
-    }
-  }
-}
-
-// A field or member access cannot resolve without types, so a word directly
-// after a single dot is skipped rather than guessed at. Two dots are a range,
-// whose right operand is an ordinary name.
-function wordAt(document, position) {
-  const range = document.getWordRangeAtPosition(position);
-  if (!range) {
-    return null;
-  }
-  let word = document.getText(range);
-  if (word.startsWith("$")) {
-    word = word.slice(1);
-  }
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(word)) {
-    return null;
-  }
-  const start = range.start;
-  if (start.character > 0) {
-    const before = document.getText(
-      new vscode.Range(
-        start.line,
-        Math.max(0, start.character - 2),
-        start.line,
-        start.character
-      )
-    );
-    if (before.endsWith(".") && !before.endsWith("..")) {
-      return null;
-    }
-  }
-  return word;
-}
-
-function lookup(name) {
-  const results = [];
-  for (const entry of files.values()) {
-    for (const declaration of entry.declarations) {
-      if (declaration.name === name) {
-        results.push({ entry, declaration });
-      }
-    }
-  }
-  return results;
-}
-
-function locationOf(entry, declaration) {
-  return new vscode.Location(
-    entry.uri,
-    new vscode.Range(
-      declaration.line,
-      declaration.startCharacter,
-      declaration.line,
-      declaration.endCharacter
-    )
-  );
-}
-
-function signatureOf(entry, declaration) {
-  const lines = entry.lines;
-  let text = lines[declaration.line];
-  if (declaration.kind === vscode.SymbolKind.Function) {
-    let depth = parenthesisDelta(text);
-    let lineIndex = declaration.line;
-    while (
-      depth > 0 &&
-      lineIndex + 1 < lines.length &&
-      lineIndex - declaration.line < 12
-    ) {
-      lineIndex += 1;
-      text += "\n" + lines[lineIndex];
-      depth += parenthesisDelta(lines[lineIndex]);
-    }
-  }
-  return text.replace(/\s*\{\s*$/, "");
-}
-
-function parenthesisDelta(line) {
-  let delta = 0;
-  for (const character of line) {
-    if (character === "(") {
-      delta += 1;
-    } else if (character === ")") {
-      delta -= 1;
-    }
-  }
-  return delta;
-}
-
-function commentAbove(lines, headLine) {
-  const collected = [];
-  for (let lineIndex = headLine - 1; lineIndex >= 0; lineIndex -= 1) {
-    const match = lines[lineIndex].match(/^\s*\/\/ ?(.*)$/);
-    if (!match) {
-      break;
-    }
-    collected.unshift(match[1]);
-  }
-  return collected.join("\n").trim();
-}
-
-function matchesQuery(needle, haystack) {
-  let position = 0;
-  for (const character of needle) {
-    position = haystack.indexOf(character, position);
-    if (position < 0) {
+    const folder = vscode.workspace.workspaceFolders
+      ? vscode.workspace.workspaceFolders[0].uri.fsPath
+      : undefined;
+    try {
+      this.child = spawn(compilerPath(), ["lsp"], {
+        cwd: folder,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (error) {
+      this.report(error);
       return false;
     }
-    position += 1;
+    this.child.on("error", (error) => this.report(error));
+    this.child.stdout.on("data", (piece) => this.read(piece));
+    this.child.on("exit", () => {
+      this.child = null;
+      for (const settle of this.waiting.values()) {
+        settle(null);
+      }
+      this.waiting.clear();
+      this.open.clear();
+    });
+    this.send({
+      jsonrpc: "2.0",
+      id: this.next++,
+      method: "initialize",
+      params: {
+        processId: process.pid,
+        rootUri: folder ? vscode.Uri.file(folder).toString() : null,
+        capabilities: {},
+      },
+    });
+    this.send({ jsonrpc: "2.0", method: "initialized", params: {} });
+    return true;
   }
-  return true;
+
+  report(error) {
+    vscode.window.showErrorMessage(
+      `frost: cannot start '${compilerPath()} lsp' (${error.message}). ` +
+        "Run `just install-self`, or set frost.compilerPath."
+    );
+  }
+
+  stop() {
+    if (!this.child) {
+      return;
+    }
+    this.send({ jsonrpc: "2.0", method: "exit", params: {} });
+    this.child.stdin.end();
+    this.child = null;
+    this.open.clear();
+  }
+
+  send(message) {
+    if (!this.child) {
+      return;
+    }
+    const body = Buffer.from(JSON.stringify(message), "utf8");
+    this.child.stdin.write(`Content-Length: ${body.length}\r\n\r\n`);
+    this.child.stdin.write(body);
+  }
+
+  // Whole messages out of the stream, which arrives in whatever pieces the pipe
+  // hands over: a header may come without its body, and two answers may come at
+  // once.
+  read(piece) {
+    this.held = Buffer.concat([this.held, piece]);
+    for (;;) {
+      const head = this.held.indexOf("\r\n\r\n");
+      if (head < 0) {
+        return;
+      }
+      const header = this.held.slice(0, head).toString("ascii");
+      const named = /content-length:\s*(\d+)/i.exec(header);
+      if (!named) {
+        this.held = this.held.slice(head + 4);
+        continue;
+      }
+      const length = Number(named[1]);
+      if (this.held.length < head + 4 + length) {
+        return;
+      }
+      const body = this.held.slice(head + 4, head + 4 + length);
+      this.held = this.held.slice(head + 4 + length);
+      try {
+        this.take(JSON.parse(body.toString("utf8")));
+      } catch (error) {
+        continue;
+      }
+    }
+  }
+
+  take(message) {
+    if (message.id !== undefined && this.waiting.has(message.id)) {
+      const settle = this.waiting.get(message.id);
+      this.waiting.delete(message.id);
+      settle(message.result === undefined ? null : message.result);
+      return;
+    }
+    if (message.method === "textDocument/publishDiagnostics") {
+      publish(message.params);
+    }
+  }
+
+  notify(method, params) {
+    if (!this.start()) {
+      return;
+    }
+    this.send({ jsonrpc: "2.0", method, params });
+  }
+
+  request(method, params) {
+    if (!this.start()) {
+      return Promise.resolve(null);
+    }
+    const id = this.next++;
+    return new Promise((settle) => {
+      this.waiting.set(id, settle);
+      this.send({ jsonrpc: "2.0", id, method, params });
+      // A server that never answers must not leave a provider waiting: VS Code
+      // shows a spinner until one of the two happens.
+      setTimeout(() => {
+        if (this.waiting.has(id)) {
+          this.waiting.delete(id);
+          settle(null);
+        }
+      }, 20000);
+    });
+  }
+
+  // The server answers about the buffer on screen, so it is told what that is
+  // before anything is asked about it.
+  opened(document) {
+    const uri = document.uri.toString();
+    if (this.open.has(uri)) {
+      return;
+    }
+    this.open.add(uri);
+    this.notify("textDocument/didOpen", {
+      textDocument: {
+        uri,
+        languageId: "frost",
+        version: document.version,
+        text: document.getText(),
+      },
+    });
+  }
+
+  changed(document) {
+    if (!this.open.has(document.uri.toString())) {
+      this.opened(document);
+      return;
+    }
+    this.notify("textDocument/didChange", {
+      textDocument: {
+        uri: document.uri.toString(),
+        version: document.version,
+      },
+      contentChanges: [{ text: document.getText() }],
+    });
+  }
+
+  closed(document) {
+    const uri = document.uri.toString();
+    if (!this.open.has(uri)) {
+      return;
+    }
+    this.open.delete(uri);
+    this.notify("textDocument/didClose", { textDocument: { uri } });
+  }
+
+  saved(document) {
+    this.notify("textDocument/didSave", {
+      textDocument: { uri: document.uri.toString() },
+    });
+  }
 }
 
-const documentSymbolProvider = {
-  provideDocumentSymbols(document) {
-    const lines = document.getText().split(/\r?\n/);
-    return scanDeclarations(lines).map((declaration) => {
-      const endLine = Math.min(declaration.endLine, lines.length - 1);
-      const symbol = new vscode.DocumentSymbol(
-        declaration.name,
-        "",
-        declaration.kind,
-        new vscode.Range(
-          declaration.line,
-          0,
-          endLine,
-          lines[endLine].length
-        ),
-        new vscode.Range(
-          declaration.line,
-          declaration.startCharacter,
-          declaration.line,
-          declaration.endCharacter
-        )
+const server = new Server();
+
+function watched(document) {
+  return document.languageId === "frost" && document.uri.scheme === "file";
+}
+
+function named(document) {
+  return { textDocument: { uri: document.uri.toString() } };
+}
+
+function at(position) {
+  return { line: position.line, character: position.character };
+}
+
+function positionOf(held) {
+  return new vscode.Position(held.line, held.character);
+}
+
+function rangeOf(held) {
+  return new vscode.Range(positionOf(held.start), positionOf(held.end));
+}
+
+function locationOf(held) {
+  return new vscode.Location(vscode.Uri.parse(held.uri), rangeOf(held.range));
+}
+
+// A workspace edit out of the shape the protocol writes one in.
+function editOf(held) {
+  const edit = new vscode.WorkspaceEdit();
+  if (!held || !held.changes) {
+    return edit;
+  }
+  for (const [uri, edits] of Object.entries(held.changes)) {
+    for (const one of edits) {
+      edit.replace(vscode.Uri.parse(uri), rangeOf(one.range), one.newText);
+    }
+  }
+  return edit;
+}
+
+// Whether an edit lands where a report is, which is what pairs the two so a
+// lightbulb shows under the squiggle it answers.
+function touches(range, held) {
+  if (!held || !held.changes) {
+    return false;
+  }
+  for (const edits of Object.values(held.changes)) {
+    for (const one of edits) {
+      if (range.intersection(rangeOf(one.range))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The reports the server publishes. It sends one message per file it has
+// something to say about, and an empty one for a file it no longer has.
+function publish(params) {
+  const uri = vscode.Uri.parse(params.uri);
+  findings.set(
+    uri,
+    (params.diagnostics || []).map((report) => {
+      const held = new vscode.Diagnostic(
+        rangeOf(report.range),
+        report.message || "",
+        report.severity === 2
+          ? vscode.DiagnosticSeverity.Warning
+          : vscode.DiagnosticSeverity.Error
       );
-      return symbol;
-    });
-  },
-};
+      held.source = report.source || "frost";
+      return held;
+    })
+  );
+}
 
 const definitionProvider = {
   async provideDefinition(document, position) {
-    await ready;
-    const word = wordAt(document, position);
-    if (!word) {
+    const held = await server.request("textDocument/definition", {
+      ...named(document),
+      position: at(position),
+    });
+    return held ? locationOf(held) : undefined;
+  },
+};
+
+const hoverProvider = {
+  async provideHover(document, position) {
+    const held = await server.request("textDocument/hover", {
+      ...named(document),
+      position: at(position),
+    });
+    if (!held || !held.contents) {
       return undefined;
     }
-    return lookup(word).map(({ entry, declaration }) =>
-      locationOf(entry, declaration)
+    return new vscode.Hover(
+      new vscode.MarkdownString(held.contents.value || "")
+    );
+  },
+};
+
+const referenceProvider = {
+  async provideReferences(document, position) {
+    const held = await server.request("textDocument/references", {
+      ...named(document),
+      position: at(position),
+      context: { includeDeclaration: true },
+    });
+    return (held || []).map(locationOf);
+  },
+};
+
+const documentHighlightProvider = {
+  async provideDocumentHighlights(document, position) {
+    const held = await server.request("textDocument/documentHighlight", {
+      ...named(document),
+      position: at(position),
+    });
+    return (held || []).map(
+      (one) => new vscode.DocumentHighlight(rangeOf(one.range))
+    );
+  },
+};
+
+// The protocol numbers its kinds from one and VS Code numbers the same list
+// from zero, so every kind that crosses loses one on the way in.
+const documentSymbolProvider = {
+  async provideDocumentSymbols(document) {
+    const held = await server.request(
+      "textDocument/documentSymbol",
+      named(document)
+    );
+    return (held || []).map(
+      (one) =>
+        new vscode.DocumentSymbol(
+          one.name,
+          "",
+          one.kind - 1,
+          rangeOf(one.range),
+          rangeOf(one.selectionRange)
+        )
     );
   },
 };
 
 const workspaceSymbolProvider = {
   async provideWorkspaceSymbols(query) {
-    await ready;
-    const needle = query.toLowerCase();
-    const symbols = [];
-    for (const entry of files.values()) {
-      const container = vscode.workspace.asRelativePath(entry.uri);
-      for (const declaration of entry.declarations) {
-        if (!matchesQuery(needle, declaration.name.toLowerCase())) {
-          continue;
-        }
-        symbols.push(
-          new vscode.SymbolInformation(
-            declaration.name,
-            declaration.kind,
-            container,
-            locationOf(entry, declaration)
-          )
-        );
-      }
-    }
-    return symbols;
-  },
-};
-
-const referenceProvider = {
-  async provideReferences(document, position, context) {
-    await ready;
-    const range = document.getWordRangeAtPosition(position);
-    if (!range) {
-      return [];
-    }
-    let word = document.getText(range);
-    if (word.startsWith("$")) {
-      word = word.slice(1);
-    }
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(word)) {
-      return [];
-    }
-    const pattern = new RegExp("\\b" + word + "\\b", "g");
-    const locations = [];
-    for (const entry of files.values()) {
-      // A name written in a comment or inside a string is prose, not a use of
-      // the declaration. Counted, `// vec_push is what to call` sent a reader
-      // to a line that names nothing.
-      const runs = codeRunsOf(entry.lines);
-      for (let lineIndex = 0; lineIndex < entry.lines.length; lineIndex += 1) {
-        const line = entry.lines[lineIndex];
-        pattern.lastIndex = 0;
-        let match;
-        while ((match = pattern.exec(line)) !== null) {
-          if (!insideCode(runs[lineIndex], match.index, word.length)) {
-            continue;
-          }
-          if (
-            !context.includeDeclaration &&
-            entry.declarations.some(
-              (declaration) =>
-                declaration.line === lineIndex &&
-                declaration.startCharacter === match.index &&
-                declaration.name === word
-            )
-          ) {
-            continue;
-          }
-          locations.push(
-            new vscode.Location(
-              entry.uri,
-              new vscode.Range(
-                lineIndex,
-                match.index,
-                lineIndex,
-                match.index + word.length
-              )
-            )
-          );
-        }
-      }
-    }
-    return locations;
-  },
-};
-
-const hoverProvider = {
-  async provideHover(document, position) {
-    await ready;
-    const word = wordAt(document, position);
-    if (!word) {
-      return undefined;
-    }
-    const hits = lookup(word);
-    if (hits.length === 0) {
-      return undefined;
-    }
-    const local = hits.find(
-      ({ entry }) => entry.uri.toString() === document.uri.toString()
+    const held = await server.request("workspace/symbol", { query });
+    return (held || []).map(
+      (one) =>
+        new vscode.SymbolInformation(
+          one.name,
+          one.kind - 1,
+          "",
+          locationOf(one.location)
+        )
     );
-    const { entry, declaration } = local || hits[0];
-    const markdown = new vscode.MarkdownString();
-    markdown.appendCodeblock(signatureOf(entry, declaration), "frost");
-    const comment = commentAbove(entry.lines, declaration.line);
-    if (comment) {
-      markdown.appendMarkdown(comment);
-    }
-    return new vscode.Hover(markdown);
   },
 };
 
-// Formatting is `frost fmt -`: the compiler reads the buffer on standard input
-// and writes its one rendering to standard output, so the editor and the build
-// agree by running the same code rather than by keeping two of it. The whole
-// document is replaced.
-//
-// A compiler that cannot be run leaves the buffer alone and says so. Said
-// rather than swallowed: returning nothing is what an already-formatted buffer
-// returns too, so a `frost` that is not on PATH looked exactly like a file with
-// nothing to change, and the setting to point at one is named in the message.
 const documentFormattingProvider = {
-  provideDocumentFormattingEdits(document) {
-    const compiler = vscode.workspace
-      .getConfiguration("frost")
-      .get("compilerPath", "frost");
-    let written;
-    try {
-      written = require("child_process").execFileSync(compiler, ["fmt", "-"], {
-        input: document.getText(),
-        encoding: "utf8",
-        maxBuffer: 64 * 1024 * 1024,
-      });
-    } catch (error) {
-      const reason =
-        error && error.code === "ENOENT"
-          ? `'${compiler}' was not found; run 'just install-self' or set frost.compilerPath to the self-hosted compiler`
-          : (error && error.stderr) || (error && error.message) || "it failed";
-      vscode.window.showErrorMessage(`frost fmt did not run: ${reason}`);
-      return undefined;
-    }
-    if (written === document.getText()) {
-      return undefined;
-    }
-    const whole = new vscode.Range(
-      document.positionAt(0),
-      document.positionAt(document.getText().length)
+  async provideDocumentFormattingEdits(document) {
+    const held = await server.request("textDocument/formatting", {
+      ...named(document),
+      options: { tabSize: 4, insertSpaces: true },
+    });
+    return (held || []).map((one) =>
+      vscode.TextEdit.replace(rangeOf(one.range), one.newText)
     );
-    return [vscode.TextEdit.replace(whole, written)];
   },
 };
 
-// What the compiler says about a file, published where the editor shows
-// problems. Two passes, because they answer different questions: a check reports
-// what a build refuses on and what it warns about, and `lint` reports the
-// findings a build says nothing about at all.
-const findings = vscode.languages.createDiagnosticCollection("frost");
-
-// The edits the reports carried, by file, for the code actions to offer. Held
-// beside the diagnostics rather than on them: what the editor hands back to a
-// code action is its own copy of a diagnostic, so a property put on one here
-// does not survive the trip.
-const offered = new Map();
-
-// The compiler this extension runs. The self-hosted one, which is where the
-// tools live: the bootstrap's job is to build it, and a tool written in Frost
-// has no twin there. `just install-self` puts it on PATH under this name.
-function compilerPath() {
-  return vscode.workspace
-    .getConfiguration("frost")
-    .get("compilerPath", "frostc");
-}
-
-// The compiler's output, whichever stream it wrote on and whether or not it
-// ended well. A refused build is a nonzero exit and its reports are what to
-// read, so the failure carries the answer.
-//
-// Run without waiting on it. A check and a lint are a compiler apiece, and run
-// where the editor waits they are two builds between one keystroke and the
-// next.
-function runCompiler(arguments_, options) {
-  const held = {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    ...(options || {}),
-  };
-  return new Promise((answer) => {
-    require("child_process").execFile(
-      compilerPath(),
-      arguments_,
-      held,
-      (error, out, err) => {
-        answer({
-          out: typeof out === "string" ? out : "",
-          err: typeof err === "string" ? err : "",
-          failed: Boolean(error),
-        });
-      }
+const foldingRangeProvider = {
+  async provideFoldingRanges(document) {
+    const held = await server.request(
+      "textDocument/foldingRange",
+      named(document)
     );
-  });
-}
-
-function reportsIn(text) {
-  const held = [];
-  for (const line of (text || "").split(LINE_BREAKS)) {
-    if (!line.trim().startsWith("{")) {
-      continue;
-    }
-    try {
-      held.push(JSON.parse(line));
-    } catch (error) {
-      continue;
-    }
-  }
-  return held;
-}
-
-// A span in a report counts bytes and a position counts UTF-16 units, and the
-// two agree only while every byte is one. A file holding a character above
-// ASCII is read by its line and column instead, which is exact either way.
-function bytesAreUnits(text) {
-  return !/[^\x00-\x7F]/.test(text);
-}
-
-// What to underline. A report's own span is a point at the place it names, so
-// the span of the edit it offers is preferred where there is one, and the word
-// under the place where there is neither. A zero-width range draws nothing.
-function rangeOf(document, report, ascii) {
-  const at = new vscode.Position(
-    Math.max(0, (report.line || 1) - 1),
-    Math.max(0, (report.column || 1) - 1)
-  );
-  const spans = [report.fix && report.fix.span, report.span];
-  if (ascii) {
-    for (const span of spans) {
-      if (Array.isArray(span) && span[1] > span[0]) {
-        return new vscode.Range(
-          document.positionAt(span[0]),
-          document.positionAt(span[1])
-        );
-      }
-    }
-  }
-  return document.getWordRangeAtPosition(at) || new vscode.Range(at, at);
-}
-
-async function publishFindings(document) {
-  if (document.languageId !== "frost" || document.uri.scheme !== "file") {
-    return;
-  }
-  const path = document.uri.fsPath;
-  // The check writes its reports on the error stream and `lint` writes its own
-  // on the output stream. Neither writes a file: a build that is refused stops
-  // before it emits, and one that is not was asked for no output.
-  // Run where the project is. The last two roots a compiler searches are named
-  // relative to the directory it was started in, so a project that keeps its own
-  // libraries beside its manifest is only reachable from there.
-  const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-  const at = folder ? { cwd: folder.uri.fsPath } : {};
-  const [check, lint] = await Promise.all([
-    runCompiler([path, "--diagnostics=json"], at),
-    runCompiler(["lint", "--diagnostics=json", path], at),
-  ]);
-  const checked = check.err;
-  const linted = lint.out;
-  const ascii = bytesAreUnits(document.getText());
-  const found = [];
-  const fixes = [];
-  const seen = new Set();
-  for (const report of reportsIn(checked).concat(reportsIn(linted))) {
-    // The two passes overlap on the warnings, which both of them find.
-    const key = `${report.line}:${report.column}:${report.message}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    const range = rangeOf(document, report, ascii);
-    const severity =
-      report.severity === "error"
-        ? vscode.DiagnosticSeverity.Error
-        : vscode.DiagnosticSeverity.Warning;
-    const held = new vscode.Diagnostic(
-      range,
-      report.message || "",
-      severity
+    return (held || []).map(
+      (one) => new vscode.FoldingRange(one.startLine, one.endLine)
     );
-    held.source = "frost";
-    // Another place the same report is about, as a link the reader can follow.
-    if (Array.isArray(report.related) && report.related.length > 0) {
-      held.relatedInformation = report.related
-        .filter((place) => place && typeof place.line === "number")
-        .map((place) => {
-          const where = new vscode.Position(
-            Math.max(0, place.line - 1),
-            Math.max(0, (place.column || 1) - 1)
-          );
-          return new vscode.DiagnosticRelatedInformation(
-            new vscode.Location(
-              place.file ? vscode.Uri.file(place.file) : document.uri,
-              new vscode.Range(where, where)
-            ),
-            place.message || ""
-          );
-        });
-    }
-    found.push(held);
-    if (report.fix && ascii && Array.isArray(report.fix.span)) {
-      fixes.push({
-        message: held.message,
-        range,
-        edit: new vscode.Range(
-          document.positionAt(report.fix.span[0]),
-          document.positionAt(report.fix.span[1])
-        ),
-        replacement: report.fix.replacement || "",
-        certain: report.fix.certain === true,
-      });
-    }
-  }
-  findings.set(document.uri, found);
-  offered.set(document.uri.toString(), fixes);
-}
-
-// The edit a report carried, offered where the report is. The compiler worked
-// it out; without this it was written into the JSON and read by nothing.
-const codeActionProvider = {
-  provideCodeActions(document, range, context) {
-    const held = offered.get(document.uri.toString()) || [];
-    const actions = [];
-    for (const fix of held) {
-      if (!fix.range.intersection(range)) {
-        continue;
-      }
-      const shown = fix.replacement
-        ? `Replace with '${fix.replacement}'`
-        : "Remove this";
-      const action = new vscode.CodeAction(
-        shown,
-        vscode.CodeActionKind.QuickFix
-      );
-      action.edit = new vscode.WorkspaceEdit();
-      action.edit.replace(document.uri, fix.edit, fix.replacement);
-      // A fix the compiler applies unread is the one to reach for, and one it
-      // offers is a guess at what was meant.
-      action.isPreferred = fix.certain;
-      action.diagnostics = context.diagnostics.filter(
-        (diagnostic) => diagnostic.message === fix.message
-      );
-      actions.push(action);
-    }
-    return actions;
   },
 };
 
-// The exported surface under a prefix, from `frost api`, which reads the
-// program rather than the text. Asked once for the first two characters and
-// narrowed here, since the answer for `ve` holds every answer for `vec_`.
-const surface = new Map();
-
-// A function's head without the body, which an `inline fn` carries on the same
-// line. The brace that opens a body is the first one written outside every
-// bracket, so a `where` clause naming a call keeps its own and a body holding
-// one does not put the cut inside itself.
-//
-// Only a function. A struct's braces hold its fields, which is what a reader
-// asking about a struct wants to read.
-function withoutBody(text) {
-  if (!/::\s*(?:[a-z]+\s+)*fn\b/.test(text)) {
-    return text;
-  }
-  let depth = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
-    if (character === "(" || character === "[") {
-      depth += 1;
-    } else if (character === ")" || character === "]") {
-      depth -= 1;
-    } else if (character === "{" && depth === 0) {
-      return text.slice(0, index).trimEnd();
+const renameProvider = {
+  async prepareRename(document, position) {
+    const held = await server.request("textDocument/prepareRename", {
+      ...named(document),
+      position: at(position),
+    });
+    if (!held) {
+      throw new Error("frost: there is no name here to rename");
     }
-  }
-  return text;
-}
-
-async function surfaceUnder(prefix, directory) {
-  const key = `${directory} ${prefix}`;
-  const cached = surface.get(key);
-  if (cached && Date.now() - cached.at < 5000) {
-    return cached.items;
-  }
-  const written = (await runCompiler(["api", prefix], { cwd: directory })).out;
-  const lines = written.split(LINE_BREAKS);
-  const items = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!/^(.+):(\d+)$/.test(lines[index])) {
-      continue;
-    }
-    // A head carries over the lines its parameters run onto, and the blank line
-    // after it is what ends it.
-    const parts = [];
-    let at = index + 1;
-    while (at < lines.length && lines[at].trim() !== "") {
-      parts.push(lines[at].trim());
-      at += 1;
-    }
-    const signature = withoutBody(parts.join(" "));
-    const named = signature.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*::/);
-    if (!named) {
-      continue;
-    }
-    items.push({ name: named[1], signature, where: lines[index] });
-  }
-  surface.set(key, { at: Date.now(), items });
-  return items;
-}
+    return rangeOf(held);
+  },
+  async provideRenameEdits(document, position, newName) {
+    const held = await server.request("textDocument/rename", {
+      ...named(document),
+      position: at(position),
+      newName,
+    });
+    return held && held.changes ? editOf(held) : undefined;
+  },
+};
 
 const completionItemProvider = {
   async provideCompletionItems(document, position) {
-    const range = document.getWordRangeAtPosition(position);
-    const written = range
-      ? document.getText(new vscode.Range(range.start, position))
-      : "";
-    if (written.length < 2) {
+    const held = await server.request("textDocument/completion", {
+      ...named(document),
+      position: at(position),
+    });
+    if (!held) {
       return undefined;
     }
-    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-    const directory = folder
-      ? folder.uri.fsPath
-      : require("path").dirname(document.uri.fsPath);
-    const under = await surfaceUnder(written.slice(0, 2), directory);
-    return under
-      .filter((held) => held.name.startsWith(written))
-      .map((held) => {
-        const item = new vscode.CompletionItem(
-          held.name,
-          held.signature.includes(":: fn")
-            ? vscode.CompletionItemKind.Function
-            : vscode.CompletionItemKind.Variable
-        );
-        item.detail = held.signature;
-        item.documentation = new vscode.MarkdownString(held.where);
-        return item;
-      });
+    return (held.items || []).map((one) => {
+      const item = new vscode.CompletionItem(one.label, one.kind - 1);
+      if (one.detail) {
+        item.detail = one.detail;
+      }
+      return item;
+    });
   },
 };
 
-// Every edit the compiler applies unread, applied at once. The reports are the
-// ones already published, so this offers exactly what the lightbulbs offer and
-// asks the compiler nothing new.
+// The edits the reports carry, offered where the reports are. The compiler
+// worked each of them out; without this they were written and read by nothing.
+const codeActionProvider = {
+  async provideCodeActions(document, range, context) {
+    const held = await server.request("textDocument/codeAction", {
+      ...named(document),
+      range: { start: at(range.start), end: at(range.end) },
+      context: { diagnostics: [] },
+    });
+    return (held || []).map((one) => {
+      const action = new vscode.CodeAction(
+        one.title,
+        vscode.CodeActionKind.QuickFix
+      );
+      // A fix the compiler applies unread is the one to reach for, and one it
+      // offers is a guess at what was meant.
+      action.isPreferred = one.isPreferred === true;
+      action.edit = editOf(one.edit);
+      action.diagnostics = context.diagnostics.filter((diagnostic) =>
+        touches(diagnostic.range, one.edit)
+      );
+      return action;
+    });
+  },
+};
+
+// Every edit the compiler applies unread, applied at once.
 //
 // Highest offset first, so applying one leaves the offsets of the ones not yet
 // applied standing, and two edits over the same bytes are one edit twice.
 async function applyEveryFix() {
   const editor = vscode.window.activeTextEditor;
-  if (!editor || editor.document.languageId !== "frost") {
+  if (!editor || !watched(editor.document)) {
     return;
   }
-  const held = (offered.get(editor.document.uri.toString()) || []).filter(
-    (fix) => fix.certain
-  );
-  if (held.length === 0) {
+  const document = editor.document;
+  const last = document.lineAt(document.lineCount - 1).range.end;
+  const held = await server.request("textDocument/codeAction", {
+    ...named(document),
+    range: { start: { line: 0, character: 0 }, end: at(last) },
+    context: { diagnostics: [] },
+  });
+  const edits = [];
+  for (const one of (held || []).filter((each) => each.isPreferred === true)) {
+    for (const [uri, changes] of Object.entries(
+      (one.edit && one.edit.changes) || {}
+    )) {
+      for (const each of changes) {
+        edits.push({ uri, range: rangeOf(each.range), text: each.newText });
+      }
+    }
+  }
+  if (edits.length === 0) {
     vscode.window.showInformationMessage("frost: nothing to apply here");
     return;
   }
-  held.sort((one, other) => other.edit.start.compareTo(one.edit.start));
+  edits.sort((one, other) => other.range.start.compareTo(one.range.start));
   const edit = new vscode.WorkspaceEdit();
-  let last = null;
+  let above = null;
   let written = 0;
-  for (const fix of held) {
-    if (last && fix.edit.end.compareTo(last) > 0) {
+  for (const one of edits) {
+    if (above && one.range.end.compareTo(above) > 0) {
       continue;
     }
-    edit.replace(editor.document.uri, fix.edit, fix.replacement);
-    last = fix.edit.start;
+    edit.replace(vscode.Uri.parse(one.uri), one.range, one.text);
+    above = one.range.start;
     written += 1;
   }
   await vscode.workspace.applyEdit(edit);
-  await publishFindings(editor.document);
-  vscode.window.showInformationMessage(
-    `frost: applied ${written} fix(es)`
-  );
+  vscode.window.showInformationMessage(`frost: applied ${written} fix(es)`);
+}
+
+// A fresh server, told about every buffer that is open. What it was told about
+// the old one goes with it.
+function restart() {
+  server.stop();
+  findings.clear();
+  for (const open of vscode.workspace.textDocuments) {
+    if (watched(open)) {
+      server.opened(open);
+    }
+  }
 }
 
 function activate(context) {
-  ready = indexWorkspace().catch(() => undefined);
+  const selector = { language: "frost", scheme: "file" };
   context.subscriptions.push(findings);
 
-  const selector = { language: "frost" };
-  const timers = new Map();
-
   context.subscriptions.push(
-    vscode.languages.registerDocumentFormattingEditProvider(
+    vscode.languages.registerDefinitionProvider(selector, definitionProvider),
+    vscode.languages.registerHoverProvider(selector, hoverProvider),
+    vscode.languages.registerReferenceProvider(selector, referenceProvider),
+    vscode.languages.registerDocumentHighlightProvider(
       selector,
-      documentFormattingProvider
+      documentHighlightProvider
     ),
     vscode.languages.registerDocumentSymbolProvider(
       selector,
       documentSymbolProvider
     ),
-    vscode.languages.registerDefinitionProvider(selector, definitionProvider),
     vscode.languages.registerWorkspaceSymbolProvider(workspaceSymbolProvider),
-    vscode.languages.registerReferenceProvider(selector, referenceProvider),
-    vscode.languages.registerHoverProvider(selector, hoverProvider),
-    vscode.languages.registerCodeActionsProvider(selector, codeActionProvider, {
-      providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
-    }),
+    vscode.languages.registerDocumentFormattingEditProvider(
+      selector,
+      documentFormattingProvider
+    ),
+    vscode.languages.registerFoldingRangeProvider(
+      selector,
+      foldingRangeProvider
+    ),
+    vscode.languages.registerRenameProvider(selector, renameProvider),
     vscode.languages.registerCompletionItemProvider(
       selector,
       completionItemProvider
     ),
+    vscode.languages.registerCodeActionsProvider(selector, codeActionProvider, {
+      providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+    }),
     vscode.commands.registerCommand("frost.applyEveryFix", applyEveryFix),
-    vscode.workspace.onDidChangeTextDocument((event) => {
-      if (event.document.languageId !== "frost") {
-        return;
-      }
-      const key = event.document.uri.toString();
-      clearTimeout(timers.get(key));
-      timers.set(
-        key,
-        setTimeout(() => {
-          timers.delete(key);
-          indexDocument(event.document);
-        }, 250)
-      );
-    })
+    vscode.commands.registerCommand("frost.restartServer", restart)
   );
 
   context.subscriptions.push(
-    vscode.workspace.onDidSaveTextDocument(publishFindings),
-    vscode.workspace.onDidOpenTextDocument(publishFindings)
+    vscode.workspace.onDidOpenTextDocument((document) => {
+      if (watched(document)) {
+        server.opened(document);
+      }
+    }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (watched(event.document)) {
+        server.changed(event.document);
+      }
+    }),
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      if (watched(document)) {
+        server.saved(document);
+      }
+    }),
+    vscode.workspace.onDidCloseTextDocument((document) => {
+      if (watched(document)) {
+        server.closed(document);
+        findings.delete(document.uri);
+      }
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("frost.compilerPath")) {
+        restart();
+      }
+    })
   );
-  for (const open of vscode.workspace.textDocuments) {
-    publishFindings(open);
-  }
 
-  const watcher = vscode.workspace.createFileSystemWatcher("**/*.frost");
-  watcher.onDidCreate(indexFile, null, context.subscriptions);
-  watcher.onDidChange(indexFile, null, context.subscriptions);
-  watcher.onDidDelete(
-    (uri) => {
-      files.delete(uri.toString());
-      offered.delete(uri.toString());
-      findings.delete(uri);
-    },
-    null,
-    context.subscriptions
-  );
-  context.subscriptions.push(watcher);
+  for (const open of vscode.workspace.textDocuments) {
+    if (watched(open)) {
+      server.opened(open);
+    }
+  }
 }
 
-module.exports = { activate };
+function deactivate() {
+  server.stop();
+}
+
+module.exports = { activate, deactivate };
