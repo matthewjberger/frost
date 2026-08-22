@@ -47,6 +47,31 @@ const FAULTY = CLEAN.replace("    p := Point", "    var p := Point");
 
 fs.writeFileSync(sample, CLEAN, "utf8");
 
+// A pair: what one file says wrong is reported under that file while the
+// other is the one being read.
+const shared = path.join(workspace, "shared.frost");
+const reader = path.join(workspace, "reader.frost");
+fs.writeFileSync(
+  shared,
+  [
+    "tally :: fn(n: i64) -> i64 {",
+    "    var total: i64 = n",
+    "    total",
+    "}",
+    "",
+  ].join("\n"),
+  "utf8"
+);
+const READER = [
+  'import "shared.frost"',
+  "",
+  "start :: fn() -> i64 {",
+  "    tally(1)",
+  "}",
+  "",
+].join("\n");
+fs.writeFileSync(reader, READER, "utf8");
+
 const PLAIN =
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~/";
 
@@ -69,6 +94,8 @@ const uri = uri_of(sample);
 const empty_uri = uri_of(path.join(workspace, "empty.frost"));
 const unwritten_uri = uri_of(path.join(workspace, "never-written.frost"));
 const unopened_uri = uri_of(path.join(workspace, "never-opened.frost"));
+const shared_uri = uri_of(shared);
+const reader_uri = uri_of(reader);
 
 function at(text, needle, offset = 0) {
   const index = text.indexOf(needle) + offset;
@@ -523,6 +550,35 @@ async function main() {
     (held) => held.diagnostics.length === 0,
     (held) => held.diagnostics.length + " diagnostics"
   );
+  // What one file says wrong, reported while another is the one being read.
+  want(
+    "reports the import",
+    await talk.told(
+      "textDocument/didOpen",
+      {
+        textDocument: {
+          uri: reader_uri,
+          languageId: "frost",
+          version: 1,
+          text: READER,
+        },
+      },
+      shared_uri
+    ),
+    (held) => held.diagnostics.length >= 1,
+    (held) => held.diagnostics.length + " diagnostics on shared.frost"
+  );
+  want(
+    "closing takes back the import",
+    await talk.told(
+      "textDocument/didClose",
+      { textDocument: { uri: reader_uri } },
+      shared_uri
+    ),
+    (held) => held.diagnostics.length === 0,
+    (held) => held.diagnostics.length + " diagnostics on shared.frost"
+  );
+
   want(
     "shutdown",
     await talk.attempt(23, "shutdown", {}),
