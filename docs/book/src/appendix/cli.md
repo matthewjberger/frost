@@ -265,6 +265,11 @@ A path that is a directory is every `.frost` file under it, so `frost lint .`
 reads a whole project. A file the compiler refuses is one it already has
 something to say about, so a refusal ends that file rather than the run.
 
+The two read a file differently, which shows on a file the compiler refuses.
+`frost lint` reads each file on its own and says what it finds; `frostc lint`
+checks the file the way a build would, so a file a build refuses is reported as
+refused and gets no findings. On a file that compiles, both say the same things.
+
 `frostc lint` is the slower of the two by a wide margin. A finding about a name
 nothing reaches has to know what the modules around it name, so the self-hosted
 one resolves each file's imports and checks it the way a build would. The

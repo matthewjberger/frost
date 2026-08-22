@@ -942,6 +942,7 @@ static int64_t frost_rt_json_offset = 0;
 
 void frost_rt_json_reports(void) { frost_rt_json_on = 1; }
 
+
 /* Whether records are what this run writes. Asked by the compiler as well as by
    the runtime, so a server that turns them on has every pass agreeing with it
    rather than each reading the command line for itself. */
