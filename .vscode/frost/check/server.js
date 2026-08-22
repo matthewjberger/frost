@@ -311,7 +311,12 @@ async function main() {
       held.capabilities.hoverProvider &&
       held.capabilities.definitionProvider &&
       held.capabilities.renameProvider &&
-      held.capabilities.textDocumentSync !== undefined,
+      held.capabilities.textDocumentSync !== undefined &&
+      held.capabilities.semanticTokensProvider.legend.tokenTypes.join(" ") ===
+        "keyword function type parameter variable property string number" &&
+      held.capabilities.semanticTokensProvider.legend.tokenModifiers.join(
+        " "
+      ) === "declaration",
     (held) =>
       held ? Object.keys(held.capabilities).length + " capabilities" : "none"
   );
@@ -482,6 +487,29 @@ async function main() {
       return steps.join(" then ");
     }
   );
+  want(
+    "semantic tokens",
+    await talk.ask(45, "textDocument/semanticTokens/full", doc({})),
+    (held) => {
+      if (!held || !Array.isArray(held.data) || held.data.length % 5 !== 0) {
+        return false;
+      }
+      // The declaration of greeting_cost: line 3, column 0, 13 wide, a
+      // function, and declared rather than used.
+      return (
+        held.data[0] === 3 &&
+        held.data[1] === 0 &&
+        held.data[2] === 13 &&
+        held.data[3] === 1 &&
+        held.data[4] === 1
+      );
+    },
+    (held) =>
+      held && Array.isArray(held.data)
+        ? held.data.length / 5 + " tokens, first " + held.data.slice(0, 5)
+        : "none"
+  );
+
   // Laying out part of a file, and a line as it is typed.
   await talk.told(
     "textDocument/didChange",

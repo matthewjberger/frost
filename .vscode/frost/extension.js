@@ -524,6 +524,38 @@ const onTypeFormattingProvider = {
   },
 };
 
+// The names the server sends its colours as numbers of. The order is the
+// meaning, so this list and `say_token_legend` in the server are one thing
+// written twice, and both gates weigh it.
+const SEMANTIC_TYPES = [
+  "keyword",
+  "function",
+  "type",
+  "parameter",
+  "variable",
+  "property",
+  "string",
+  "number",
+];
+const SEMANTIC_MODIFIERS = ["declaration"];
+const semanticLegend = new vscode.SemanticTokensLegend(
+  SEMANTIC_TYPES,
+  SEMANTIC_MODIFIERS
+);
+
+const semanticTokensProvider = {
+  async provideDocumentSemanticTokens(document) {
+    const held = await server.request(
+      "textDocument/semanticTokens/full",
+      named(document)
+    );
+    if (!held || !Array.isArray(held.data)) {
+      return undefined;
+    }
+    return new vscode.SemanticTokens(new Uint32Array(held.data));
+  },
+};
+
 const foldingRangeProvider = {
   async provideFoldingRanges(document) {
     const held = await server.request(
@@ -762,6 +794,11 @@ function activate(context) {
     vscode.languages.registerFoldingRangeProvider(
       selector,
       foldingRangeProvider
+    ),
+    vscode.languages.registerDocumentSemanticTokensProvider(
+      selector,
+      semanticTokensProvider,
+      semanticLegend
     ),
     vscode.languages.registerRenameProvider(selector, renameProvider),
     vscode.languages.registerCompletionItemProvider(

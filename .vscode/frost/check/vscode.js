@@ -158,6 +158,19 @@ class ParameterInformation {
   }
 }
 
+class SemanticTokensLegend {
+  constructor(tokenTypes, tokenModifiers) {
+    this.tokenTypes = tokenTypes;
+    this.tokenModifiers = tokenModifiers;
+  }
+}
+
+class SemanticTokens {
+  constructor(data) {
+    this.data = data;
+  }
+}
+
 class SelectionRange {
   constructor(range, parent) {
     this.range = range;
@@ -226,6 +239,8 @@ module.exports = {
   ParameterInformation,
   CompletionItem,
   SelectionRange,
+  SemanticTokensLegend,
+  SemanticTokens,
   DocumentLink,
   LinkedEditingRanges,
   languages: {
@@ -259,6 +274,7 @@ module.exports = {
     registerDocumentRangeFormattingEditProvider: keep("rangeFormatting"),
     registerOnTypeFormattingEditProvider: keep("onTypeFormatting"),
     registerFoldingRangeProvider: keep("folding"),
+    registerDocumentSemanticTokensProvider: keep("semanticTokens"),
     registerRenameProvider: keep("rename"),
     registerCompletionItemProvider: keep("completion"),
     registerSignatureHelpProvider: keep("signatureHelp"),

@@ -23,6 +23,7 @@ import "names.frost"
 import "build.frost"
 import "format.frost"
 import "lint.frost"
+import "lexer.frost"
 
 export lsp_command
 
@@ -1036,6 +1037,10 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
         answer_folding(s, document, request)
         return
     }
+    if (json_text_eq(document, method, "textDocument/semanticTokens/full")) {
+        answer_semantic_tokens(s, document, request)
+        return
+    }
     if (json_text_eq(document, method, "textDocument/codeAction")) {
         answer_code_actions(s, document, request)
         return
@@ -1086,6 +1091,9 @@ answer_initialize :: fn(mut s: Server, mut document: Json, request: i64) {
     emit_text("\"documentOnTypeFormattingProvider\":")
     emit_text("{\"firstTriggerCharacter\":\"}\"},")
     emit_text("\"foldingRangeProvider\":true,")
+    emit_text("\"semanticTokensProvider\":{\"legend\":")
+    say_token_legend()
+    emit_text(",\"full\":true},")
     emit_text("\"renameProvider\":{\"prepareProvider\":true},")
     emit_text("\"codeActionProvider\":true,")
     emit_text("\"completionProvider\":{\"resolveProvider\":true},")
@@ -4336,4 +4344,231 @@ answer_watched_changed :: fn(mut s: Server) {
         }
         at = at + 1
     }
+}
+
+// ---------------------------------------------------------------------------
+// Colouring by what a name is
+// ---------------------------------------------------------------------------
+
+// The types a token is coloured as, in the order the legend names them. The
+// numbers are what goes over the wire, so the two have to stay in step.
+TOKEN_KEYWORD :: 0
+TOKEN_FUNCTION :: 1
+TOKEN_TYPE :: 2
+TOKEN_PARAMETER :: 3
+TOKEN_VARIABLE :: 4
+TOKEN_PROPERTY :: 5
+TOKEN_STRING :: 6
+TOKEN_NUMBER :: 7
+
+// The one modifier: a name at the place it is declared rather than used.
+TOKEN_DECLARED :: 1
+
+say_token_legend :: fn() {
+    emit_text("{\"tokenTypes\":[")
+    emit_text("\"keyword\",\"function\",\"type\",\"parameter\",")
+    emit_text("\"variable\",\"property\",\"string\",\"number\"")
+    emit_text("],\"tokenModifiers\":[\"declaration\"]}")
+}
+
+// Every token of a buffer, coloured by what the name is rather than by what it
+// looks like.
+//
+// A grammar colours a call and a type the same, because from the outside they
+// are both a name. The compiler knows which is which, so the editor is told.
+answer_semantic_tokens :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    length := str_len(text)
+    mut tokens: Arena<Token> = arena_make($Token, 4096)
+    tokenize(text, length, tokens)
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"data\":[")
+    say_token_data(text, length, tokens)
+    emit_text("]}}")
+    say_send()
+}
+
+// The five numbers each token is written as, each line and character given as
+// how far it is from the token before it.
+say_token_data :: fn(text: str, length: i64, mut tokens: Arena<Token>) {
+    mut line: i64 = 0
+    mut character: i64 = 0
+    mut at: i64 = 0
+    mut last_line: i64 = 0
+    mut last_character: i64 = 0
+    mut written: i64 = 0
+    mut index: i64 = 0
+    while (index < tokens.count) {
+        kind := token_colour(text, tokens, index)
+        if (kind >= 0) {
+            ref one := arena_at(tokens, index)
+            off := one.off
+            span := one.len
+            // Up to where this token opens, counting what was stepped over.
+            while (at < off && at < length) {
+                byte := cast($i64, text[at])
+                if (byte == CH_LF) {
+                    line = line + 1
+                    character = 0
+                } else {
+                    character = character + utf16_units(byte)
+                }
+                at = at + 1
+            }
+            width := token_width(text, length, off, span)
+            if (written > 0) {
+                emit_text(",")
+            }
+            frost_rt_emit_int(line - last_line)
+            emit_text(",")
+            if (line == last_line) {
+                frost_rt_emit_int(character - last_character)
+            } else {
+                frost_rt_emit_int(character)
+            }
+            emit_text(",")
+            frost_rt_emit_int(width)
+            emit_text(",")
+            frost_rt_emit_int(kind)
+            emit_text(",")
+            frost_rt_emit_int(token_modifiers(text, tokens, index))
+            last_line = line
+            last_character = character
+            written = written + 1
+        }
+        index = index + 1
+    }
+}
+
+// How wide a token is in UTF-16 units, counted to the end of the line it opens
+// on. A token the protocol takes has to sit on one line.
+token_width :: fn(text: str, length: i64, off: i64, span: i64) -> i64 {
+    mut units: i64 = 0
+    mut at := off
+    while (at < off + span && at < length) {
+        byte := cast($i64, text[at])
+        if (byte == CH_LF) {
+            return units
+        }
+        units = units + utf16_units(byte)
+        at = at + 1
+    }
+    units
+}
+
+// Which colour a token takes, or -1 for one the grammar already colours.
+token_colour :: fn(text: str, mut tokens: Arena<Token>, index: i64) -> i64 {
+    ref one := arena_at(tokens, index)
+    kind := one.kind
+    if (kind == TokenKind::Str) {
+        return TOKEN_STRING
+    }
+    if (kind == TokenKind::Int || kind == TokenKind::Float ||
+        kind == TokenKind::BigInt) {
+        return TOKEN_NUMBER
+    }
+    if (is_word_token(kind)) {
+        return TOKEN_KEYWORD
+    }
+    if (kind != TokenKind::Ident) {
+        return -1
+    }
+    if (index > 0 && kind_at(tokens, index - 1) == TokenKind::Dot) {
+        return TOKEN_PROPERTY
+    }
+    after := kind_at(tokens, index + 1)
+    if (after == TokenKind::Coloncolon) {
+        return declared_colour(text, tokens, index)
+    }
+    if (after == TokenKind::Lparen) {
+        return TOKEN_FUNCTION
+    }
+    if (after == TokenKind::Colon) {
+        return TOKEN_PARAMETER
+    }
+    if (upper_first(text, arena_at(tokens, index).off)) {
+        return TOKEN_TYPE
+    }
+    TOKEN_VARIABLE
+}
+
+// Whether a name written here is being declared rather than used.
+token_modifiers :: fn(text: str, mut tokens: Arena<Token>, index: i64) -> i64 {
+    if (kind_at(tokens, index) != TokenKind::Ident) {
+        return 0
+    }
+    if (kind_at(tokens, index + 1) != TokenKind::Coloncolon) {
+        return 0
+    }
+    TOKEN_DECLARED
+}
+
+// What a declaration declares, read off the word after its `::`.
+declared_colour :: fn(text: str, mut tokens: Arena<Token>, index: i64) -> i64 {
+    mut walk := index + 2
+    // A declaration may say `safe extern fn` or `packed struct` before the
+    // word that says what it is.
+    while (walk < tokens.count && is_word_token(kind_at(tokens, walk)) &&
+        opens_a_type(kind_at(tokens, walk)) == false &&
+        kind_at(tokens, walk) != TokenKind::KwFn) {
+        walk = walk + 1
+    }
+    if (walk >= tokens.count) {
+        return TOKEN_VARIABLE
+    }
+    if (kind_at(tokens, walk) == TokenKind::KwFn) {
+        return TOKEN_FUNCTION
+    }
+    if (opens_a_type(kind_at(tokens, walk))) {
+        return TOKEN_TYPE
+    }
+    TOKEN_VARIABLE
+}
+
+opens_a_type :: fn(kind: TokenKind) -> bool {
+    kind == TokenKind::KwStruct || kind == TokenKind::KwEnum ||
+        kind == TokenKind::KwDistinct
+}
+
+kind_at :: fn(mut tokens: Arena<Token>, index: i64) -> TokenKind {
+    if (index < 0 || index >= tokens.count) {
+        return TokenKind::Eof
+    }
+    arena_at(tokens, index).kind
+}
+
+// Whether a name opens with a capital, which is what a type is written with.
+upper_first :: fn(text: str, off: i64) -> bool {
+    if (off >= str_len(text)) {
+        return false
+    }
+    byte := cast($i64, text[off])
+    byte >= CH_UPPER_A && byte <= CH_UPPER_Z
+}
+
+// Whether a token is one of the language's own words.
+is_word_token :: fn(kind: TokenKind) -> bool {
+    kind == TokenKind::KwFn || kind == TokenKind::KwIf ||
+        kind == TokenKind::KwWhen || kind == TokenKind::KwElse ||
+        kind == TokenKind::KwWhile || kind == TokenKind::KwBreak ||
+        kind == TokenKind::KwContinue || kind == TokenKind::KwReturn ||
+        kind == TokenKind::KwStruct || kind == TokenKind::KwMatch ||
+        kind == TokenKind::KwCase || kind == TokenKind::KwExtern ||
+        kind == TokenKind::KwMut || kind == TokenKind::KwMove ||
+        kind == TokenKind::KwLinear || kind == TokenKind::KwUses ||
+        kind == TokenKind::KwWith || kind == TokenKind::KwImport ||
+        kind == TokenKind::KwExport || kind == TokenKind::KwEnum ||
+        kind == TokenKind::KwTest || kind == TokenKind::KwUnsafe ||
+        kind == TokenKind::KwDistinct || kind == TokenKind::KwWhere ||
+        kind == TokenKind::KwSafe || kind == TokenKind::KwRef ||
+        kind == TokenKind::KwInline || kind == TokenKind::KwDefer ||
+        kind == TokenKind::KwErrDefer || kind == TokenKind::KwFor ||
+        kind == TokenKind::KwIn
 }

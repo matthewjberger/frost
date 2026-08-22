@@ -121,7 +121,7 @@ async function main() {
   want(
     "registered",
     names,
-    (found) => found.length >= 21,
+    (found) => found.length >= 22,
     (found) => found.join(" ")
   );
 
@@ -227,6 +227,21 @@ async function main() {
     await provider("formatting").provideDocumentFormattingEdits(document),
     some,
     count
+  );
+  want(
+    "semantic legend",
+    held.registered.semanticTokens[0][2],
+    (found) =>
+      found.tokenTypes.join(" ") ===
+        "keyword function type parameter variable property string number" &&
+      found.tokenModifiers.join(" ") === "declaration",
+    (found) => found.tokenTypes.length + " types"
+  );
+  want(
+    "semantic tokens",
+    await provider("semanticTokens").provideDocumentSemanticTokens(document),
+    (found) => found && found.data.length % 5 === 0 && found.data.length > 20,
+    (found) => (found ? found.data.length / 5 + " tokens" : "none")
   );
   want(
     "folding",
