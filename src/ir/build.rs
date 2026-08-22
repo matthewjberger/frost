@@ -10249,6 +10249,26 @@ impl<'a> FunctionLowering<'a> {
                 );
             };
             let target_type = self.type_of_local(local);
+            // A name that stands for storage somewhere else, assigned something
+            // that also stands for storage somewhere else.
+            //
+            // The line reads as pointing the name at the other storage, and it
+            // copies one into the other instead. Neither reading is the one a
+            // reader takes from it, so the line is refused rather than given
+            // one: a walk written this way overwrote what it was walking, one
+            // step at a time, and the two compilers had read it each way.
+            if borrowed_value(&target_type).is_some()
+                && self
+                    .answer_type(value)
+                    .is_some_and(|held| borrowed_value(&held).is_some())
+            {
+                return locate(
+                    Err(anyhow::anyhow!(
+                        "'{name}' stands for storage somewhere else, and so does what is written to it, so this copies one into the other rather than pointing the name at it. Hold what you are walking as an index, and read through it where each one is needed"
+                    )),
+                    self.at_expression(target),
+                );
+            }
             // A name holding a borrow of a scalar names the storage it borrows,
             // so writing to it writes through. Left alone the address itself
             // was overwritten, and the place the reader meant kept its old

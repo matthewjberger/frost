@@ -6856,6 +6856,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         p.expected_type = assign_context(p, expr)
         value := parse_expr(p)
         p.expected_type = saved_expected
+        refuse_borrow_over_borrow(p, expr, value)
         return new_node_at(p, NodeKind::Assign, expr, value, 0, start)
     }
     // At the token the statement starts with, taken before the expression is
@@ -6875,6 +6876,37 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
 // compilers took the write and emitted it, and the container came out of the
 // loop as it went in. What the reader meant is a write to the element, which
 // is the container and the index.
+// A name that stands for storage somewhere else, assigned something that also
+// stands for storage somewhere else.
+//
+// The line reads as pointing the name at the other storage, and it copies one
+// into the other instead: a name bound to what a call answers with stands for
+// what it named, the way a `mut` parameter stands for the caller value, so
+// writing to it writes there. A walk written this way overwrote what it was
+// walking, one step at a time.
+refuse_borrow_over_borrow :: fn(mut p: Parser, place: i64, value: i64) {
+    node := arena_at(p.arena, place)
+    if (node.kind != NodeKind::Var) {
+        return
+    }
+    held := parse_local_type(p, node.val, node.c)
+    if (held < 0 || is_borrow(held) == false) {
+        return
+    }
+    written := binding_type(p, value)
+    if (written < 0 || is_borrow(written) == false) {
+        return
+    }
+    report_where(p.modules, p.src, node.pos)
+    report("'")
+    report_src(p.src, node.val, node.c)
+    report("' stands for storage somewhere else, and so does what is ")
+    report("written to it, so this copies one into the other rather than ")
+    report("pointing the name at it. Hold what you are walking as an ")
+    report("index, and read through it where each one is needed")
+    frost_rt_recover_escape()
+}
+
 refuse_write_to_a_loop_name :: fn(mut p: Parser, place: i64) {
     node := arena_at(p.arena, place)
     if (node.kind != NodeKind::Var) {

@@ -9444,13 +9444,21 @@ indirect_first_report :: fn(mut p: Parser, pos: i64) -> bool {
 // what it reads from, so the leftmost of the chain is what a reader is pointed
 // at, rather than the dot or the bracket partway along it.
 callee_start :: fn(mut p: Parser, callee: i64) -> i64 {
+    // Walked by index. A name bound to what `arena_at` answers stands for the
+    // storage in the arena, so assigning another one to it writes a node over
+    // the node it was standing on.
     mut at := callee
-    mut node := arena_at(p.arena, at)
-    while (node.kind == NodeKind::Field || node.kind == NodeKind::Index) {
-        at = node.a
-        node = arena_at(p.arena, at)
+    while (is_reaching_node(p, at)) {
+        at = arena_at(p.arena, at).a
     }
-    node.pos
+    arena_at(p.arena, at).pos
+}
+
+// Whether a node hangs off what it reads from, which is what a walk to the
+// leftmost of a chain steps over.
+is_reaching_node :: fn(mut p: Parser, at: i64) -> bool {
+    kind := arena_at(p.arena, at).kind
+    kind == NodeKind::Field || kind == NodeKind::Index
 }
 
 // Whether the field a call goes through hangs off a compile-time parameter. A
@@ -9464,12 +9472,12 @@ callee_is_compile_time :: fn(mut p: Parser, callee: i64) -> bool {
     }
     // A bundle holding a bundle is reached through a chain of fields, and what
     // decides the chain is what it starts from, however long it runs.
+    // Walked by index, for the reason `callee_start` gives.
     mut at := node.a
-    mut base := arena_at(p.arena, at)
-    while (base.kind == NodeKind::Field) {
-        at = base.a
-        base = arena_at(p.arena, at)
+    while (arena_at(p.arena, at).kind == NodeKind::Field) {
+        at = arena_at(p.arena, at).a
     }
+    base := arena_at(p.arena, at)
     if (base.kind != NodeKind::Var) {
         return false
     }
