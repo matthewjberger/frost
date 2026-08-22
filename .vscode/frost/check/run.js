@@ -158,8 +158,10 @@ async function main() {
       document,
       at("var total", 5)
     ),
-    (found) => found === undefined || found.range !== undefined,
-    (found) => (found ? "line " + found.range.start.line : "none")
+    // Nothing: the local is an `i64`, and a builtin has no declaration to be
+    // taken to. A provider that invents one fails here.
+    (found) => found === undefined,
+    (found) => (found ? "line " + found.range.start.line : "nothing")
   );
   want(
     "implementation",
@@ -185,7 +187,8 @@ async function main() {
   want(
     "document link",
     await provider("documentLink").provideDocumentLinks(document),
-    (found) => Array.isArray(found),
+    // None: this file imports nothing.
+    (found) => Array.isArray(found) && found.length === 0,
     (found) => (Array.isArray(found) ? String(found.length) : "none")
   );
   want(
@@ -261,7 +264,8 @@ async function main() {
   want(
     "supertypes",
     await provider("typeHierarchy").provideTypeHierarchySupertypes(typed[0]),
-    (found) => Array.isArray(found),
+    // None: nothing in this file holds a field of a Point.
+    (found) => Array.isArray(found) && found.length === 0,
     count
   );
   want(
@@ -324,7 +328,8 @@ async function main() {
       at("}", 1),
       "}"
     ),
-    (found) => Array.isArray(found),
+    // None: the brace is already on the column its opener is on.
+    (found) => Array.isArray(found) && found.length === 0,
     count
   );
   want(

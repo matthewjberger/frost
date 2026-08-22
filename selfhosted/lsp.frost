@@ -72,6 +72,28 @@ Published :: struct {
 
 // What the server knows between one question and the next. Threaded rather than
 // held in a global, which the language does not have.
+// What the server holds while it is up.
+//
+// Most of these are scratch, and a scratch buffer shared between callers needs
+// a rule about who may hold a view into it across which call. These are the
+// rules; a handler that breaks one gets an answer built out of another
+// answer's bytes, which reads as an empty list rather than as a fault.
+//
+// | buffer | who writes it | held across a call? |
+// |---|---|---|
+// | `scratch` | whoever is writing a reply, for a URI or a copied head | no |
+// | `other` | the name being looked up, from the caret or from a request | yes: `find_declaration` and `text_of_path` leave it alone |
+// | `named` | `text_of_path`, for the path of a file it opens | no: any lookup of a file overwrites it |
+// | `walking` | the directory walk, and the one text a handler is walking | no: `walk_sources` must run before a handler fills it |
+// | `each` | `source_into`, for the source being read | no |
+// | `read_back` | `text_of_path`, for the text of a file not open | no: reading another file overwrites it |
+// | `reports` | the records of the last check, and `flatten_head` | no |
+// | `sources` | every source under the workspace | yes, until the next `walk_sources` |
+// | `modules` | the files the last check read, name and place | yes, until the next check |
+//
+// The one to watch is `named`. Looking a name up reads files, and reading a
+// file writes its path there, so a name kept in `named` is gone by the time the
+// lookup answers. Keep a name in `other`.
 Server :: struct {
     docs: Arena<Doc>,
     published: Arena<Published>,
@@ -100,6 +122,11 @@ Server :: struct {
     body: Arena<u8>,
     // The ids the editor took back before this got to them.
     cancelled: Arena<u8>,
+    // The tokens of the buffer being coloured, and the brackets a walk has
+    // open. Made once: a server answers thousands of requests, and an arena
+    // made for one of them is never given back.
+    tokens: Arena<Token>,
+    brackets: Arena<i64>,
     going: i64,
     ready: i64,
 }
@@ -132,6 +159,8 @@ lsp_command :: fn() -> i64 {
         read_back = arena_make($u8, DOC_ROOM),
         body = arena_make($u8, DOC_ROOM),
         cancelled = arena_make($u8, 4096),
+        tokens = arena_make($Token, 16384),
+        brackets = arena_make($i64, 256),
         going = 1,
         ready = 0,
     }
@@ -140,7 +169,7 @@ lsp_command :: fn() -> i64 {
             server.going = 0
         } else {
             answer_one(server)
-            settle_dirty(server)
+            settle_one(server)
         }
     }
     0
@@ -202,20 +231,6 @@ bytes_int :: fn(mut a: Arena<u8>, value: i64) {
         bytes_int(a, value / 10)
     }
     bytes_byte(a, 48 + value % 10)
-}
-
-// Whether a run of bytes holds this text.
-bytes_same :: fn(mut a: Arena<u8>, text: str) -> bool {
-    if (a.count != str_len(text)) {
-        return false
-    }
-    held := bytes_view(a)
-    for index, byte in text {
-        if (cast($i64, held[index]) != cast($i64, byte)) {
-            return false
-        }
-    }
-    true
 }
 
 // ---------------------------------------------------------------------------
@@ -358,17 +373,6 @@ hex_digit :: fn(value: i64) -> i64 {
         return 48 + value
     }
     87 + value
-}
-
-say_cstr :: fn(text: ^i8) {
-    emit_text("\"")
-    length := cstr_len(text)
-    mut at: i64 = 0
-    while (at < length) {
-        say_escaped(byte_at(text, at))
-        at = at + 1
-    }
-    emit_text("\"")
 }
 
 // The head of a reply, which carries back the id it answers.
@@ -886,11 +890,65 @@ bytes_utf8 :: fn(mut a: Arena<u8>, point: i64) {
 // Dispatch
 // ---------------------------------------------------------------------------
 
-answer_one :: fn(mut s: Server) {
+// What an answer needs to reach past the recovery mark. The call that arms
+// one takes a function and a pointer rather than a body that closes over what
+// is in scope, so what the body needs travels in this.
+AnswerTurn :: struct {
+    server: ^u8,
+}
+
+answer_guarded :: fn(raw: ^u8) {
+    unsafe {
+        turn := ptr_cast($AnswerTurn, raw)
+        server := ptr_cast($Server, turn^.server)
+        answer_body(server^)
+    }
+}
+
+answer_body :: fn(mut s: Server) {
     mut document := json_parse(bytes_view(s.body))
     request := json_root(document)
     if (request >= 0) {
         answer_request(s, document, request)
+    }
+    json_free(document)
+}
+
+// One request, answered under a mark.
+//
+// A refusal anywhere inside an answer used to end the process, and what a
+// reader saw was the language losing its support with nothing said about it.
+// A walk over a half-written buffer has plenty of ways to reach one.
+answer_one :: fn(mut s: Server) {
+    mut turn := AnswerTurn {
+        server = unsafe { ptr_cast($u8, ptr_to(s)) },
+    }
+    escaped := unsafe {
+        frost_rt_recover_run(answer_guarded, ptr_cast($u8, ptr_to(turn)))
+    }
+    if (escaped == 1) {
+        say_gave_up(s)
+    }
+}
+
+// A request the server could not finish.
+//
+// Whatever half a reply was being written is dropped, since a message the
+// header does not measure is one the editor cannot read past. What the fault
+// wrote is dropped with it, or it would be read as a report about the file the
+// next check runs on. Then whoever asked is told there is nothing, rather than
+// left waiting for a reply that is not coming.
+say_gave_up :: fn(mut s: Server) {
+    emit_memory_text()
+    unsafe { frost_rt_report_take() }
+    frost_rt_recover_clear()
+    mut document := json_parse(bytes_view(s.body))
+    request := json_root(document)
+    if (request >= 0 && json_member(document, request, "id") >= 0) {
+        say_open()
+        say_result_head(document, request)
+        emit_text("null}")
+        say_send()
     }
     json_free(document)
 }
@@ -1208,6 +1266,33 @@ answer_changed :: fn(mut s: Server, mut document: Json, request: i64) {
     // Checked once the reader stops, rather than once for each key. What
     // is already on the way in carries text that replaces this.
     held.dirty = 1
+}
+
+settle_guarded :: fn(raw: ^u8) {
+    unsafe {
+        turn := ptr_cast($AnswerTurn, raw)
+        server := ptr_cast($Server, turn^.server)
+        settle_dirty(server^)
+    }
+}
+
+// The deferred check, under a mark of its own.
+//
+// The check itself already has one. What this covers is everything after it:
+// reading the records, working out which file each is about, and writing the
+// notifications. A fault in any of that used to end the server.
+settle_one :: fn(mut s: Server) {
+    mut turn := AnswerTurn {
+        server = unsafe { ptr_cast($u8, ptr_to(s)) },
+    }
+    escaped := unsafe {
+        frost_rt_recover_run(settle_guarded, ptr_cast($u8, ptr_to(turn)))
+    }
+    if (escaped == 1) {
+        emit_memory_text()
+        unsafe { frost_rt_report_take() }
+        frost_rt_recover_clear()
+    }
 }
 
 // The check a change put off. Run when nothing else is on the way in, so a
@@ -3157,7 +3242,7 @@ answer_signature :: fn(mut s: Server, mut document: Json, request: i64) {
     mut caret: i64 = 0
     ref about := arena_at(s.docs, doc)
     caret = place_offset(bytes_view(about.text), line, character)
-    opens := call_opens(bytes_view(about.text), caret)
+    opens := call_opens(bytes_view(about.text), caret, s.brackets)
     if (opens < 0) {
         say_null_result(document, request)
         return
@@ -3198,8 +3283,8 @@ answer_signature :: fn(mut s: Server, mut document: Json, request: i64) {
 // Where the bracket the caret is inside opens, or -1 where it is inside none.
 // Text and comments are stepped over, so a bracket written in either counts
 // for nothing.
-call_opens :: fn(text: str, caret: i64) -> i64 {
-    mut opens: Arena<i64> = arena_make($i64, 64)
+call_opens :: fn(text: str, caret: i64, mut opens: Arena<i64>) -> i64 {
+    opens.count = 0
     mut at: i64 = 0
     while (at < caret) {
         past := past_non_code(text, at)
@@ -3318,6 +3403,14 @@ say_parameters :: fn(head: str) {
     mut walk := opens + 1
     while (walk < length) {
         byte := cast($i64, head[walk])
+        // The `>` of an arrow closes nothing. Without this a head holding a
+        // function type drives the depth below zero, and every comma after it
+        // reads as written inside something.
+        if (byte == CH_GT && walk > from && cast($i64, head[walk - 1])
+            == CH_MINUS) {
+            walk = walk + 1
+            continue
+        }
         if (byte == CH_LPAREN || byte == CH_LBRACKET || byte == CH_LT) {
             depth = depth + 1
         }
@@ -3812,7 +3905,8 @@ answer_document_links :: fn(mut s: Server, mut document: Json, request: i64) {
     mut commented: bool = false
     while (at < length) {
         ends := line_end(text, length, at)
-        if (!commented && text_is(text, at, "import")) {
+        if (!commented && text_is(text, at, "import") &&
+            word_ends_at(text, at + 6)) {
             opens := quote_after(text, at, ends)
             if (opens >= 0) {
                 closes := quote_after(text, opens + 1, ends)
@@ -3841,6 +3935,14 @@ answer_document_links :: fn(mut s: Server, mut document: Json, request: i64) {
     }
     emit_text("]}")
     say_send()
+}
+
+// Whether a word ends here: the end of the text, or a byte no name holds.
+word_ends_at :: fn(text: str, at: i64) -> bool {
+    if (at >= str_len(text)) {
+        return true
+    }
+    name_byte(cast($i64, text[at])) == false
 }
 
 // Where the next quote on this line is, or -1.
@@ -3993,16 +4095,54 @@ answer_range_formatting :: fn(mut s: Server, mut document: Json, request: i64) {
         document,
         json_member(document, json_member(document, span, "end"), "line")
     )
+    // The nth declaration of the buffer is replaced by the nth of the
+    // laid-out text, so a laid-out text holding a different number of them is
+    // one this cannot pair up. Nothing is written rather than the wrong text.
+    total := declarations_in(text)
+    if (total != declarations_in(bytes_view(s.walking))) {
+        say_open()
+        say_result_head(document, request)
+        emit_text("[]}")
+        say_send()
+        return
+    }
     say_open()
     say_result_head(document, request)
     emit_text("[")
-    say_declaration_edits(s, text, from, to)
+    say_declaration_edits(s, text, from, to, total)
     emit_text("]}")
     say_send()
 }
 
+// How many declarations a text holds.
+declarations_in :: fn(text: str) -> i64 {
+    length := str_len(text)
+    mut seen: i64 = 0
+    mut at: i64 = 0
+    mut commented: bool = false
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (!commented && named > 0) {
+            stops := declaration_extent(text, at, ends, length)
+            seen = seen + 1
+            at = line_end(text, length, stops) + 1
+        } else {
+            commented = comment_runs_past(text, at, ends, commented)
+            at = ends + 1
+        }
+    }
+    seen
+}
+
 // One edit for each declaration the lines between `from` and `to` reach.
-say_declaration_edits :: fn(mut s: Server, text: str, from: i64, to: i64) {
+say_declaration_edits :: fn(
+    mut s: Server,
+    text: str,
+    from: i64,
+    to: i64,
+    total: i64
+) {
     length := str_len(text)
     mut written: i64 = 0
     mut seen: i64 = 0
@@ -4015,7 +4155,10 @@ say_declaration_edits :: fn(mut s: Server, text: str, from: i64, to: i64) {
             stops := declaration_extent(text, at, ends, length)
             opens := place_line(text, at)
             closes := place_line(text, stops)
-            if (opens <= to && closes >= from) {
+            // `seen < total` holds for every one of them, since the two texts
+            // were counted and agreed. It is written down so the writer below
+            // is never asked for a declaration that is not there.
+            if (opens <= to && closes >= from && seen < total) {
                 if (written > 0) {
                     emit_text(",")
                 }
@@ -4058,6 +4201,8 @@ say_nth_declaration :: fn(mut s: Server, wanted: i64) {
             at = ends + 1
         }
     }
+    // Nothing is asked for past the last one: the caller counted both texts,
+    // found them equal, and writes an edit only while it is inside that count.
     say_string("")
 }
 
@@ -4100,7 +4245,7 @@ answer_on_type_formatting :: fn(
         say_null_result(document, request)
         return
     }
-    opens := brace_opens(text, closes)
+    opens := brace_opens(text, closes, s.brackets)
     if (opens < 0) {
         say_null_result(document, request)
         return
@@ -4166,8 +4311,8 @@ indent_of :: fn(text: str, length: i64, at: i64) -> i64 {
 // Where the brace that this one closes was opened, or -1 where it closes
 // nothing. Comments and text are stepped over, so a brace written in either
 // counts for nothing.
-brace_opens :: fn(text: str, closes: i64) -> i64 {
-    mut opens: Arena<i64> = arena_make($i64, 64)
+brace_opens :: fn(text: str, closes: i64, mut opens: Arena<i64>) -> i64 {
+    opens.count = 0
     mut at: i64 = 0
     while (at < closes) {
         past := past_non_code(text, at)
@@ -4435,12 +4580,12 @@ answer_semantic_tokens :: fn(mut s: Server, mut document: Json, request: i64) {
     ref held := arena_at(s.docs, doc)
     text := bytes_view(held.text)
     length := str_len(text)
-    mut tokens: Arena<Token> = arena_make($Token, 4096)
-    tokenize(text, length, tokens)
+    s.tokens.count = 0
+    tokenize(text, length, s.tokens)
     say_open()
     say_result_head(document, request)
     emit_text("{\"data\":[")
-    say_token_data(text, length, tokens)
+    say_token_data(text, length, s.tokens)
     emit_text("]}}")
     say_send()
 }
@@ -4824,6 +4969,14 @@ parameter_named :: fn(head: str, which: i64) -> str {
     mut walk := opens + 1
     while (walk < length) {
         byte := cast($i64, head[walk])
+        // The `>` of an arrow closes nothing. Without this a head holding a
+        // function type drives the depth below zero, and every comma after it
+        // reads as written inside something.
+        if (byte == CH_GT && walk > from && cast($i64, head[walk - 1])
+            == CH_MINUS) {
+            walk = walk + 1
+            continue
+        }
         if (byte == CH_LPAREN || byte == CH_LBRACKET || byte == CH_LT) {
             depth = depth + 1
         }
@@ -5318,14 +5471,12 @@ say_one_called :: fn(
     already: i64
 ) -> i64 {
     held := bytes_view(s.walking)
-    bytes_reset(s.named)
+    bytes_reset(s.other)
     mut at := starts
     while (at < names) {
-        bytes_byte(s.named, cast($i64, held[at]))
+        bytes_byte(s.other, cast($i64, held[at]))
         at = at + 1
     }
-    bytes_reset(s.other)
-    bytes_str(s.other, bytes_view(s.named))
     if (find_declaration(s) == false) {
         return 0
     }
@@ -5337,14 +5488,11 @@ say_one_called :: fn(
     emit_text("{\"to\":")
     say_hierarchy_item(text, bytes_view(s.scratch), s.found_off, s.found_len)
     emit_text(",\"fromRanges\":[")
+    // The name, not `s.named`: looking the declaration up read files, and
+    // reading one writes its path there.
     body := bytes_view(s.walking)
-    say_ranges_between(
-        body,
-        0,
-        str_len(body),
-        bytes_view(s.named),
-        str_len(bytes_view(s.named))
-    )
+    wanted := bytes_view(s.other)
+    say_ranges_between(body, 0, str_len(body), wanted, str_len(wanted))
     emit_text("]}")
     1
 }

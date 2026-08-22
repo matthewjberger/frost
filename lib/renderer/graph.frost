@@ -600,15 +600,6 @@ graph_takes :: fn(
     g.binding_count = g.binding_count + 1
 }
 
-is_sub :: fn(one: GraphPass) -> bool {
-    match one.kind {
-        case PassKind::SubGraph: true
-        case PassKind::Render: false
-        case PassKind::Compute: false
-        case PassKind::Node: false
-    }
-}
-
 // What a pass does when the targets it reads have been made again. Told rather
 // than worked out: only the pass knows which bindings name which view.
 graph_rebuilds :: fn(mut g: Graph, p: PassId) {

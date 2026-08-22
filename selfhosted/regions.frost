@@ -10077,21 +10077,6 @@ struct_holds_tag :: fn(mut p: Parser, ty: i64) -> bool {
     false
 }
 
-// Whether a struct carries a field of this name.
-struct_has_field :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> bool {
-    def := arena_at(p.structs, struct_index_of(ty))
-    mut fid := def.field_head
-    while (fid != (-1)) {
-        field := arena_at(p.fields, fid)
-        if (field.name_len == len
-            && bytes_equal(p.src, field.name_off, off, len)) {
-            return true
-        }
-        fid = field.next
-    }
-    false
-}
-
 // A struct that holds one of itself.
 //
 // `Node :: struct { next: Node, v: i64 }` asks for storage that has no end: a

@@ -88,6 +88,12 @@ fs.writeFileSync(
     "",
     "Crate :: struct { load: Weight, count: i64 }",
     "",
+    "plus_one :: fn(n: i64) -> i64 { n + 1 }",
+    "",
+    "// A head whose parameter is itself a function, so the arrow inside it is",
+    "// a bracket to anything counting them.",
+    "twice :: fn(f: fn(i64) -> i64, n: i64) -> i64 { f(f(n)) }",
+    "",
     "heavier :: fn(w: Weight) -> i64 { w.grams + 1 }",
     "",
   ].join("\n"),
@@ -105,8 +111,13 @@ const READER = [
   "        /* ) */",
   "        2)",
   "    w := Weight { grams = 3 }",
-  "    tally(1) + held + heavier(w)",
+  "    doubled := twice(plus_one, 2)",
+  "    tally(1) + held + heavier(w) + doubled",
   "}",
+  "",
+  "// A declaration whose name opens with the word an import opens with, and",
+  "// which carries text that reads like a path.",
+  'important :: fn() -> str { "note.frost" }',
   "",
 ].join("\n");
 fs.writeFileSync(reader, READER, "utf8");
@@ -1081,13 +1092,24 @@ async function main() {
   want(
     "outgoing calls",
     await talk.ask(52, "callHierarchy/outgoingCalls", { item: caller[0] }),
+    (held) => {
+      if (!Array.isArray(held) || held.length !== 3) {
+        return false;
+      }
+      const called = held.find((one) => one.to.name === "tally");
+      return (
+        called !== undefined &&
+        called.fromRanges.length === 2 &&
+        held.some((one) => one.to.name === "heavier") &&
+        held.some((one) => one.to.name === "twice")
+      );
+    },
     (held) =>
-      Array.isArray(held) &&
-      held.length === 2 &&
-      held.some((one) => one.to.name === "tally") &&
-      held.some((one) => one.to.name === "heavier"),
-    (held) =>
-      Array.isArray(held) ? held.map((one) => one.to.name).join(" ") : "none"
+      Array.isArray(held)
+        ? held
+            .map((one) => one.to.name + ":" + one.fromRanges.length)
+            .join(" ")
+        : "none"
   );
   const held_type = await talk.ask(53, "textDocument/prepareTypeHierarchy", {
     textDocument: { uri: reader_uri },
@@ -1146,6 +1168,8 @@ async function main() {
     await talk.ask(38, "textDocument/documentLink", {
       textDocument: { uri: reader_uri },
     }),
+    // One, not two: a declaration named `important` opens with the same six
+    // bytes an import does, and carries what reads like a path.
     (held) =>
       Array.isArray(held) &&
       held.length === 1 &&
@@ -1162,6 +1186,23 @@ async function main() {
     }),
     (held) => held && Array.isArray(held.ranges) && held.ranges.length === 2,
     (held) => (held && held.ranges ? held.ranges.length + " ranges" : "none")
+  );
+  want(
+    "hints past an arrow",
+    await talk.ask(60, "textDocument/inlayHint", {
+      textDocument: { uri: reader_uri },
+      range: {
+        start: at(READER, "    doubled := twice", 0),
+        end: at(READER, "    doubled := twice", 30),
+      },
+    }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 2 &&
+      held[0].label === "f:" &&
+      held[1].label === "n:",
+    (held) =>
+      Array.isArray(held) ? held.map((one) => one.label).join(" ") : "none"
   );
   want(
     "references across files",
