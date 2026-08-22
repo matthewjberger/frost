@@ -502,7 +502,27 @@ async function main() {
     (held) => (held ? "yes" : "no")
   );
 
-  talk.tell("textDocument/didClose", doc({}));
+  // Closed while something is still underlined. What was said about a file no
+  // open document reports about goes with the document that said it.
+  want(
+    "underlined again",
+    await talk.told(
+      "textDocument/didChange",
+      {
+        textDocument: { uri, version: 4 },
+        contentChanges: [{ text: FAULTY }],
+      },
+      uri
+    ),
+    (held) => held.diagnostics.length >= 1,
+    (held) => held.diagnostics.length + " diagnostics"
+  );
+  want(
+    "closing takes it back",
+    await talk.told("textDocument/didClose", doc({}), uri),
+    (held) => held.diagnostics.length === 0,
+    (held) => held.diagnostics.length + " diagnostics"
+  );
   want(
     "shutdown",
     await talk.attempt(23, "shutdown", {}),

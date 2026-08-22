@@ -930,6 +930,7 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
         if (doc >= 0) {
             ref held := arena_at(s.docs, doc)
             held.live = 0
+            forget_published(s, doc)
         }
         return
     }
@@ -2700,6 +2701,39 @@ declaration_extent :: fn(
 
 // Whether a file some other document reported about still has something said
 // about it.
+// What a document was saying about the files it read, given up when it closes.
+//
+// A file no other open document reports about is told there is nothing left,
+// and every entry this document holds stops standing for it. Without the
+// second part, a file another document later goes quiet about stays underlined
+// on the word of a document nobody has open.
+forget_published :: fn(mut s: Server, doc: i64) {
+    mut at: i64 = 0
+    while (at < s.published.count) {
+        ref seen := arena_at(s.published, at)
+        if (seen.doc == doc) {
+            seen.live = 0
+        }
+        at = at + 1
+    }
+    mut index: i64 = 0
+    while (index < s.published.count) {
+        ref seen := arena_at(s.published, index)
+        if (seen.doc == doc && seen.path.count > 0) {
+            if (spoken_for(s, doc, bytes_view(seen.path)) == false) {
+                uri_of_path(s.other, bytes_view(seen.path))
+                say_open()
+                emit_text("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":")
+                say_string(bytes_view(s.other))
+                emit_text(",\"diagnostics\":[]}}")
+                say_send()
+            }
+            bytes_reset(seen.path)
+        }
+        index = index + 1
+    }
+}
+
 spoken_for :: fn(mut s: Server, doc: i64, path: str) -> bool {
     mut at: i64 = 0
     while (at < s.published.count) {
