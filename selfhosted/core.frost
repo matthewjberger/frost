@@ -51,7 +51,8 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     frost_rt_file_exists, frost_rt_absolute_path,
     frost_rt_file_read, frost_rt_file_size,
     frost_rt_getenv, frost_rt_setenv, frost_rt_is_windows, frost_rt_target_os,
-    frost_rt_program_path,
+    frost_rt_program_path, frost_rt_serving_on, frost_rt_report_take,
+    frost_rt_stdin_line, frost_rt_stdin_bytes, frost_rt_stdin_ended,
     frost_rt_read_file, frost_rt_read_stdin, frost_rt_remove_file,
     frost_rt_dir_open, frost_rt_dir_next, frost_rt_dir_entry_is_dir,
     frost_rt_dir_close,
@@ -109,6 +110,23 @@ frost_rt_read_stdin :: extern fn() -> ^i8
 // name and the directory read off it is the caller's rather than the compiler's.
 // Answers "" where the system will not say.
 frost_rt_program_path :: extern fn() -> ^i8
+
+// Reading standard input a piece at a time, which is what a protocol wants: a
+// header is a line and a body is a count of bytes, and neither is the whole
+// stream. `frost_rt_stdin_ended` answers about the read just made.
+frost_rt_stdin_line :: extern fn() -> ^i8
+frost_rt_stdin_bytes :: extern fn(count: i64) -> ^i8
+frost_rt_stdin_ended :: safe extern fn() -> i64
+
+// Say that this process answers questions rather than builds one program. A
+// refusal ends a build and there is nothing after it to do; a server takes the
+// next question, so a refusal comes back to the mark the server armed instead
+// of ending the process.
+frost_rt_serving_on :: safe extern fn()
+
+// Everything the run has to say, as one string, and nothing held after. What a
+// build writes to the error stream is what a server hands back instead.
+frost_rt_report_take :: extern fn() -> ^i8
 
 // Walking a directory. One walk at a time, and what the last entry is asked
 // about after it is handed out, the way a file's length is. A tool asked about

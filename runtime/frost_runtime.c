@@ -573,6 +573,80 @@ const char *frost_rt_program_path(void) {
 #endif
 }
 
+/* Reading standard input a piece at a time, which is what a protocol wants: a
+   header is a line and a body is a count of bytes, and neither is the whole
+   stream. `frost_rt_stdin_ended` answers about the read just made, the way a
+   file's length is asked for after it is read. */
+static int64_t frost_rt_stdin_end = 0;
+
+int64_t frost_rt_stdin_ended(void) { return frost_rt_stdin_end; }
+
+const char *frost_rt_stdin_line(void) {
+    static char *line = 0;
+    static size_t room = 0;
+    if (line == 0) {
+        room = 4096;
+        line = (char *)malloc(room);
+        if (line == 0) {
+            frost_rt_stdin_end = 1;
+            return "";
+        }
+    }
+    size_t held = 0;
+    for (;;) {
+        int byte = fgetc(stdin);
+        if (byte == EOF) {
+            frost_rt_stdin_end = held == 0;
+            break;
+        }
+        if (byte == '\n') {
+            frost_rt_stdin_end = 0;
+            break;
+        }
+        if (held + 2 > room) {
+            room *= 2;
+            char *grown = (char *)realloc(line, room);
+            if (grown == 0) {
+                frost_rt_stdin_end = 1;
+                return "";
+            }
+            line = grown;
+        }
+        line[held] = (char)byte;
+        held += 1;
+    }
+    /* A protocol writing CRLF leaves the return, which is not part of the
+       header it ends. */
+    if (held > 0 && line[held - 1] == '\r') {
+        held -= 1;
+    }
+    line[held] = 0;
+    return line;
+}
+
+const char *frost_rt_stdin_bytes(int64_t count) {
+    if (count < 0) {
+        frost_rt_stdin_end = 1;
+        return "";
+    }
+    char *buffer = (char *)malloc((size_t)count + 1);
+    if (buffer == 0) {
+        frost_rt_stdin_end = 1;
+        return "";
+    }
+    size_t held = 0;
+    while (held < (size_t)count) {
+        size_t read = fread(buffer + held, 1, (size_t)count - held, stdin);
+        if (read == 0) {
+            break;
+        }
+        held += read;
+    }
+    buffer[held] = 0;
+    frost_rt_stdin_end = held < (size_t)count;
+    return buffer;
+}
+
 /* Walking a directory. A tool asked about a project reads every source under
    it, and the name of every one of them is what the system knows and the
    program does not.
@@ -1114,6 +1188,47 @@ void frost_rt_report_flush(void) {
     fflush(stderr);
 }
 
+/* Everything held, as one string, and nothing held after. What a build writes
+   to the error stream is what a server has to hand back instead, so this sorts
+   and joins exactly what the flush writes and gives it to the caller.
+
+   The caller owns the block. */
+const char *frost_rt_report_take(void) {
+    size_t count = frost_rt_report_count;
+    frost_rt_report_count = 0;
+    for (size_t outer = 1; outer < count; outer++) {
+        frost_rt_report held = frost_rt_reports[outer];
+        size_t inner = outer;
+        while (inner > 0 && frost_rt_reports[inner - 1].at > held.at) {
+            frost_rt_reports[inner] = frost_rt_reports[inner - 1];
+            inner--;
+        }
+        frost_rt_reports[inner] = held;
+    }
+    size_t total = 0;
+    for (size_t index = 0; index < count; index++) {
+        total += frost_rt_reports[index].length;
+    }
+    char *joined = (char *)malloc(total + 1);
+    size_t at = 0;
+    for (size_t index = 0; index < count; index++) {
+        frost_rt_report *held = &frost_rt_reports[index];
+        if (joined != 0 && held->length > 0) {
+            memcpy(joined + at, held->text, held->length);
+            at += held->length;
+        }
+        free(held->text);
+        held->text = 0;
+        held->length = 0;
+        held->room = 0;
+    }
+    if (joined == 0) {
+        return "";
+    }
+    joined[at] = 0;
+    return joined;
+}
+
 /* The same reports, written from a signal or exception handler. Sorts and
    writes exactly what the flush does, and does none of what a handler may not:
    nothing is allocated, nothing is freed, and the write is the system call
@@ -1285,7 +1400,19 @@ void frost_rt_error_int(int64_t value) {
     frost_rt_wrote(held, (size_t)written);
 }
 
+/* Whether this process is answering questions rather than building one program.
+   A refusal ends a build, and there is nothing after it to do; a server takes
+   the next question, so the same refusal has to come back to whoever asked
+   rather than end the process. */
+static int64_t frost_rt_serving = 0;
+
+void frost_rt_serving_on(void) { frost_rt_serving = 1; }
+
 void frost_rt_die(void) {
+    if (frost_rt_serving && frost_rt_recover_depth > 0) {
+        /* Back to the mark the server armed. Never returns. */
+        frost_rt_recover_escape();
+    }
     if (frost_rt_json_on) {
         frost_rt_json_close();
         frost_rt_report_flush();
