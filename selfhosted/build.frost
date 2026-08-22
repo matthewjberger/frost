@@ -15,7 +15,7 @@ import "types.frost"
 import "parser.frost"
 import "regions.frost"
 
-export read_and_check
+export read_and_check, new_parser
 
 // Everything a build does before it emits: the imports resolved into one
 // buffer, the program parsed out of it, and every check run over it. The
@@ -35,139 +35,13 @@ asm_debug_names_wanted :: fn() -> i64 {
     0
 }
 
-read_and_check :: fn(options: Options) -> Parser {
-    // With no file named anywhere, the built-in demonstration program is what
-    // gets compiled, which is what makes the compiler runnable with no
-    // arguments at all.
+// An unread program: every table empty, every option already read off the
+// command line. What `read_and_check` fills, and what a server hands it so a
+// refusal partway through still leaves behind everything built up to it.
+new_parser :: fn(options: Options) -> Parser {
     input_path := options.input
-    // The whole program's text: the source of every module laid end to end,
-    // followed by room for the names the compiler makes up. It is a slice, so
-    // reading and writing it is a checked index everywhere below.
-    mut source := empty_source()
-    mut modules: Arena<Module> = arena_make($Module, 4096)
-    mut exports: Arena<Export> = arena_make($Export, 4096)
-    mut import_edges: Arena<ImportEdge> = arena_make($ImportEdge, 4096)
-    mut renames: Arena<Rename> = arena_make($Rename, 4096)
-    export_names := buffer_of(SYNTH_ROOM)
-    if (cstr_len(input_path) != 0) {
-        // One buffer holds the root file and everything it imports, so a name
-        // is an offset into a single source no matter which file wrote it.
-        buffer := buffer_of(SOURCE_ROOM + SYNTH_ROOM)
-        mut scratch: Arena<Token> = arena_make($Token, 262144)
-        // What the project declares, after anything the command line named and
-        // before the standard library, which is the order the other compiler
-        // assembles them in.
-        manifest_roots(input_path, options.roots, options.layers)
-        search_roots_from(options.roots)
-        resolve_imports(
-            buffer,
-            input_path,
-            export_names,
-            modules,
-            exports,
-            import_edges,
-            renames,
-            scratch,
-            options.roots,
-            options.layers
-        )
-        source = buffer
-    }
-    if (str_len(source) <= 1) {
-        source = "
-        strlen :: extern fn(s: ^i8) -> i64
-        frost_rt_write_i64 :: safe extern fn(value: i64)
-        frost_rt_write_char :: safe extern fn(byte: i64)
-
-        print_int_line :: fn(value: i64) {
-            frost_rt_write_i64(value)
-            frost_rt_write_char(10)
-        }
-
-        ANSWER :: 42
-
-        fib :: fn(n: i64) -> i64 {
-            if (n < 2) { return n }
-            return fib(n - 1) + fib(n - 2)
-        }
-
-        fact :: fn(n: i64) -> i64 {
-            if (n < 1) { return 1 }
-            return n * fact(n - 1)
-        }
-
-        Point :: struct { x: i64, y: i64 }
-
-        sum_point :: fn(pt: Point) -> i64 {
-            return pt.x + pt.y
-        }
-
-        bump :: fn(b: ^Point) {
-            unsafe { b^.x = b^.x + 1 }
-        }
-
-        classify :: fn(n: i64) -> i64 {
-            mut result : i64 = 0
-            match n {
-                case 0: { result = 100 }
-                case 1: { result = 200 }
-                case _: { result = 999 }
-            }
-            return result
-        }
-
-        Box :: struct($T: Type) { value: T }
-
-        Holder :: struct { item: Box<i64> }
-
-        box_make :: fn($T: Type, v: $T) -> Box<T> {
-            Box { value = v }
-        }
-
-        box_get :: fn(b: Box<$T>) -> $T {
-            unsafe { b^.value }
-        }
-
-        main :: fn() -> i64 {
-            print_int_line(fib(10))
-            print_int_line(fact(5))
-            mut sum : i64 = 0
-            mut index : i64 = 1
-            while (index <= 10) { sum = sum + index  index = index + 1 }
-            print_int_line(sum)
-            p := Point { x = 3, y = 4 }
-            print_int_line(p.x)
-            p.x = 10
-            print_int_line(sum_point(p))
-            ptr := ptr_to(p)
-            bump(ptr)
-            print_int_line(p.x)
-            unsafe {
-                print_int_line(ptr^.y)
-                print_int_line(ptr[0].x)
-                q := ptr_cast($Point, ptr)
-                print_int_line(q^.x)
-            }
-            print_int_line(sizeof(Point))
-            print_int_line(classify(0))
-            print_int_line(classify(1))
-            print_int_line(classify(7))
-            unsafe { print_int_line(strlen(\"hello\")) }
-            print_int_line(ANSWER)
-            h := Holder { item = box_make(77) }
-            print_int_line(box_get(h.item))
-            0
-        }
-    "
-    }
-    // The demo program is a literal with nowhere to write, so it needs the same
-    // copy with room past the terminator that an imported source already has.
-    if (cstr_len(input_path) == 0) {
-        source = source_with_room(source)
-    }
-
-    mut parser := Parser {
-        src = source,
+    Parser {
+        src = empty_source(),
         program = -1,
         tokens = arena_make($Token, 262144),
         ti = 0,
@@ -387,13 +261,13 @@ read_and_check :: fn(options: Options) -> Parser {
         template_params = arena_make($LocalVar, 8192),
         value_params = arena_make($LocalVar, 4096),
         move_scratch = arena_make($LocalVar, 4096),
-        modules = modules,
-        exports = exports,
+        modules = arena_make($Module, 4096),
+        exports = arena_make($Export, 4096),
         declared = arena_make($Export, 16384),
-        import_edges = import_edges,
-        renames = renames,
+        import_edges = arena_make($ImportEdge, 4096),
+        renames = arena_make($Rename, 4096),
         shared_exports = 0,
-        export_names = export_names,
+        export_names = buffer_of(SYNTH_ROOM),
         result_ty = -1,
         failure_ty = -1,
         multi_ty = -1,
@@ -442,13 +316,155 @@ read_and_check :: fn(options: Options) -> Parser {
         bracket_depth = 0,
         loop_depth = 0,
     }
+}
+
+// Everything a build does before it emits: the imports resolved into one
+// buffer, the program parsed out of it, and every check run over it. The parser
+// it is handed holds the program it read when it returns.
+//
+// Filled rather than answered with, so a refusal partway through leaves behind
+// every table built up to it. A build stops at the first refusal and has
+// nothing more to do; a server underlines it and goes on answering about the
+// same file, which it can only do from what got built.
+read_and_check :: fn(mut parser: Parser, options: Options) {
+    // With no file named anywhere, the built-in demonstration program is what
+    // gets compiled, which is what makes the compiler runnable with no
+    // arguments at all.
+    input_path := options.input
+    // The whole program's text: the source of every module laid end to end,
+    // followed by room for the names the compiler makes up. It is a slice, so
+    // reading and writing it is a checked index everywhere below.
+    mut source := empty_source()
+    if (cstr_len(input_path) != 0) {
+        // One buffer holds the root file and everything it imports, so a name
+        // is an offset into a single source no matter which file wrote it.
+        buffer := buffer_of(SOURCE_ROOM + SYNTH_ROOM)
+        mut scratch: Arena<Token> = arena_make($Token, 262144)
+        // What the project declares, after anything the command line named and
+        // before the standard library, which is the order the other compiler
+        // assembles them in.
+        manifest_roots(input_path, options.roots, options.layers)
+        search_roots_from(options.roots)
+        resolve_imports(
+            buffer,
+            input_path,
+            parser.export_names,
+            parser.modules,
+            parser.exports,
+            parser.import_edges,
+            parser.renames,
+            scratch,
+            options.roots,
+            options.layers
+        )
+        source = buffer
+    }
+    if (str_len(source) <= 1) {
+        source = "
+        strlen :: extern fn(s: ^i8) -> i64
+        frost_rt_write_i64 :: safe extern fn(value: i64)
+        frost_rt_write_char :: safe extern fn(byte: i64)
+
+        print_int_line :: fn(value: i64) {
+            frost_rt_write_i64(value)
+            frost_rt_write_char(10)
+        }
+
+        ANSWER :: 42
+
+        fib :: fn(n: i64) -> i64 {
+            if (n < 2) { return n }
+            return fib(n - 1) + fib(n - 2)
+        }
+
+        fact :: fn(n: i64) -> i64 {
+            if (n < 1) { return 1 }
+            return n * fact(n - 1)
+        }
+
+        Point :: struct { x: i64, y: i64 }
+
+        sum_point :: fn(pt: Point) -> i64 {
+            return pt.x + pt.y
+        }
+
+        bump :: fn(b: ^Point) {
+            unsafe { b^.x = b^.x + 1 }
+        }
+
+        classify :: fn(n: i64) -> i64 {
+            mut result : i64 = 0
+            match n {
+                case 0: { result = 100 }
+                case 1: { result = 200 }
+                case _: { result = 999 }
+            }
+            return result
+        }
+
+        Box :: struct($T: Type) { value: T }
+
+        Holder :: struct { item: Box<i64> }
+
+        box_make :: fn($T: Type, v: $T) -> Box<T> {
+            Box { value = v }
+        }
+
+        box_get :: fn(b: Box<$T>) -> $T {
+            unsafe { b^.value }
+        }
+
+        main :: fn() -> i64 {
+            print_int_line(fib(10))
+            print_int_line(fact(5))
+            mut sum : i64 = 0
+            mut index : i64 = 1
+            while (index <= 10) { sum = sum + index  index = index + 1 }
+            print_int_line(sum)
+            p := Point { x = 3, y = 4 }
+            print_int_line(p.x)
+            p.x = 10
+            print_int_line(sum_point(p))
+            ptr := ptr_to(p)
+            bump(ptr)
+            print_int_line(p.x)
+            unsafe {
+                print_int_line(ptr^.y)
+                print_int_line(ptr[0].x)
+                q := ptr_cast($Point, ptr)
+                print_int_line(q^.x)
+            }
+            print_int_line(sizeof(Point))
+            print_int_line(classify(0))
+            print_int_line(classify(1))
+            print_int_line(classify(7))
+            unsafe { print_int_line(strlen(\"hello\")) }
+            print_int_line(ANSWER)
+            h := Holder { item = box_make(77) }
+            print_int_line(box_get(h.item))
+            0
+        }
+    "
+    }
+    // The demo program is a literal with nowhere to write, so it needs the same
+    // copy with room past the terminator that an imported source already has.
+    if (cstr_len(input_path) == 0) {
+        source = source_with_room(source)
+    }
+
+    parser.src = source
     // Names the compiler synthesizes go past the source's terminator, so the
     // first free byte is one past the text.
     parser.synth_next = source_end(source) + 1
     parser.synth_start = parser.synth_next
     // The two names of each rename move into the source, so every lookup
     // compares bytes in one buffer the way it always has.
-    place_renames(parser, export_names)
+    // The names come out of the parser before the call rather than inside it:
+    // a call handing the same value both mutably and by view is what the
+    // exclusivity rule refuses, and what is read here is a copy of the
+    // descriptor.
+    names := parser.export_names
+    place_renames(parser, names)
     // The host convention by default. FROST_ABI overrides it so the other
     // target's output can be inspected from either host.
     parser.abi_windows = frost_rt_is_windows()
@@ -580,5 +596,4 @@ read_and_check :: fn(options: Options) -> Parser {
         frost_rt_die()
     }
     parser.program = program
-    parser
 }

@@ -383,6 +383,13 @@ int64_t frost_rt_emit_open(const char *path) {
     return frost_rt_emit_target != 0;
 }
 
+/* Everything emitted so far, out of the buffer and gone. A build emits one
+   program and lets the close write it; a server writes an answer and then waits
+   to be read, so what it wrote has to have left before it waits. */
+void frost_rt_emit_flush(void) {
+    fflush(frost_rt_emit_where());
+}
+
 void frost_rt_emit_close(void) {
     if (frost_rt_emit_target != 0) {
         fclose(frost_rt_emit_target);
@@ -1560,6 +1567,81 @@ int64_t frost_rt_heap_live(void) {
     return frost_rt_heap_blocks;
 }
 
+/* Everything one run of the compiler took, so a server can hand it all back in
+   one call.
+
+   A build takes memory and exits, and the system reclaims it. A server runs the
+   same passes after every keystroke, and the arenas one check makes are dead
+   the moment its answer is written. Naming each of them to free it puts the
+   list in two places, and the one added next is the one nobody adds to the
+   list; recording what was taken as it is taken keeps the list where the taking
+   happens.
+
+   Only what is taken between an open and a close is recorded, so what the
+   server made for itself before the first check is never in the list. */
+typedef struct {
+    void *at;
+    int64_t bytes;
+    int64_t mapped;
+} frost_rt_taken;
+
+static frost_rt_taken *frost_rt_taken_list = 0;
+static int64_t frost_rt_taken_count = 0;
+static int64_t frost_rt_taken_room = 0;
+static int frost_rt_taking = 0;
+
+static void frost_rt_taken_note(void *at, int64_t bytes, int64_t mapped) {
+    if (frost_rt_taking == 0 || at == 0) {
+        return;
+    }
+    if (frost_rt_taken_count == frost_rt_taken_room) {
+        int64_t room = frost_rt_taken_room * 2 + 256;
+        frost_rt_taken *wider = (frost_rt_taken *)realloc(
+            frost_rt_taken_list, (size_t)room * sizeof(frost_rt_taken));
+        if (wider == 0) {
+            return;
+        }
+        frost_rt_taken_list = wider;
+        frost_rt_taken_room = room;
+    }
+    frost_rt_taken_list[frost_rt_taken_count].at = at;
+    frost_rt_taken_list[frost_rt_taken_count].bytes = bytes;
+    frost_rt_taken_list[frost_rt_taken_count].mapped = mapped;
+    frost_rt_taken_count++;
+}
+
+/* Records what is taken from here on. */
+void frost_rt_take_open(void) {
+    frost_rt_taking = 1;
+    frost_rt_taken_count = 0;
+}
+
+/* Hands back everything taken since the open, and stops recording. Whatever
+   the caller still wants has to have been copied somewhere else first: every
+   address in the list is gone when this returns. */
+void frost_rt_take_close(void) {
+    frost_rt_taking = 0;
+    for (int64_t index = 0; index < frost_rt_taken_count; index++) {
+        frost_rt_taken held = frost_rt_taken_list[index];
+        if (held.mapped) {
+#if defined(_WIN32)
+            VirtualFree(held.at, 0, MEM_RELEASE);
+#else
+            munmap(held.at, (size_t)held.bytes);
+#endif
+        } else {
+            free(held.at);
+        }
+    }
+    frost_rt_taken_count = 0;
+}
+
+/* Records a block a Frost caller took, which is how the arena allocator in
+   runtime.frost gets into the list without the list living in two places. */
+void frost_rt_take_note(void *at, int64_t bytes) {
+    frost_rt_taken_note(at, bytes, 0);
+}
+
 /* Address space for an arena, taken but not backed by memory yet.
 
    An arena hands out raw pointers into its block, and the compiler holds those
@@ -1595,6 +1677,7 @@ void *frost_rt_reserve(int64_t bytes) {
                 (long long)bytes);
         frost_rt_stop();
     }
+    frost_rt_taken_note(held, bytes, 1);
     return held;
 }
 

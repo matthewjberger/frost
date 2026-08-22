@@ -1,0 +1,364 @@
+// A language server for Frost, spoken over standard input and output.
+//
+// One process, started once by an editor and asked about a file after every
+// keystroke. What it answers with is what a build would say about the same
+// text: the same passes run over the buffer on screen, so a report an editor
+// underlines is a report the build would refuse on.
+//
+// Written here rather than beside the editor, because everything an answer
+// needs is what the compiler already built. A definition is a row in the symbol
+// table, a diagnostic is a report the passes wrote, and a completion is the
+// exported surface `frost api` walks. Spoken from outside, each of those was a
+// process started and a program read again.
+//
+// The protocol is JSON-RPC over a `Content-Length` header, which is what the
+// Language Server Protocol says and what every editor speaks.
+
+import "core.frost"
+import "json.frost"
+import "cli.frost"
+import "imports.frost"
+import "names.frost"
+import "build.frost"
+import "format.frost"
+import "lint.frost"
+
+export lsp_command
+
+// How much room a document's text starts with. An arena reserves sixteen times
+// what it is made with and commits into that, so a file larger than this costs
+// a commit rather than a copy, and the address a view names never moves.
+DOC_ROOM :: 262144
+
+// How many documents an editor may hold open at once. A closed one keeps its
+// buffers, since the next file opened takes the slot rather than a new arena.
+DOC_MAX :: 256
+
+// One file an editor has open, and the text it has rather than the text on
+// disk. The buffers are reused across edits: an editor sends the whole document
+// on every keystroke, and a fresh allocation for each would be a megabyte a
+// second on a large file.
+Doc :: struct {
+    uri: Arena<u8>,
+    path: Arena<u8>,
+    text: Arena<u8>,
+    version: i64,
+    live: i64,
+}
+
+// What the server knows between one question and the next. Threaded rather than
+// held in a global, which the language does not have.
+Server :: struct {
+    docs: Arena<Doc>,
+    root: Arena<u8>,
+    scratch: Arena<u8>,
+    body: Arena<u8>,
+    going: i64,
+    ready: i64,
+}
+
+lsp_command :: fn() -> i64 {
+    // Every refusal comes back to whoever asked rather than ending the process,
+    // and every report is a record rather than a block of text, so the answers
+    // carry places and fixes a reader can act on.
+    frost_rt_serving_on()
+    frost_rt_json_reports()
+    mut server := Server {
+        docs = arena_make($Doc, DOC_MAX),
+        root = arena_make($u8, 4096),
+        scratch = arena_make($u8, 65536),
+        body = arena_make($u8, DOC_ROOM),
+        going = 1,
+        ready = 0,
+    }
+    while (server.going == 1) {
+        if (read_body(server.body) == false) {
+            server.going = 0
+        } else {
+            answer_one(server)
+        }
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Bytes
+// ---------------------------------------------------------------------------
+
+// The bytes an arena holds, as a slice. The storage is the arena's, which is
+// the caller's, so the view lives exactly as long as what it reads.
+bytes_view :: fn(mut a: Arena<u8>) -> str {
+    unsafe { slice_from($u8, a.data, a.count) }
+}
+
+// The bytes an arena holds as a C string, for the runtime calls that take one.
+// Everything written through `bytes_byte` leaves a terminator past the count,
+// so what this points at is terminated without the count including it.
+bytes_cstr :: fn(mut a: Arena<u8>) -> ^i8 {
+    unsafe { ptr_cast($i8, a.data) }
+}
+
+bytes_reset :: fn(mut a: Arena<u8>) {
+    a.count = 0
+    arena_push(a, cast($u8, 0))
+    a.count = 0
+}
+
+bytes_byte :: fn(mut a: Arena<u8>, value: i64) {
+    arena_push(a, cast($u8, value & 255))
+    // The terminator sits past the count, so the count stays the length and
+    // the bytes are still a C string.
+    arena_push(a, cast($u8, 0))
+    a.count = a.count - 1
+}
+
+bytes_str :: fn(mut a: Arena<u8>, text: str) {
+    for index, byte in text {
+        bytes_byte(a, cast($i64, byte))
+    }
+}
+
+bytes_cstr_in :: fn(mut a: Arena<u8>, text: ^i8) {
+    length := cstr_len(text)
+    mut at: i64 = 0
+    while (at < length) {
+        bytes_byte(a, byte_at(text, at))
+        at = at + 1
+    }
+}
+
+bytes_int :: fn(mut a: Arena<u8>, value: i64) {
+    if (value < 0) {
+        bytes_byte(a, CH_MINUS)
+        bytes_int(a, 0 - value)
+        return
+    }
+    if (value >= 10) {
+        bytes_int(a, value / 10)
+    }
+    bytes_byte(a, 48 + value % 10)
+}
+
+// Whether a run of bytes holds this text.
+bytes_same :: fn(mut a: Arena<u8>, text: str) -> bool {
+    if (a.count != str_len(text)) {
+        return false
+    }
+    for index, byte in text {
+        if (cast($i64, arena_at(a, index)) != cast($i64, byte)) {
+            return false
+        }
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
+// Framing
+// ---------------------------------------------------------------------------
+
+// One message off standard input, header and body. Answers false where the
+// stream ended, which is what an editor closing the pipe looks like.
+read_body :: fn(mut body: Arena<u8>) -> bool {
+    mut length: i64 = -1
+    mut reading: bool = true
+    while (reading) {
+        line := frost_rt_stdin_line()
+        if (frost_rt_stdin_ended() == 1) {
+            return false
+        }
+        if (cstr_len(line) == 0) {
+            reading = false
+        } else {
+            wanted := header_length(line)
+            if (wanted >= 0) {
+                length = wanted
+            }
+        }
+    }
+    if (length < 0) {
+        return false
+    }
+    raw := frost_rt_stdin_bytes(length)
+    if (frost_rt_stdin_ended() == 1) {
+        return false
+    }
+    bytes_reset(body)
+    mut at: i64 = 0
+    while (at < length) {
+        bytes_byte(body, byte_at(raw, at))
+        at = at + 1
+    }
+    true
+}
+
+// The number a `Content-Length` header carries, or -1 for any other header. The
+// name is matched without regard to case, which the protocol allows.
+header_length :: fn(line: ^i8) -> i64 {
+    name := "content-length:"
+    wanted := str_len(name)
+    if (cstr_len(line) < wanted) {
+        return -1
+    }
+    mut at: i64 = 0
+    while (at < wanted) {
+        mut held := byte_at(line, at)
+        if (held >= CH_UPPER_A && held <= CH_UPPER_Z) {
+            held = held + 32
+        }
+        if (held != cast($i64, name[at])) {
+            return -1
+        }
+        at = at + 1
+    }
+    mut value: i64 = 0
+    mut seen: i64 = 0
+    mut index := wanted
+    length := cstr_len(line)
+    while (index < length) {
+        byte := byte_at(line, index)
+        if (byte >= 48 && byte <= 57) {
+            value = value * 10 + byte - 48
+            seen = 1
+        }
+        index = index + 1
+    }
+    if (seen == 0) {
+        return -1
+    }
+    value
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+// A message goes into memory first so its length is known before its header is
+// written, which is what the framing asks for.
+say_open :: fn() {
+    emit_to_memory()
+}
+
+say_send :: fn() {
+    length := frost_rt_emit_memory_length()
+    at := frost_rt_emit_memory_at()
+    frost_rt_emit_memory_done()
+    emit_text("Content-Length: ")
+    frost_rt_emit_int(length)
+    emit_text("\r\n\r\n")
+    unsafe { frost_rt_emit_bytes(at, length) }
+    frost_rt_emit_flush()
+}
+
+// A JSON string with its quotes, escaped the way the format asks. A byte below
+// a space has no literal spelling, so it goes out as the four hex digits the
+// format names it by.
+say_string :: fn(text: str) {
+    emit_text("\"")
+    for index, byte in text {
+        say_escaped(cast($i64, byte))
+    }
+    emit_text("\"")
+}
+
+say_escaped :: fn(byte: i64) {
+    if (byte == CH_DQUOTE || byte == CH_BACKSLASH) {
+        frost_rt_emit_char(CH_BACKSLASH)
+        frost_rt_emit_char(byte)
+        return
+    }
+    if (byte == CH_LF) {
+        emit_text("\\n")
+        return
+    }
+    if (byte == CH_CR) {
+        emit_text("\\r")
+        return
+    }
+    if (byte == CH_TAB) {
+        emit_text("\\t")
+        return
+    }
+    if (byte < 32) {
+        emit_text("\\u00")
+        frost_rt_emit_char(hex_digit(byte / 16))
+        frost_rt_emit_char(hex_digit(byte % 16))
+        return
+    }
+    frost_rt_emit_char(byte)
+}
+
+hex_digit :: fn(value: i64) -> i64 {
+    if (value < 10) {
+        return 48 + value
+    }
+    87 + value
+}
+
+say_cstr :: fn(text: ^i8) {
+    emit_text("\"")
+    length := cstr_len(text)
+    mut at: i64 = 0
+    while (at < length) {
+        say_escaped(byte_at(text, at))
+        at = at + 1
+    }
+    emit_text("\"")
+}
+
+// The head of a reply, which carries back the id it answers.
+say_result_head :: fn(mut document: Json, request: i64) {
+    emit_text("{\"jsonrpc\":\"2.0\",\"id\":")
+    say_id(document, request)
+    emit_text(",\"result\":")
+}
+
+// The id as it arrived. A request may number itself or name itself, and the
+// reply has to carry back what it was given rather than a reading of it.
+say_id :: fn(mut document: Json, request: i64) {
+    id := json_member(document, request, "id")
+    if (json_kind(document, id) == JsonKind::String) {
+        emit_text("\"")
+        say_raw_string(document, id)
+        emit_text("\"")
+        return
+    }
+    if (json_kind(document, id) == JsonKind::Number) {
+        frost_rt_emit_int(json_number(document, id))
+        return
+    }
+    emit_text("null")
+}
+
+// A string node's bytes as they were written, escapes and all, which is what
+// goes back out where nothing read them.
+say_raw_string :: fn(mut document: Json, node: i64) {
+    source := document.source
+    off := json_text_off(document, node)
+    len := json_text_len(document, node)
+    mut at: i64 = 0
+    while (at < len) {
+        frost_rt_emit_char(cast($i64, source[off + at]))
+        at = at + 1
+    }
+}
+
+say_position :: fn(line: i64, character: i64) {
+    emit_text("{\"line\":")
+    frost_rt_emit_int(line)
+    emit_text(",\"character\":")
+    frost_rt_emit_int(character)
+    emit_text("}")
+}
+
+say_range :: fn(
+    from_line: i64,
+    from_character: i64,
+    to_line: i64,
+    to_character: i64
+) {
+    emit_text("{\"start\":")
+    say_position(from_line, from_character)
+    emit_text(",\"end\":")
+    say_position(to_line, to_character)
+    emit_text("}")
+}

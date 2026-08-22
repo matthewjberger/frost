@@ -361,6 +361,17 @@ fn collect_param_types(ast: &Ast, roots: &[StmtId]) -> ParamTypes {
                     // borrowed rather than moved.
                     match parameter.mode {
                         ParamMode::Value => Some(Type::Ref(Box::new(ty))),
+                        // A slice, a string and an array fit in registers by
+                        // width, so the mode lowering leaves them as written
+                        // and every one of them still crosses to the callee as
+                        // a pointer to the caller's storage. A parameter
+                        // reading that storage during the call borrows it,
+                        // which is what the exclusivity rule weighs against the
+                        // `mut` parameter beside it. Left bare, the same call
+                        // the self-hosted compiler refuses was taken here.
+                        ParamMode::Read if borrows_by_address(&ty) => {
+                            Some(Type::Ref(Box::new(ty)))
+                        }
                         _ => Some(ty),
                     }
                 })
@@ -3108,6 +3119,14 @@ fn place_maybe_within(inner: &[Step], outer: &[Step]) -> bool {
 }
 
 // How a place reads back in a diagnostic.
+/// Whether a value of this type is handed to a callee as the address of the
+/// caller's storage. A struct and an enum are already references by the time
+/// this runs, since the mode lowering rewrote them; these three are what it
+/// leaves as written.
+fn borrows_by_address(ty: &Type) -> bool {
+    matches!(ty, Type::Array(_, _) | Type::Slice(_) | Type::Str)
+}
+
 /// Whether a type is a view of storage rather than storage of its own.
 fn is_view_type(ty: &Type) -> bool {
     matches!(

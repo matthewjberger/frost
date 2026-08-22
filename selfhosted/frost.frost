@@ -739,7 +739,8 @@ main :: fn() -> i64 {
 
     // Everything before a backend writes a word: the imports read, the
     // program parsed, and every check run over it.
-    mut parser := read_and_check(options)
+    mut parser := new_parser(options)
+    read_and_check(parser, options)
     mut program := parser.program
 
     // `frost lint <file>` says what is worth a look and refuses nothing, so it

@@ -38,6 +38,9 @@ frost_rt_stop :: safe extern fn()
 // the stub, because a C function that wraps a C function is a line of C this
 // file exists to remove.
 malloc :: extern fn(size: i64) -> ^u8
+// Records a block, for the scope a server opens around one check. Does
+// nothing where no scope is open, which is every build.
+frost_rt_take_note :: extern fn(at: ^u8, bytes: i64)
 memcpy :: extern fn(destination: ^u8, source: ^u8, count: i64) -> ^u8
 memset :: extern fn(destination: ^u8, value: i32, count: i64) -> ^u8
 remove :: extern fn(path: ^i8) -> i32
@@ -313,5 +316,8 @@ frost_rt_alloc :: extern fn(size: i64) -> ^u8 {
         frost_rt_fault(" bytes\n")
         frost_rt_stop()
     }
+    // A server hands back everything one check took at once, and this is
+    // where the block enters the list it hands back.
+    unsafe { frost_rt_take_note(block, size) }
     block
 }
