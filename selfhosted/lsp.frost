@@ -45,6 +45,10 @@ Doc :: struct {
     text: Arena<u8>,
     version: i64,
     live: i64,
+    // Whether the text changed since the last check. A burst of
+    // keystrokes is one check rather than one for each, so the text a
+    // change carries waits here until nothing else is on the way in.
+    dirty: i64,
 }
 
 // A file the last round of findings was published for. An editor keeps what it
@@ -97,6 +101,7 @@ lsp_command :: fn() -> i64 {
             server.going = 0
         } else {
             answer_one(server)
+            settle_dirty(server)
         }
     }
     0
@@ -700,6 +705,7 @@ doc_take :: fn(mut s: Server, wanted: str) -> i64 {
         if (slot.live == 0) {
             slot.live = 1
             slot.version = 0
+            slot.dirty = 0
             bytes_reset(slot.uri)
             bytes_str(slot.uri, wanted)
             path_of_uri(slot.path, wanted)
@@ -719,6 +725,7 @@ doc_take :: fn(mut s: Server, wanted: str) -> i64 {
             text = arena_make($u8, DOC_ROOM),
             version = 0,
             live = 1,
+            dirty = 0,
         }
     )
     ref slot := arena_at(s.docs, made)
@@ -1031,7 +1038,30 @@ answer_changed :: fn(mut s: Server, mut document: Json, request: i64) {
     bytes_reset(held.text)
     bytes_json(held.text, document, text)
     held.version = json_number(document, version)
-    publish_findings(s, doc)
+    // Checked once the reader stops, rather than once for each key. What
+    // is already on the way in carries text that replaces this.
+    held.dirty = 1
+}
+
+// The check a change put off. Run when nothing else is on the way in, so a
+// burst of keystrokes costs one check rather than one for each of them.
+settle_dirty :: fn(mut s: Server) {
+    if (frost_rt_stdin_waiting() == 1) {
+        return
+    }
+    mut at: i64 = 0
+    while (at < s.docs.count) {
+        mut wanted: i64 = -1
+        ref held := arena_at(s.docs, at)
+        if (held.live == 1 && held.dirty == 1) {
+            held.dirty = 0
+            wanted = at
+        }
+        if (wanted >= 0) {
+            publish_findings(s, wanted)
+        }
+        at = at + 1
+    }
 }
 
 // ---------------------------------------------------------------------------

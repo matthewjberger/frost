@@ -56,6 +56,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     frost_rt_take_open, frost_rt_take_close,
     frost_rt_hold_file, frost_rt_json_reporting,
     frost_rt_stdin_line, frost_rt_stdin_bytes, frost_rt_stdin_ended,
+    frost_rt_stdin_waiting,
     frost_rt_read_file, frost_rt_read_stdin, frost_rt_remove_file,
     frost_rt_dir_open, frost_rt_dir_next, frost_rt_dir_entry_is_dir,
     frost_rt_dir_close,
@@ -124,6 +125,11 @@ frost_rt_program_path :: extern fn() -> ^i8
 frost_rt_stdin_line :: extern fn() -> ^i8
 frost_rt_stdin_bytes :: extern fn(count: i64) -> ^i8
 frost_rt_stdin_ended :: safe extern fn() -> i64
+
+// Whether another message is already on the way in. A server checking after
+// every keystroke checks a file the reader has already replaced; what is
+// waiting says so, and the check belongs to whichever message is last.
+frost_rt_stdin_waiting :: safe extern fn() -> i64
 
 // Say that this process answers questions rather than builds one program. A
 // refusal ends a build and there is nothing after it to do; a server takes the

@@ -45,6 +45,7 @@
    `write`, so including them there left that call with no declaration at all
    and the one the header then gave it conflicted with the guess. */
 #include <dirent.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -659,6 +660,54 @@ const char *frost_rt_program_path(void) {
 static int64_t frost_rt_stdin_end = 0;
 
 int64_t frost_rt_stdin_ended(void) { return frost_rt_stdin_end; }
+
+/* Whether another message is already on the way in.
+
+   A server checking after every keystroke checks a file the reader has already
+   replaced. What is waiting says so: where the next message is already here,
+   the text this one carries is about to be stale, and the check belongs to
+   whichever one is last.
+
+   The reads below are unbuffered while a server is running, so what the stream
+   has not handed over is what the system still holds and this is what sees
+   it. */
+int64_t frost_rt_stdin_waiting(void) {
+#if defined(_WIN32)
+    HANDLE held = (HANDLE)_get_osfhandle(_fileno(stdin));
+    if (held == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    DWORD kind = GetFileType(held);
+    if (kind == FILE_TYPE_PIPE) {
+        DWORD available = 0;
+        if (PeekNamedPipe(held, NULL, 0, NULL, &available, NULL)) {
+            return available > 0;
+        }
+        return 0;
+    }
+    if (kind == FILE_TYPE_DISK) {
+        LARGE_INTEGER at;
+        LARGE_INTEGER size;
+        LARGE_INTEGER zero;
+        zero.QuadPart = 0;
+        if (SetFilePointerEx(held, zero, &at, FILE_CURRENT)
+            && GetFileSizeEx(held, &size)) {
+            return at.QuadPart < size.QuadPart;
+        }
+        return 0;
+    }
+    return 0;
+#else
+    struct pollfd held;
+    held.fd = 0;
+    held.events = POLLIN;
+    held.revents = 0;
+    if (poll(&held, 1, 0) <= 0) {
+        return 0;
+    }
+    return (held.revents & POLLIN) != 0;
+#endif
+}
 
 const char *frost_rt_stdin_line(void) {
     static char *line = 0;
@@ -1490,7 +1539,13 @@ void frost_rt_error_int(int64_t value) {
    rather than end the process. */
 static int64_t frost_rt_serving = 0;
 
-void frost_rt_serving_on(void) { frost_rt_serving = 1; }
+void frost_rt_serving_on(void) {
+    frost_rt_serving = 1;
+    /* Unbuffered, so what the stream has not handed over is what the system
+       still holds and `frost_rt_stdin_waiting` sees it. A message is a few
+       hundred bytes, so the reads this costs are not worth counting. */
+    setvbuf(stdin, NULL, _IONBF, 0);
+}
 
 void frost_rt_die(void) {
     if (frost_rt_serving && frost_rt_recover_depth > 0) {
