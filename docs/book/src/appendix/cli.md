@@ -288,9 +288,23 @@ started once by an editor and asked about a file after every keystroke.
 
 What it answers with is what a build would say about the same text: the same
 passes run over the buffer on screen, so a report an editor underlines is a
-report the build refuses on. It serves the reports, the fixes they carry, go to
-definition, hover, references, highlights, the outline, workspace search,
-rename, completion, folding ranges and the formatter.
+report the build refuses on.
+
+It serves the reports and the fixes they carry, both sent and asked for; go to
+definition, declaration, type definition and implementation; hover, references,
+highlights and linked editing; the outline, workspace search and folding
+ranges; rename with its preparation step; completion with the comment block
+filled in for the one a reader moves onto; signature help; code actions; the
+formatter, over a whole file, over a range, and over the line a brace was just
+typed on; the colour of every name, by what the name is rather than by how it
+reads; the parameter names a call leaves out; a lens over each declaration
+saying how much of the program names it; the tree of what calls a name and what
+it calls; the tree of what a type holds and what holds it; and the file each
+`import` names.
+
+A change carries the range it changed. A request the editor takes back is
+answered as taken back rather than worked on. A Frost file written outside the
+editor makes every open buffer check again.
 
 A burst of keystrokes costs one check rather than one for each: what is already
 on the way in says which change is the last one, and the check runs when the

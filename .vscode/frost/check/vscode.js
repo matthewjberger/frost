@@ -243,6 +243,15 @@ const shown = [];
 const workspaceFolders = [];
 const documents = [];
 const watchers = [];
+const listeners = {};
+
+function on(name) {
+  return (handler) => {
+    listeners[name] = listeners[name] || [];
+    listeners[name].push(handler);
+    return { dispose() {} };
+  };
+}
 
 function keep(name) {
   return (...held) => {
@@ -250,10 +259,6 @@ function keep(name) {
     registered[name].push(held);
     return { dispose() {} };
   };
-}
-
-function ignore() {
-  return { dispose() {} };
 }
 
 module.exports = {
@@ -341,11 +346,11 @@ module.exports = {
     getWorkspaceFolder() {
       return workspaceFolders[0];
     },
-    onDidOpenTextDocument: ignore,
-    onDidChangeTextDocument: ignore,
-    onDidSaveTextDocument: ignore,
-    onDidCloseTextDocument: ignore,
-    onDidChangeConfiguration: ignore,
+    onDidOpenTextDocument: on("open"),
+    onDidChangeTextDocument: on("change"),
+    onDidSaveTextDocument: on("save"),
+    onDidCloseTextDocument: on("close"),
+    onDidChangeConfiguration: on("config"),
     createFileSystemWatcher(pattern) {
       const held = { pattern, created: [], changed: [], deleted: [] };
       watchers.push(held);
@@ -370,5 +375,5 @@ module.exports = {
       shown.push(["info", text]);
     },
   },
-  held: { registered, diagnostics, shown, workspaceFolders, documents, watchers },
+  held: { registered, diagnostics, shown, workspaceFolders, documents, watchers, listeners },
 };

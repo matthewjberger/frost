@@ -212,17 +212,28 @@ class Server {
     });
   }
 
-  changed(document) {
+  // What changed, rather than the whole file. An editor knows the range it
+  // edited; sending the buffer instead makes every keystroke carry the file.
+  // A change the editor cannot describe as a range still carries the buffer.
+  changed(document, event) {
     if (!this.open.has(document.uri.toString())) {
       this.opened(document);
       return;
     }
+    const held = event && event.contentChanges ? event.contentChanges : [];
+    const changes = held.length
+      ? held.map((one) => ({
+          range: { start: at(one.range.start), end: at(one.range.end) },
+          rangeLength: one.rangeLength,
+          text: one.text,
+        }))
+      : [{ text: document.getText() }];
     this.notify("textDocument/didChange", {
       textDocument: {
         uri: document.uri.toString(),
         version: document.version,
       },
-      contentChanges: [{ text: document.getText() }],
+      contentChanges: changes,
     });
   }
 
@@ -976,7 +987,7 @@ function activate(context) {
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (watched(event.document)) {
-        server.changed(event.document);
+        server.changed(event.document, event);
       }
     }),
     vscode.workspace.onDidSaveTextDocument((document) => {

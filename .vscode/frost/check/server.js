@@ -313,7 +313,8 @@ async function main() {
       held.capabilities.hoverProvider &&
       held.capabilities.definitionProvider &&
       held.capabilities.renameProvider &&
-      held.capabilities.textDocumentSync !== undefined &&
+      held.capabilities.textDocumentSync.change === 2 &&
+      held.capabilities.diagnosticProvider.workspaceDiagnostics === true &&
       held.capabilities.semanticTokensProvider.legend.tokenTypes.join(" ") ===
         "keyword function type parameter variable property string number" &&
       held.capabilities.semanticTokensProvider.legend.tokenModifiers.join(
@@ -488,6 +489,72 @@ async function main() {
       }
       return steps.join(" then ");
     }
+  );
+  want(
+    "pulled diagnostics",
+    await talk.ask(58, "textDocument/diagnostic", doc({})),
+    (held) =>
+      held && held.kind === "full" && Array.isArray(held.items) &&
+      held.items.length === 0,
+    (held) => (held ? held.kind + ", " + held.items.length + " items" : "none")
+  );
+  want(
+    "pulled workspace diagnostics",
+    await talk.ask(59, "workspace/diagnostic", { previousResultIds: [] }),
+    (held) =>
+      held &&
+      Array.isArray(held.items) &&
+      held.items.some((one) => one.uri === uri),
+    (held) =>
+      held && held.items ? held.items.length + " files" : "none"
+  );
+  // One keystroke, carrying only what it changed.
+  want(
+    "one change of a line",
+    await talk.told(
+      "textDocument/didChange",
+      {
+        textDocument: { uri, version: 12 },
+        contentChanges: [
+          {
+            range: {
+              start: at(CLEAN, "    n * 2", 8),
+              end: at(CLEAN, "    n * 2", 9),
+            },
+            text: "nosuch",
+          },
+        ],
+      },
+      uri
+    ),
+    (held) =>
+      held.diagnostics.length === 1 &&
+      held.diagnostics[0].message.includes("nosuch"),
+    (held) =>
+      held.diagnostics.length > 0
+        ? JSON.stringify(held.diagnostics[0].message.slice(0, 34))
+        : "none"
+  );
+  want(
+    "the change is taken back",
+    await talk.told(
+      "textDocument/didChange",
+      {
+        textDocument: { uri, version: 13 },
+        contentChanges: [
+          {
+            range: {
+              start: at(CLEAN, "    n * 2", 8),
+              end: { line: 4, character: 14 },
+            },
+            text: "2",
+          },
+        ],
+      },
+      uri
+    ),
+    (held) => held.diagnostics.length === 0,
+    (held) => held.diagnostics.length + " diagnostics"
   );
   want(
     "inlay hints",

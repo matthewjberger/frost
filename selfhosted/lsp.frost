@@ -1079,6 +1079,14 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
         answer_code_lenses(s, document, request)
         return
     }
+    if (json_text_eq(document, method, "textDocument/diagnostic")) {
+        answer_pull_diagnostics(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "workspace/diagnostic")) {
+        answer_workspace_diagnostics(s, document, request)
+        return
+    }
     if (json_text_eq(document, method, "codeLens/resolve")) {
         answer_code_lens_resolve(s, document, request)
         return
@@ -1111,7 +1119,7 @@ answer_initialize :: fn(mut s: Server, mut document: Json, request: i64) {
     // The whole document arrives on every change. A Frost source is read end to
     // end by every pass anyway, so keeping a copy up to date by ranges would
     // save nothing the check does not spend.
-    emit_text("\"textDocumentSync\":{\"openClose\":true,\"change\":1,\"save\":true},")
+    emit_text("\"textDocumentSync\":{\"openClose\":true,\"change\":2,\"save\":true},")
     emit_text("\"hoverProvider\":true,")
     emit_text("\"definitionProvider\":true,")
     emit_text("\"declarationProvider\":true,")
@@ -1138,6 +1146,8 @@ answer_initialize :: fn(mut s: Server, mut document: Json, request: i64) {
     emit_text("\"callHierarchyProvider\":true,")
     emit_text("\"typeHierarchyProvider\":true,")
     emit_text("\"codeLensProvider\":{\"resolveProvider\":true},")
+    emit_text("\"diagnosticProvider\":{\"interFileDependencies\":true,")
+    emit_text("\"workspaceDiagnostics\":true},")
     emit_text("\"completionProvider\":{\"resolveProvider\":true},")
     emit_text("\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]}")
     emit_text("},\"serverInfo\":{\"name\":\"frost\",\"version\":\"1\"}}}")
@@ -1180,16 +1190,20 @@ answer_changed :: fn(mut s: Server, mut document: Json, request: i64) {
         return
     }
     changes := json_member(document, params, "contentChanges")
-    last := json_count(document, changes) - 1
-    if (last < 0) {
+    count := json_count(document, changes)
+    if (count < 1) {
         return
     }
-    change := json_at(document, changes, last)
-    text := json_member(document, change, "text")
+    // Each one in turn: a change is written against the text the one before
+    // it left, so taking only the last would put its bytes at places that
+    // moved.
+    mut index: i64 = 0
+    while (index < count) {
+        apply_change(s, doc, document, json_at(document, changes, index))
+        index = index + 1
+    }
     version := json_member(document, named, "version")
     ref held := arena_at(s.docs, doc)
-    bytes_reset(held.text)
-    bytes_json(held.text, document, text)
     held.version = json_number(document, version)
     // Checked once the reader stops, rather than once for each key. What
     // is already on the way in carries text that replaces this.
@@ -1309,18 +1323,9 @@ publish_findings :: fn(mut s: Server, doc: i64) {
         }
         at = at + 1
     }
-    frost_rt_take_open()
-    mut parser := new_parser(lsp_options(s, doc))
-    run_check(s, doc, parser, 1)
-    records := unsafe { frost_rt_report_take() }
-    hold_modules(s, parser)
-    frost_rt_take_close()
-    records_as_array(s.reports, records)
-    // Kept, so the fixes at the caret are answered from what
-    // this check found rather than from one of their own.
-    bytes_reset(s.held_reports)
-    bytes_str(s.held_reports, bytes_view(s.reports))
-    s.held_for = doc
+    // What it finds is kept, so the fixes at the caret are answered from this
+    // check rather than from one of their own.
+    check_into_reports(s, doc)
     mut found := json_parse(bytes_view(s.reports))
     publish_each(s, doc, found)
     json_free(found)
@@ -5559,4 +5564,192 @@ say_one_field_type :: fn(
     }
     say_hierarchy_item(text, bytes_view(s.scratch), s.found_off, s.found_len)
     1
+}
+
+// ---------------------------------------------------------------------------
+// Reports the editor asks for
+// ---------------------------------------------------------------------------
+
+// One check of a document, with what it found left in `s.reports`.
+//
+// Shared by the reports the server sends on its own and the ones an editor
+// asks for. A check leaks by design and everything it took goes back in one
+// call, so what an answer needs after that is copied out before the call.
+check_into_reports :: fn(mut s: Server, doc: i64) {
+    frost_rt_take_open()
+    mut parser := new_parser(lsp_options(s, doc))
+    run_check(s, doc, parser, 1)
+    records := unsafe { frost_rt_report_take() }
+    hold_modules(s, parser)
+    frost_rt_take_close()
+    records_as_array(s.reports, records)
+    bytes_reset(s.held_reports)
+    bytes_str(s.held_reports, bytes_view(s.reports))
+    s.held_for = doc
+}
+
+// What is wrong with one buffer, answered rather than sent.
+//
+// An editor that asks rather than waits knows which file it is showing, and
+// gets the answer for that one at the moment it needs it.
+answer_pull_diagnostics :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    check_into_reports(s, doc)
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"kind\":\"full\",\"items\":[")
+    say_items_of(s, doc)
+    emit_text("]}}")
+    say_send()
+}
+
+// The records about one document, written as the protocol's diagnostics.
+say_items_of :: fn(mut s: Server, doc: i64) {
+    bytes_reset(s.scratch)
+    ref about := arena_at(s.docs, doc)
+    bytes_str(s.scratch, bytes_view(about.path))
+    mut found := json_parse(bytes_view(s.held_reports))
+    root := json_root(found)
+    count := json_count(found, root)
+    text := text_of_path(s, bytes_view(s.scratch))
+    mut written: i64 = 0
+    mut index: i64 = 0
+    while (index < count) {
+        record := json_at(found, root, index)
+        if (record_is_about(s, found, record, doc)) {
+            if (written > 0) {
+                emit_text(",")
+            }
+            say_diagnostic(found, record, text)
+            written = written + 1
+        }
+        index = index + 1
+    }
+    json_free(found)
+}
+
+// Whether a record is about the file this document holds.
+//
+// A record names a file the way a build writes it, which is not where the file
+// is, and a record with no place is about the file that was asked about.
+record_is_about :: fn(
+    mut s: Server,
+    mut found: Json,
+    record: i64,
+    doc: i64
+) -> bool {
+    file := json_member(found, record, "file")
+    if (file < 0 || json_kind(found, file) != JsonKind::String) {
+        return true
+    }
+    bytes_reset(s.other)
+    bytes_json(s.other, found, file)
+    name_as_path(s)
+    ref about := arena_at(s.docs, doc)
+    same_path(bytes_view(s.other), bytes_view(about.path))
+}
+
+// What is wrong with everything on screen, answered rather than sent.
+answer_workspace_diagnostics :: fn(
+    mut s: Server,
+    mut document: Json,
+    request: i64
+) {
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"items\":[")
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < s.docs.count) {
+        mut wanted: i64 = -1
+        mut version: i64 = 0
+        ref held := arena_at(s.docs, at)
+        if (held.live == 1) {
+            wanted = at
+            version = held.version
+        }
+        if (wanted >= 0) {
+            check_into_reports(s, wanted)
+            if (written > 0) {
+                emit_text(",")
+            }
+            emit_text("{\"kind\":\"full\",\"uri\":")
+            say_document_uri(s, wanted)
+            emit_text(",\"version\":")
+            frost_rt_emit_int(version)
+            emit_text(",\"items\":[")
+            say_items_of(s, wanted)
+            emit_text("]}")
+            written = written + 1
+        }
+        at = at + 1
+    }
+    emit_text("]}}")
+    say_send()
+}
+
+// The URI a document is known by.
+say_document_uri :: fn(mut s: Server, doc: i64) {
+    bytes_reset(s.other)
+    ref held := arena_at(s.docs, doc)
+    bytes_str(s.other, bytes_view(held.uri))
+    say_string(bytes_view(s.other))
+}
+
+// ---------------------------------------------------------------------------
+// A change that carries only what changed
+// ---------------------------------------------------------------------------
+
+// One change applied to the buffer.
+//
+// A change with no range replaces the whole text, which is what the editor
+// sends when it has nothing better to say. One with a range replaces the bytes
+// between two places, which is what a keystroke is.
+apply_change :: fn(mut s: Server, doc: i64, mut document: Json, change: i64) {
+    span := json_member(document, change, "range")
+    written := json_member(document, change, "text")
+    if (span < 0) {
+        ref whole := arena_at(s.docs, doc)
+        bytes_reset(whole.text)
+        bytes_json(whole.text, document, written)
+        return
+    }
+    starts := json_member(document, span, "start")
+    ends := json_member(document, span, "end")
+    // The new text is built beside the old one, since the bytes it keeps are
+    // read from the buffer it replaces.
+    bytes_reset(s.scratch)
+    mut from: i64 = 0
+    mut to: i64 = 0
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    from = place_offset(
+        text,
+        json_number(document, json_member(document, starts, "line")),
+        json_number(document, json_member(document, starts, "character"))
+    )
+    to = place_offset(
+        text,
+        json_number(document, json_member(document, ends, "line")),
+        json_number(document, json_member(document, ends, "character"))
+    )
+    length := str_len(text)
+    mut at: i64 = 0
+    while (at < from && at < length) {
+        bytes_byte(s.scratch, cast($i64, text[at]))
+        at = at + 1
+    }
+    bytes_json(s.scratch, document, written)
+    mut walk := to
+    while (walk < length) {
+        bytes_byte(s.scratch, cast($i64, text[walk]))
+        walk = walk + 1
+    }
+    ref into := arena_at(s.docs, doc)
+    bytes_reset(into.text)
+    bytes_str(into.text, bytes_view(s.scratch))
 }

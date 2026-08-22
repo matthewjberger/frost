@@ -60,12 +60,15 @@ fs.writeFileSync(sample, TEXT, "utf8");
 
 const uri = vscode.Uri.file(sample);
 const lines = TEXT.split("\n");
+// The buffer, as the editor holds one: what it says now, which a change
+// rewrites.
+let held_text = TEXT;
 const document = {
   languageId: "frost",
   uri,
   version: 1,
   lineCount: lines.length,
-  getText: () => TEXT,
+  getText: () => held_text,
   lineAt: (index) => ({
     range: { end: new vscode.Position(index, lines[index].length) },
   }),
@@ -425,6 +428,31 @@ async function main() {
     "restarted diagnostics",
     held.diagnostics.get(uri.toString()) || [],
     (found) => found.some((one) => one.message.includes("`mut`")),
+    (found) => found.length + " diagnostics"
+  );
+
+  // One keystroke, carried as the range it changed rather than as the file.
+  // The word the report names is the word it replaces, so what the editor is
+  // told goes away.
+  held_text = TEXT.replace("    var total", "    mut total");
+  document.version = 2;
+  for (const handler of held.listeners.change || []) {
+    handler({
+      document,
+      contentChanges: [
+        {
+          range: new vscode.Range(at("    var", 4), at("    var", 7)),
+          rangeLength: 3,
+          text: "mut",
+        },
+      ],
+    });
+  }
+  await new Promise((settle) => setTimeout(settle, 5000));
+  want(
+    "one change of a line",
+    held.diagnostics.get(uri.toString()) || [],
+    (found) => found.length === 0,
     (found) => found.length + " diagnostics"
   );
 
