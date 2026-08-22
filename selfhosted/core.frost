@@ -53,6 +53,7 @@ export ALT_HALF_OPEN, ALT_INCLUSIVE, ALT_NUMBER, ALT_UNRESOLVED, ALT_VALUE,
     frost_rt_file_read, frost_rt_file_size,
     frost_rt_getenv, frost_rt_setenv, frost_rt_is_windows, frost_rt_target_os,
     frost_rt_program_path, frost_rt_serving_on, frost_rt_report_take,
+    frost_rt_refusal_returns,
     frost_rt_take_open, frost_rt_take_close,
     frost_rt_hold_file, frost_rt_json_reporting,
     frost_rt_stdin_line, frost_rt_stdin_bytes, frost_rt_stdin_ended,
@@ -136,6 +137,7 @@ frost_rt_stdin_waiting :: safe extern fn() -> i64
 // next question, so a refusal comes back to the mark the server armed instead
 // of ending the process.
 frost_rt_serving_on :: safe extern fn()
+frost_rt_refusal_returns :: safe extern fn()
 
 // Everything the run has to say, as one string, and nothing held after. What a
 // build writes to the error stream is what a server hands back instead.

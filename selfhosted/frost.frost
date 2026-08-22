@@ -745,17 +745,19 @@ main :: fn() -> i64 {
         return assemble_file(options.input, options.output)
     }
 
+    // `frost lint <path>...` says what is worth a look and refuses nothing.
+    // It reads every file named and every `.frost` file under every directory
+    // named, so a whole project is one command.
+    if (options.linting == 1) {
+        return lint_paths(options)
+    }
+
     // Everything before a backend writes a word: the imports read, the
     // program parsed, and every check run over it.
     mut parser := new_parser(options)
     read_and_check(parser, options)
     mut program := parser.program
 
-    // `frost lint <file>` says what is worth a look and refuses nothing, so it
-    // runs after the checks and before anything is emitted.
-    if (options.linting == 1) {
-        return lint_program(parser)
-    }
 
     // An editor's question about a checked program, answered instead of a
     // build. The program was parsed and checked exactly as a build would
@@ -986,4 +988,77 @@ same_text :: fn(src: str, length: i64, written: str) -> bool {
         index = index + 1
     }
     true
+}
+
+// What one file of a lint needs to reach past the recovery mark.
+LintTurn :: struct {
+    options: ^u8,
+    path: ^i8,
+}
+
+lint_guarded :: fn(raw: ^u8) {
+    unsafe {
+        turn := ptr_cast($LintTurn, raw)
+        held := ptr_cast($Options, turn^.options)
+        lint_file(held^, turn^.path)
+    }
+}
+
+lint_file :: fn(mut options: Options, path: ^i8) {
+    options.input = path
+    mut parser := new_parser(options)
+    read_and_check(parser, options)
+    lint_program(parser)
+}
+
+// Every finding in every file named, and in every `.frost` file under every
+// directory named.
+//
+// A file the compiler refuses is one it already has something to say about,
+// and saying it twice helps nobody, so what a refusal ends is that file rather
+// than the run. Each file is checked with everything it took noted, and it all
+// goes back before the next one, or a project of any size runs the host out of
+// memory.
+lint_paths :: fn(mut options: Options) -> i64 {
+    frost_rt_refusal_returns()
+    mut files: Arena<Held> = arena_make($Held, 256)
+    count := frost_rt_arg_count()
+    mut index: i64 = 2
+    while (index < count) {
+        argument := frost_rt_arg_at(index)
+        if (dashed(argument) == false) {
+            frost_files_under(files, argument, 0)
+        }
+        index = index + 1
+    }
+    if (files.count == 0) {
+        // Named the way the bootstrap names it. A line already carrying the
+        // command is not given the compiler's name in front of it as well.
+        report("frost lint: which files?\n")
+        frost_rt_die()
+    }
+    mut at: i64 = 0
+    while (at < files.count) {
+        lint_one(options, arena_at(files, at).at)
+        at = at + 1
+    }
+    0
+}
+
+lint_one :: fn(mut options: Options, path: ^i8) {
+    frost_rt_recover_clear()
+    frost_rt_take_open()
+    mut turn := LintTurn {
+        options = unsafe { ptr_cast($u8, ptr_to(options)) },
+        path = path,
+    }
+    unsafe {
+        frost_rt_recover_run(lint_guarded, ptr_cast($u8, ptr_to(turn)))
+    }
+    frost_rt_take_close()
+}
+
+// Whether an argument is an option rather than a path.
+dashed :: fn(argument: ^i8) -> bool {
+    cstr_len(argument) > 0 && byte_at(argument, 0) == CH_MINUS
 }

@@ -261,6 +261,10 @@ Both compilers write the same bytes, which a test over the whole corpus holds.
 Reports what is worth a look and refuses nothing. `frost lint` exits nonzero
 when it finds any, so a project can hold a tree to none of them.
 
+A path that is a directory is every `.frost` file under it, so `frost lint .`
+reads a whole project. A file the compiler refuses is one it already has
+something to say about, so a refusal ends that file rather than the run.
+
 - an `unsafe` block that holds nothing unchecked
 - a function nothing reaches
 - an exported name outside the prefix its directory declares, where `frost.json`

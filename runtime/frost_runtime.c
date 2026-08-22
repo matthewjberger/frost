@@ -1545,8 +1545,13 @@ void frost_rt_error_int(int64_t value) {
    rather than end the process. */
 static int64_t frost_rt_serving = 0;
 
+/* A refusal comes back to the mark rather than ending the process. What a
+   server needs, and what a run over many files needs: one file being refused
+   is not the end of the run. */
+void frost_rt_refusal_returns(void) { frost_rt_serving = 1; }
+
 void frost_rt_serving_on(void) {
-    frost_rt_serving = 1;
+    frost_rt_refusal_returns();
     /* Unbuffered, so what the stream has not handed over is what the system
        still holds and `frost_rt_stdin_waiting` sees it. A message is a few
        hundred bytes, so the reads this costs are not worth counting. */

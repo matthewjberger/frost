@@ -13,7 +13,8 @@
 import "core.frost"
 import "imports.frost"
 
-export api_command, declaration_head, head_end, line_end,
+export api_command, declaration_head, head_end, line_end, frost_files_under,
+    Held,
     HEAD_LINES_MAX
 
 // One exported name as it was declared. The file's text is held rather than
@@ -123,6 +124,54 @@ read_directory :: fn(
             found,
             under_directory(path, arena_at(directories, k).at),
             prefix,
+            depth + 1
+        )
+        k = k + 1
+    }
+}
+
+// Every `.frost` file under a path, as paths. A path that is not a directory
+// is taken as the file it names, so one command reads both.
+//
+// The names of a directory are read before the walk into it. One walk at a
+// time is what the runtime holds, so reading a directory inside another would
+// take the handle the outer one is standing on.
+frost_files_under :: fn(mut found: Arena<Held>, path: ^i8, depth: i64) {
+    if (depth > WALK_DEPTH_MAX) {
+        return
+    }
+    if (unsafe { frost_rt_dir_open(path) } == 0) {
+        arena_push(found, Held { at = path })
+        return
+    }
+    mut names: Arena<Held> = arena_make($Held, 64)
+    mut directories: Arena<Held> = arena_make($Held, 32)
+    mut entry := unsafe { frost_rt_dir_next() }
+    while (cstr_len(entry) != 0) {
+        kept := join_two(entry, "")
+        if (frost_rt_dir_entry_is_dir() == 1) {
+            if (walked_into(kept)) {
+                arena_push(directories, Held { at = kept })
+            }
+        } else if (ends_with_frost(kept)) {
+            arena_push(names, Held { at = kept })
+        }
+        entry = unsafe { frost_rt_dir_next() }
+    }
+    frost_rt_dir_close()
+    mut i: i64 = 0
+    while (i < names.count) {
+        arena_push(
+            found,
+            Held { at = under_directory(path, arena_at(names, i).at) }
+        )
+        i = i + 1
+    }
+    mut k: i64 = 0
+    while (k < directories.count) {
+        frost_files_under(
+            found,
+            under_directory(path, arena_at(directories, k).at),
             depth + 1
         )
         k = k + 1

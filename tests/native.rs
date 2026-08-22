@@ -20499,6 +20499,87 @@ fn both_compilers_write_the_same_json_reports() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
+// A directory is every `.frost` file under it, for both compilers.
+//
+// One reads a directory and the other read one file, so `frost lint .` said
+// what a project holds and `frostc lint .` said it could not read a file by
+// that name. A reader linting a project uses the directory, so that was the
+// whole command diverging.
+#[test]
+fn both_compilers_lint_a_directory() {
+    let Some(compiler) = build_self_hosted_compiler("lintdir") else {
+        return;
+    };
+    let directory = std::env::temp_dir().join(unique("frost_lint_dir"));
+    std::fs::create_dir_all(directory.join("under")).unwrap();
+    std::fs::write(
+        directory.join("one.frost"),
+        "idle :: fn() -> i64 { 1 }
+         main :: fn() -> i64 { 2 }
+",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("under").join("two.frost"),
+        "spare :: fn() -> i64 { 3 }
+         start :: fn() -> i64 { 4 }
+",
+    )
+    .unwrap();
+
+    let said = |output: std::process::Output| -> Vec<String> {
+        let text = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        let mut found: Vec<String> = text
+            .lines()
+            .filter_map(|line| line.split_once("^ "))
+            .map(|(_, message)| message.trim().to_string())
+            .collect();
+        found.sort();
+        found
+    };
+
+    let mine = said(
+        Command::new(env!("CARGO_BIN_EXE_frost"))
+            .arg("lint")
+            .arg(&directory)
+            .output()
+            .unwrap(),
+    );
+    let theirs = said(
+        Command::new(&compiler)
+            .arg("lint")
+            .arg(&directory)
+            .output()
+            .unwrap(),
+    );
+    // `main` is where a program starts, so nothing has to name it. The other
+    // three do.
+    assert_eq!(
+        mine.len(),
+        3,
+        "three names go unreached across the two files: {mine:?}"
+    );
+    assert_eq!(mine, theirs, "the two compilers walk the directory differently");
+
+    // And with no path at all, in the same words. A line already carrying the
+    // command is not given the compiler's name in front of it as well.
+    let asked = |program: &std::ffi::OsStr| -> String {
+        let ran = Command::new(program).arg("lint").output().unwrap();
+        String::from_utf8_lossy(&ran.stderr).trim().to_string()
+    };
+    assert_eq!(
+        asked(env!("CARGO_BIN_EXE_frost").as_ref()),
+        "frost lint: which files?"
+    );
+    assert_eq!(
+        asked(compiler.as_os_str()),
+        "frost lint: which files?",
+        "the two compilers ask for a path in different words"
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 // Both compilers find the same things worth a look, in the same words. The
 // order follows which walk found each, which each compiler runs in its own
 // order, so the findings are compared as a set the way the fault lines are.
