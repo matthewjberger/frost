@@ -121,7 +121,7 @@ async function main() {
   want(
     "registered",
     names,
-    (found) => found.length >= 19,
+    (found) => found.length >= 21,
     (found) => found.join(" ")
   );
 
@@ -235,6 +235,35 @@ async function main() {
     count
   );
   want(
+    "range formatting",
+    await provider("rangeFormatting").provideDocumentRangeFormattingEdits(
+      document,
+      new vscode.Range(at("greeting_cost :: fn"), at("    n * 2", 9))
+    ),
+    (found) => Array.isArray(found) && found.length === 1,
+    count
+  );
+  want(
+    "on type formatting",
+    await provider("onTypeFormatting").provideOnTypeFormattingEdits(
+      document,
+      at("}", 1),
+      "}"
+    ),
+    (found) => Array.isArray(found),
+    count
+  );
+  want(
+    "watcher",
+    held.watchers,
+    (found) =>
+      found.length === 1 &&
+      found[0].created.length === 1 &&
+      found[0].changed.length === 1 &&
+      found[0].deleted.length === 1,
+    (found) => (found.length ? found[0].pattern : "none")
+  );
+  want(
     "prepareRename",
     await provider("rename").prepareRename(document, caret),
     (found) => found && found.start.line === 10,
@@ -245,6 +274,21 @@ async function main() {
     await provider("rename").provideRenameEdits(document, caret, "cost_of"),
     (found) => found && found.edits.length === 2,
     (found) => (found ? String(found.edits.length) : "none")
+  );
+  const offered = await provider("completion").provideCompletionItems(
+    document,
+    at("greeting_cost(2)", 6)
+  );
+  want(
+    "completion resolve",
+    await provider("completion").resolveCompletionItem(
+      offered.find((one) => one.label === "greeting_cost")
+    ),
+    (found) => found && found.documentation && found.documentation.value,
+    (found) =>
+      found && found.documentation
+        ? JSON.stringify(found.documentation.value.slice(0, 26))
+        : "none"
   );
   want(
     "completion",

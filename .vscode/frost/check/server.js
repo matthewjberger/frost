@@ -42,6 +42,9 @@ const CLEAN = [
   "",
 ].join("\n");
 
+// The same file with a closing brace pushed off the column it belongs on.
+const BADLY = CLEAN.replace("    n * 2\n}", "    n * 2\n  }");
+
 // One fault, and one the compiler carries a fix for.
 const FAULTY = CLEAN.replace("    p := Point", "    var p := Point");
 
@@ -479,6 +482,93 @@ async function main() {
       return steps.join(" then ");
     }
   );
+  // Laying out part of a file, and a line as it is typed.
+  await talk.told(
+    "textDocument/didChange",
+    {
+      textDocument: { uri, version: 10 },
+      contentChanges: [{ text: BADLY }],
+    },
+    uri
+  );
+  want(
+    "range formatting",
+    await talk.ask(41, "textDocument/rangeFormatting", {
+      textDocument: { uri },
+      range: {
+        start: { line: 3, character: 0 },
+        end: { line: 5, character: 3 },
+      },
+      options: { tabSize: 4, insertSpaces: true },
+    }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 1 &&
+      held[0].range.start.line === 3 &&
+      held[0].newText.includes("\n}") &&
+      held[0].newText.includes("  }") === false,
+    (held) =>
+      Array.isArray(held) && held[0]
+        ? JSON.stringify(held[0].newText.slice(-6))
+        : "none"
+  );
+  want(
+    "on type formatting",
+    await talk.ask(42, "textDocument/onTypeFormatting", {
+      textDocument: { uri },
+      position: at(BADLY, "  }", 3),
+      ch: "}",
+      options: { tabSize: 4, insertSpaces: true },
+    }),
+    (held) =>
+      Array.isArray(held) && held.length === 1 && held[0].newText === "",
+    (held) =>
+      Array.isArray(held) && held[0]
+        ? JSON.stringify(held[0].newText)
+        : JSON.stringify(held)
+  );
+  await talk.told(
+    "textDocument/didChange",
+    {
+      textDocument: { uri, version: 11 },
+      contentChanges: [{ text: CLEAN }],
+    },
+    uri
+  );
+  want(
+    "completion resolve",
+    await talk.ask(43, "completionItem/resolve", {
+      label: "greeting_cost",
+      kind: 3,
+    }),
+    (held) =>
+      held &&
+      held.label === "greeting_cost" &&
+      held.detail.includes("greeting_cost :: fn") &&
+      held.documentation.value.includes("What a greeting costs"),
+    (held) =>
+      held && held.documentation
+        ? JSON.stringify(held.documentation.value.slice(0, 30))
+        : "none"
+  );
+  talk.say({ jsonrpc: "2.0", method: "$/cancelRequest", params: { id: 44 } });
+  want(
+    "cancelled request",
+    await talk.attempt(44, "textDocument/hover", doc({ position: caret })),
+    (held) => held.error !== undefined && held.error.code === -32800,
+    (held) => (held.error ? "code " + held.error.code : "answered")
+  );
+  want(
+    "watched files",
+    await talk.told(
+      "workspace/didChangeWatchedFiles",
+      { changes: [{ uri: shared_uri, type: 2 }] },
+      uri
+    ),
+    (held) => Array.isArray(held.diagnostics),
+    (held) => held.diagnostics.length + " diagnostics"
+  );
+
   // A fault arrives.
   want(
     "diagnostics",

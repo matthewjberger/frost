@@ -35,6 +35,11 @@ DOC_ROOM :: 262144
 // buffers, since the next file opened takes the slot rather than a new arena.
 DOC_MAX :: 256
 
+// How much of a run of taken-back ids to hold. A reader moving a caret sends
+// one for each request they left behind, and the ones still waiting are the
+// last few.
+CANCEL_ROOM :: 2048
+
 // One file an editor has open, and the text it has rather than the text on
 // disk. The buffers are reused across edits: an editor sends the whole document
 // on every keystroke, and a fresh allocation for each would be a megabyte a
@@ -92,6 +97,8 @@ Server :: struct {
     head_to: i64,
     read_back: Arena<u8>,
     body: Arena<u8>,
+    // The ids the editor took back before this got to them.
+    cancelled: Arena<u8>,
     going: i64,
     ready: i64,
 }
@@ -123,6 +130,7 @@ lsp_command :: fn() -> i64 {
         head_to = 0,
         read_back = arena_make($u8, DOC_ROOM),
         body = arena_make($u8, DOC_ROOM),
+        cancelled = arena_make($u8, 4096),
         going = 1,
         ready = 0,
     }
@@ -891,6 +899,16 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
     if (method < 0) {
         return
     }
+    if (json_text_eq(document, method, "$/cancelRequest")) {
+        note_cancelled(s, document, request)
+        return
+    }
+    // A request the editor took back is answered with what the protocol says
+    // to answer, rather than with work nobody is waiting for.
+    if (was_cancelled(s, document, request)) {
+        say_cancelled(document, request)
+        return
+    }
     if (json_text_eq(document, method, "initialize")) {
         answer_initialize(s, document, request)
         return
@@ -936,6 +954,22 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
     }
     if (json_text_eq(document, method, "textDocument/formatting")) {
         answer_formatting(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/rangeFormatting")) {
+        answer_range_formatting(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/onTypeFormatting")) {
+        answer_on_type_formatting(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "completionItem/resolve")) {
+        answer_completion_resolve(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "workspace/didChangeWatchedFiles")) {
+        answer_watched_changed(s)
         return
     }
     if (json_text_eq(document, method, "textDocument/definition")) {
@@ -1048,10 +1082,13 @@ answer_initialize :: fn(mut s: Server, mut document: Json, request: i64) {
     emit_text("\"documentSymbolProvider\":true,")
     emit_text("\"workspaceSymbolProvider\":true,")
     emit_text("\"documentFormattingProvider\":true,")
+    emit_text("\"documentRangeFormattingProvider\":true,")
+    emit_text("\"documentOnTypeFormattingProvider\":")
+    emit_text("{\"firstTriggerCharacter\":\"}\"},")
     emit_text("\"foldingRangeProvider\":true,")
     emit_text("\"renameProvider\":{\"prepareProvider\":true},")
     emit_text("\"codeActionProvider\":true,")
-    emit_text("\"completionProvider\":{\"resolveProvider\":false},")
+    emit_text("\"completionProvider\":{\"resolveProvider\":true},")
     emit_text("\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]}")
     emit_text("},\"serverInfo\":{\"name\":\"frost\",\"version\":\"1\"}}}")
     say_send()
@@ -3858,4 +3895,445 @@ answer_linked_editing :: fn(mut s: Server, mut document: Json, request: i64) {
     }
     emit_text("]}}")
     say_send()
+}
+
+// ---------------------------------------------------------------------------
+// Laying out part of a file
+// ---------------------------------------------------------------------------
+
+// The declarations a range touches, each replaced by its formatted self.
+//
+// The formatter reflows, so the file it writes has its own line count and a
+// line in one is not a line in the other. What does hold across the two is the
+// sequence of declarations: the formatter writes the same ones in the same
+// order. So the nth declaration of the buffer is replaced by the nth of the
+// laid-out text, and only where the reader's range reaches it.
+answer_range_formatting :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    laid_out := lay_out(s, doc)
+    if (str_len(laid_out) == 0) {
+        say_null_result(document, request)
+        return
+    }
+    // Held apart from the arena the layout is in, so the walk over one is not
+    // a walk over storage the other is being read from.
+    bytes_reset(s.walking)
+    bytes_str(s.walking, laid_out)
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    params := json_member(document, request, "params")
+    span := json_member(document, params, "range")
+    from := json_number(
+        document,
+        json_member(document, json_member(document, span, "start"), "line")
+    )
+    to := json_number(
+        document,
+        json_member(document, json_member(document, span, "end"), "line")
+    )
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    say_declaration_edits(s, text, from, to)
+    emit_text("]}")
+    say_send()
+}
+
+// One edit for each declaration the lines between `from` and `to` reach.
+say_declaration_edits :: fn(mut s: Server, text: str, from: i64, to: i64) {
+    length := str_len(text)
+    mut written: i64 = 0
+    mut seen: i64 = 0
+    mut at: i64 = 0
+    mut commented: bool = false
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (!commented && named > 0) {
+            stops := declaration_extent(text, at, ends, length)
+            opens := place_line(text, at)
+            closes := place_line(text, stops)
+            if (opens <= to && closes >= from) {
+                if (written > 0) {
+                    emit_text(",")
+                }
+                emit_text("{\"range\":")
+                say_range(opens, 0, closes, place_character(text, stops))
+                emit_text(",\"newText\":")
+                say_nth_declaration(s, seen)
+                emit_text("}")
+                written = written + 1
+            }
+            seen = seen + 1
+            at = line_end(text, length, stops) + 1
+        } else {
+            commented = comment_runs_past(text, at, ends, commented)
+            at = ends + 1
+        }
+    }
+}
+
+// The nth declaration of the laid-out text, written as a JSON string.
+say_nth_declaration :: fn(mut s: Server, wanted: i64) {
+    text := bytes_view(s.walking)
+    length := str_len(text)
+    mut seen: i64 = 0
+    mut at: i64 = 0
+    mut commented: bool = false
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (!commented && named > 0) {
+            stops := declaration_extent(text, at, ends, length)
+            if (seen == wanted) {
+                say_string_range(text, at, stops)
+                return
+            }
+            seen = seen + 1
+            at = line_end(text, length, stops) + 1
+        } else {
+            commented = comment_runs_past(text, at, ends, commented)
+            at = ends + 1
+        }
+    }
+    say_string("")
+}
+
+// ---------------------------------------------------------------------------
+// Laying out a line as it is typed
+// ---------------------------------------------------------------------------
+
+// The indentation a line takes once the reader closes a brace on it.
+//
+// A closing brace lines up with the line that opened it. Answered while the
+// reader types rather than after, which is the one moment the answer is worth
+// anything.
+answer_on_type_formatting :: fn(
+    mut s: Server,
+    mut document: Json,
+    request: i64
+) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    length := str_len(text)
+    params := json_member(document, request, "params")
+    place := json_member(document, params, "position")
+    line := json_number(document, json_member(document, place, "line"))
+    character := json_number(
+        document,
+        json_member(document, place, "character")
+    )
+    caret := place_offset(text, line, character)
+    // The brace the reader just wrote, which the caret sits after.
+    mut closes := caret - 1
+    while (closes >= 0 && cast($i64, text[closes]) == CH_SPACE) {
+        closes = closes - 1
+    }
+    if (closes < 0 || cast($i64, text[closes]) != CH_RBRACE) {
+        say_null_result(document, request)
+        return
+    }
+    opens := brace_opens(text, closes)
+    if (opens < 0) {
+        say_null_result(document, request)
+        return
+    }
+    wanted := indent_of(text, length, opens)
+    starts := line_starts(text, closes)
+    mut inside := starts
+    while (inside < length && cast($i64, text[inside]) == CH_SPACE) {
+        inside = inside + 1
+    }
+    if (inside - starts == wanted) {
+        say_open()
+        say_result_head(document, request)
+        emit_text("[]}")
+        say_send()
+        return
+    }
+    say_open()
+    say_result_head(document, request)
+    emit_text("[{\"range\":")
+    say_range(
+        place_line(text, starts),
+        0,
+        place_line(text, inside),
+        place_character(text, inside)
+    )
+    emit_text(",\"newText\":")
+    say_spaces(wanted)
+    emit_text("}]}")
+    say_send()
+}
+
+// A JSON string of that many spaces.
+say_spaces :: fn(count: i64) {
+    emit_text("\"")
+    mut at: i64 = 0
+    while (at < count) {
+        frost_rt_emit_char(CH_SPACE)
+        at = at + 1
+    }
+    emit_text("\"")
+}
+
+// Where the line holding an offset starts.
+line_starts :: fn(text: str, at: i64) -> i64 {
+    mut walk := at
+    while (walk > 0 && cast($i64, text[walk - 1]) != CH_LF) {
+        walk = walk - 1
+    }
+    walk
+}
+
+// How many spaces the line holding an offset opens with.
+indent_of :: fn(text: str, length: i64, at: i64) -> i64 {
+    starts := line_starts(text, at)
+    mut walk := starts
+    while (walk < length && cast($i64, text[walk]) == CH_SPACE) {
+        walk = walk + 1
+    }
+    walk - starts
+}
+
+// Where the brace that this one closes was opened, or -1 where it closes
+// nothing. Comments and text are stepped over, so a brace written in either
+// counts for nothing.
+brace_opens :: fn(text: str, closes: i64) -> i64 {
+    mut opens: Arena<i64> = arena_make($i64, 64)
+    mut at: i64 = 0
+    while (at < closes) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+        } else {
+            byte := cast($i64, text[at])
+            if (byte == CH_LBRACE) {
+                arena_push(opens, at)
+            }
+            if (byte == CH_RBRACE && opens.count > 0) {
+                opens.count = opens.count - 1
+            }
+            at = at + 1
+        }
+    }
+    if (opens.count == 0) {
+        return -1
+    }
+    arena_at(opens, opens.count - 1)
+}
+
+// ---------------------------------------------------------------------------
+// Filling out one completion
+// ---------------------------------------------------------------------------
+
+// The item as it arrived, with the comment above its declaration added.
+//
+// A list of names is cheap to write and a comment block for each of them is
+// not, so the list carries the names and this fills in the one a reader has
+// moved onto.
+answer_completion_resolve :: fn(
+    mut s: Server,
+    mut document: Json,
+    request: i64
+) {
+    params := json_member(document, request, "params")
+    label := json_member(document, params, "label")
+    if (label < 0 || json_kind(document, label) != JsonKind::String) {
+        say_null_result(document, request)
+        return
+    }
+    // The walk holds each directory it opens in `s.other`, so the name has to
+    // go in after it rather than before.
+    walk_sources(s)
+    bytes_reset(s.other)
+    bytes_json(s.other, document, label)
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"label\":")
+    say_string(bytes_view(s.other))
+    kind := json_member(document, params, "kind")
+    if (kind >= 0) {
+        emit_text(",\"kind\":")
+        frost_rt_emit_int(json_number(document, kind))
+    }
+    if (find_declaration(s)) {
+        flatten_head(s)
+        emit_text(",\"detail\":")
+        say_string(bytes_view(s.reports))
+        emit_text(",\"documentation\":{\"kind\":\"markdown\",\"value\":")
+        say_comment_above(s)
+        emit_text("}")
+    }
+    emit_text("}}")
+    say_send()
+}
+
+// The comment block written above the declaration the last lookup found, as a
+// JSON string. Empty where nothing was written above it.
+say_comment_above :: fn(mut s: Server) {
+    text := text_of_path(s, bytes_view(s.found))
+    from := comment_block_above(text, s.found_off)
+    if (from >= s.found_off) {
+        say_string("")
+        return
+    }
+    emit_text("\"")
+    mut at := from
+    while (at < s.found_off) {
+        ends := line_end(text, str_len(text), at)
+        mut walk := at
+        while (walk < ends && cast($i64, text[walk]) == CH_SPACE) {
+            walk = walk + 1
+        }
+        if (walk + 1 < ends && cast($i64, text[walk]) == CH_SLASH
+            && cast($i64, text[walk + 1]) == CH_SLASH) {
+            walk = walk + 2
+            if (walk < ends && cast($i64, text[walk]) == CH_SPACE) {
+                walk = walk + 1
+            }
+        }
+        while (walk < ends) {
+            say_escaped(cast($i64, text[walk]))
+            walk = walk + 1
+        }
+        emit_text("\\n")
+        at = ends + 1
+    }
+    emit_text("\"")
+}
+
+// Where the run of comment lines directly above a declaration starts.
+comment_block_above :: fn(text: str, at: i64) -> i64 {
+    mut from := at
+    while (from > 0) {
+        above := line_starts(text, from - 1)
+        mut walk := above
+        while (walk < from && cast($i64, text[walk]) == CH_SPACE) {
+            walk = walk + 1
+        }
+        if (walk + 1 >= from || cast($i64, text[walk]) != CH_SLASH
+            || cast($i64, text[walk + 1]) != CH_SLASH) {
+            return from
+        }
+        from = above
+    }
+    from
+}
+
+// ---------------------------------------------------------------------------
+// A request the editor took back
+// ---------------------------------------------------------------------------
+
+// The id as text, whichever of the two shapes it arrived in.
+id_into :: fn(mut a: Arena<u8>, mut document: Json, id: i64) {
+    bytes_reset(a)
+    if (json_kind(document, id) == JsonKind::String) {
+        bytes_json(a, document, id)
+        return
+    }
+    bytes_int(a, json_number(document, id))
+}
+
+// An id the editor said it no longer wants an answer to.
+note_cancelled :: fn(mut s: Server, mut document: Json, request: i64) {
+    params := json_member(document, request, "params")
+    id := json_member(document, params, "id")
+    if (id < 0) {
+        return
+    }
+    id_into(s.each, document, id)
+    // Held as a run so a walk reads them one after the other. Only the ones
+    // still waiting matter, and a burst of them is what an editor sends while
+    // a reader moves the caret.
+    if (s.cancelled.count > CANCEL_ROOM) {
+        s.cancelled.count = 0
+    }
+    bytes_str(s.cancelled, bytes_view(s.each))
+    bytes_byte(s.cancelled, 0)
+}
+
+// Whether this request was taken back before it was reached, and forget it
+// either way: an id is used once.
+was_cancelled :: fn(mut s: Server, mut document: Json, request: i64) -> bool {
+    if (s.cancelled.count == 0) {
+        return false
+    }
+    id := json_member(document, request, "id")
+    if (id < 0) {
+        return false
+    }
+    id_into(s.each, document, id)
+    wanted := bytes_view(s.each)
+    held := bytes_view(s.cancelled)
+    length := str_len(held)
+    mut at: i64 = 0
+    while (at < length) {
+        ends := run_end(held, at)
+        if (same_run(held, at, ends, wanted)) {
+            return true
+        }
+        at = ends + 1
+    }
+    false
+}
+
+// Whether the run between two offsets is this text.
+same_run :: fn(held: str, from: i64, to: i64, wanted: str) -> bool {
+    if (to - from != str_len(wanted)) {
+        return false
+    }
+    mut at: i64 = 0
+    while (at < to - from) {
+        if (cast($i64, held[from + at]) != cast($i64, wanted[at])) {
+            return false
+        }
+        at = at + 1
+    }
+    true
+}
+
+// What the protocol says a request nobody is waiting for any more is answered
+// with.
+say_cancelled :: fn(mut document: Json, request: i64) {
+    say_open()
+    emit_text("{\"jsonrpc\":\"2.0\",\"id\":")
+    say_id(document, request)
+    emit_text(",\"error\":{\"code\":-32800,\"message\":")
+    say_string("the editor took this request back")
+    emit_text("}}")
+    say_send()
+}
+
+// ---------------------------------------------------------------------------
+// A file that changed outside the editor
+// ---------------------------------------------------------------------------
+
+// Everything on screen, checked again.
+//
+// A file written by a build, by a branch changing under the editor, or by
+// another window is one an open document may import, and what a check said
+// about it was true of the text that is gone.
+answer_watched_changed :: fn(mut s: Server) {
+    mut at: i64 = 0
+    while (at < s.docs.count) {
+        mut wanted: i64 = -1
+        ref held := arena_at(s.docs, at)
+        if (held.live == 1) {
+            wanted = at
+        }
+        if (wanted >= 0) {
+            publish_findings(s, wanted)
+        }
+        at = at + 1
+    }
 }

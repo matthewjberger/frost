@@ -190,6 +190,7 @@ const diagnostics = new Map();
 const shown = [];
 const workspaceFolders = [];
 const documents = [];
+const watchers = [];
 
 function keep(name) {
   return (...held) => {
@@ -255,6 +256,8 @@ module.exports = {
     registerDocumentSymbolProvider: keep("documentSymbol"),
     registerWorkspaceSymbolProvider: keep("workspaceSymbol"),
     registerDocumentFormattingEditProvider: keep("formatting"),
+    registerDocumentRangeFormattingEditProvider: keep("rangeFormatting"),
+    registerOnTypeFormattingEditProvider: keep("onTypeFormatting"),
     registerFoldingRangeProvider: keep("folding"),
     registerRenameProvider: keep("rename"),
     registerCompletionItemProvider: keep("completion"),
@@ -278,11 +281,13 @@ module.exports = {
     onDidSaveTextDocument: ignore,
     onDidCloseTextDocument: ignore,
     onDidChangeConfiguration: ignore,
-    createFileSystemWatcher() {
+    createFileSystemWatcher(pattern) {
+      const held = { pattern, created: [], changed: [], deleted: [] };
+      watchers.push(held);
       return {
-        onDidCreate() {},
-        onDidChange() {},
-        onDidDelete() {},
+        onDidCreate: (one) => held.created.push(one),
+        onDidChange: (one) => held.changed.push(one),
+        onDidDelete: (one) => held.deleted.push(one),
         dispose() {},
       };
     },
@@ -300,5 +305,5 @@ module.exports = {
       shown.push(["info", text]);
     },
   },
-  held: { registered, diagnostics, shown, workspaceFolders, documents },
+  held: { registered, diagnostics, shown, workspaceFolders, documents, watchers },
 };

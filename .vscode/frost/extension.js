@@ -497,6 +497,33 @@ const documentFormattingProvider = {
   },
 };
 
+const documentRangeFormattingProvider = {
+  async provideDocumentRangeFormattingEdits(document, range) {
+    const held = await server.request("textDocument/rangeFormatting", {
+      ...named(document),
+      range: { start: at(range.start), end: at(range.end) },
+      options: { tabSize: 4, insertSpaces: true },
+    });
+    return (held || []).map((one) =>
+      vscode.TextEdit.replace(rangeOf(one.range), one.newText)
+    );
+  },
+};
+
+const onTypeFormattingProvider = {
+  async provideOnTypeFormattingEdits(document, position, ch) {
+    const held = await server.request("textDocument/onTypeFormatting", {
+      ...named(document),
+      position: at(position),
+      ch,
+      options: { tabSize: 4, insertSpaces: true },
+    });
+    return (held || []).map((one) =>
+      vscode.TextEdit.replace(rangeOf(one.range), one.newText)
+    );
+  },
+};
+
 const foldingRangeProvider = {
   async provideFoldingRanges(document) {
     const held = await server.request(
@@ -546,6 +573,27 @@ const completionItemProvider = {
       }
       return item;
     });
+  },
+
+  // What the list left out. A comment block for every name is more than a
+  // list is worth; the one the reader has moved onto is worth it.
+  async resolveCompletionItem(item) {
+    const held = await server.request("completionItem/resolve", {
+      label: item.label,
+      kind: item.kind + 1,
+    });
+    if (!held) {
+      return item;
+    }
+    if (held.detail) {
+      item.detail = held.detail;
+    }
+    if (held.documentation && held.documentation.value) {
+      item.documentation = new vscode.MarkdownString(
+        held.documentation.value
+      );
+    }
+    return item;
   },
 };
 
@@ -702,6 +750,15 @@ function activate(context) {
       selector,
       documentFormattingProvider
     ),
+    vscode.languages.registerDocumentRangeFormattingEditProvider(
+      selector,
+      documentRangeFormattingProvider
+    ),
+    vscode.languages.registerOnTypeFormattingEditProvider(
+      selector,
+      onTypeFormattingProvider,
+      "}"
+    ),
     vscode.languages.registerFoldingRangeProvider(
       selector,
       foldingRangeProvider
@@ -752,6 +809,19 @@ function activate(context) {
       }
     })
   );
+
+  // A Frost file written by something other than this editor: a build, a
+  // branch changing underneath, another window. What a check said about a
+  // file that imports it was true of text that is gone.
+  const watcher = vscode.workspace.createFileSystemWatcher("**/*.frost");
+  const changed = (uri) =>
+    server.notify("workspace/didChangeWatchedFiles", {
+      changes: [{ uri: uri.toString(), type: 2 }],
+    });
+  watcher.onDidCreate(changed);
+  watcher.onDidChange(changed);
+  watcher.onDidDelete(changed);
+  context.subscriptions.push(watcher);
 
   for (const open of vscode.workspace.textDocuments) {
     if (watched(open)) {
