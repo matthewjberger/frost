@@ -1,0 +1,574 @@
+// One checked program, which is what a build reads and what an editor asks
+// about: everything up to the point a backend would write a word.
+//
+// Its own module because two callers want it. The driver goes on to emit; the
+// server answers questions about what it found. Read as part of the driver, the
+// only way for an editor to ask was to start a compiler.
+
+import "core.frost"
+import "cli.frost"
+import "lexer.frost"
+import "imports.frost"
+import "names.frost"
+import "const_eval.frost"
+import "types.frost"
+import "parser.frost"
+import "regions.frost"
+
+export read_and_check
+
+// Everything a build does before it emits: the imports resolved into one
+// buffer, the program parsed out of it, and every check run over it. The
+// parser it answers with holds the program it read.
+//
+// A function rather than the first half of `main`, because a server answers
+// the same question over and over and has to reach exactly what a build
+// reaches. Read as part of the driver, an editor could only ask by starting
+// a compiler of its own.
+read_and_check :: fn(options: Options) -> Parser {
+    // With no file named anywhere, the built-in demonstration program is what
+    // gets compiled, which is what makes the compiler runnable with no
+    // arguments at all.
+    input_path := options.input
+    // The whole program's text: the source of every module laid end to end,
+    // followed by room for the names the compiler makes up. It is a slice, so
+    // reading and writing it is a checked index everywhere below.
+    mut source := empty_source()
+    mut modules: Arena<Module> = arena_make($Module, 4096)
+    mut exports: Arena<Export> = arena_make($Export, 4096)
+    mut import_edges: Arena<ImportEdge> = arena_make($ImportEdge, 4096)
+    mut renames: Arena<Rename> = arena_make($Rename, 4096)
+    export_names := buffer_of(SYNTH_ROOM)
+    if (cstr_len(input_path) != 0) {
+        // One buffer holds the root file and everything it imports, so a name
+        // is an offset into a single source no matter which file wrote it.
+        buffer := buffer_of(SOURCE_ROOM + SYNTH_ROOM)
+        mut scratch: Arena<Token> = arena_make($Token, 262144)
+        // What the project declares, after anything the command line named and
+        // before the standard library, which is the order the other compiler
+        // assembles them in.
+        manifest_roots(input_path, options.roots, options.layers)
+        search_roots_from(options.roots)
+        resolve_imports(
+            buffer,
+            input_path,
+            export_names,
+            modules,
+            exports,
+            import_edges,
+            renames,
+            scratch,
+            options.roots,
+            options.layers
+        )
+        source = buffer
+    }
+    if (str_len(source) <= 1) {
+        source = "
+        strlen :: extern fn(s: ^i8) -> i64
+        frost_rt_write_i64 :: safe extern fn(value: i64)
+        frost_rt_write_char :: safe extern fn(byte: i64)
+
+        print_int_line :: fn(value: i64) {
+            frost_rt_write_i64(value)
+            frost_rt_write_char(10)
+        }
+
+        ANSWER :: 42
+
+        fib :: fn(n: i64) -> i64 {
+            if (n < 2) { return n }
+            return fib(n - 1) + fib(n - 2)
+        }
+
+        fact :: fn(n: i64) -> i64 {
+            if (n < 1) { return 1 }
+            return n * fact(n - 1)
+        }
+
+        Point :: struct { x: i64, y: i64 }
+
+        sum_point :: fn(pt: Point) -> i64 {
+            return pt.x + pt.y
+        }
+
+        bump :: fn(b: ^Point) {
+            unsafe { b^.x = b^.x + 1 }
+        }
+
+        classify :: fn(n: i64) -> i64 {
+            mut result : i64 = 0
+            match n {
+                case 0: { result = 100 }
+                case 1: { result = 200 }
+                case _: { result = 999 }
+            }
+            return result
+        }
+
+        Box :: struct($T: Type) { value: T }
+
+        Holder :: struct { item: Box<i64> }
+
+        box_make :: fn($T: Type, v: $T) -> Box<T> {
+            Box { value = v }
+        }
+
+        box_get :: fn(b: Box<$T>) -> $T {
+            unsafe { b^.value }
+        }
+
+        main :: fn() -> i64 {
+            print_int_line(fib(10))
+            print_int_line(fact(5))
+            mut sum : i64 = 0
+            mut index : i64 = 1
+            while (index <= 10) { sum = sum + index  index = index + 1 }
+            print_int_line(sum)
+            p := Point { x = 3, y = 4 }
+            print_int_line(p.x)
+            p.x = 10
+            print_int_line(sum_point(p))
+            ptr := ptr_to(p)
+            bump(ptr)
+            print_int_line(p.x)
+            unsafe {
+                print_int_line(ptr^.y)
+                print_int_line(ptr[0].x)
+                q := ptr_cast($Point, ptr)
+                print_int_line(q^.x)
+            }
+            print_int_line(sizeof(Point))
+            print_int_line(classify(0))
+            print_int_line(classify(1))
+            print_int_line(classify(7))
+            unsafe { print_int_line(strlen(\"hello\")) }
+            print_int_line(ANSWER)
+            h := Holder { item = box_make(77) }
+            print_int_line(box_get(h.item))
+            0
+        }
+    "
+    }
+    // The demo program is a literal with nowhere to write, so it needs the same
+    // copy with room past the terminator that an imported source already has.
+    if (cstr_len(input_path) == 0) {
+        source = source_with_room(source)
+    }
+
+    mut parser := Parser {
+        src = source,
+        program = -1,
+        tokens = arena_make($Token, 262144),
+        ti = 0,
+        arena = arena_make($Node, 262144),
+        fns = arena_make($Sym, 8192),
+        structs = arena_make($StructDef, 4096),
+        fields = arena_make($StructField, 8192),
+        locals = arena_make($LocalVar, 4096),
+        spill_slots = arena_make($LocalVar, 256),
+        asm_names = arena_make($AsmName, 256),
+        asm_returns = 0,
+        asm_loop_depth = 0,
+        asm_save_base = -1,
+        asm_saved = 0,
+        spill_depth = 0,
+        consts = arena_make($ConstDef, 4096),
+        const_fns = arena_make($ConstFn, 4096),
+        const_locals = arena_make($ConstLocal, 256),
+        const_depth = 0,
+        const_args = arena_make($ConstValue, 256),
+        const_items = arena_make($ConstItem, 65536),
+        const_scratch = arena_make($ConstItem, 256),
+        const_records = arena_make($ConstRecord, 1024),
+        when_lifted = arena_make($LocalVar, 256),
+        bound_sub_off = 0,
+        bound_sub_len = 0,
+        bound_sub_ty = -1,
+        bound_depth = 0,
+        const_layouts = arena_make($ConstLayout, 256),
+        const_layouts_ready = 0,
+        const_needs_layout = 0,
+        const_deferred = arena_make($i64, 256),
+        const_aggregates = arena_make($ConstDef, 1024),
+        const_steps = 0,
+        const_quiet = 0,
+        const_pending = arena_make($i64, 32),
+        held_calls = arena_make($HeldCall, 16),
+        halt_node = -1,
+        halted = 0,
+        const_failed = 0,
+        value_consts = arena_make($ConstDef, 4096),
+        instances = arena_make($Instance, 4096),
+        results = arena_make($ResultEnum, 4096),
+        const_faults = arena_make($i64, 256),
+        const_repeat = 0,
+        refused_pools = arena_make($i64, 64),
+        told_moves = arena_make($ToldMove, 256),
+        generic_fns = arena_make($GenericFn, 4096),
+        caps = arena_make($Cap, 4096),
+        providers = arena_make($Provider, 4096),
+        said_unknown = arena_make($Cap, 256),
+        checking_at = 0,
+        size_known = 1,
+        result_fn = -1,
+        deferred_unconsumed = arena_make($Cap, 256),
+        aliases = arena_make($Alias, 64),
+        frame_used = 0,
+        emit_module = -1,
+        asm_used = arena_make($AsmUse, 1),
+        field_bindings = arena_make($WalkedField, 64),
+        said_at = -1,
+        parse_locals = arena_make($LocalVar, 4096),
+        parse_local_values = arena_make($BoundValue, 4096),
+        parse_param_start = 0,
+        parse_param_end = 0,
+        pack_off = 0,
+        pack_len = 0,
+        pack_start = 0,
+        pack_count = 0,
+        gparams = arena_make($GParam, 4096),
+        loop_names = arena_make($Cap, 32),
+        loop_body_mark = -1,
+        cfn_params = arena_make($GParam, 4096),
+        params_owner_off = -1,
+        gargs = arena_make($GArg, 8192),
+        // A signature per function type in the whole import closure, and a
+        // slot per parameter of one. The wgpu binding alone declares a
+        // callback type and a constructor against it per callback, so these
+        // two count what a program reaches rather than what it writes.
+        procs = arena_make($ProcSig, 16384),
+        proc_params = arena_make($GArg, 16384),
+        argbuf = arena_make($GArg, 4096),
+        pending_rets = arena_make($PendingRet, 4096),
+        format_forwards = arena_make($BoundValue, 256),
+        format_calls = arena_make($FormatCall, 256),
+        summaries = arena_make($Summary, 4096),
+        summary_steps = arena_make($SummaryStep, 4096),
+        run_views = arena_make($Summary, 4096),
+        run_replaces = arena_make($Summary, 4096),
+        run_steps = arena_make($SummaryStep, 4096),
+        runs_fn = -1,
+        runs_params = -1,
+        runs_answers_view = 0,
+        run_locals = arena_make($LocalVar, 1024),
+        view_runs = arena_make($LocalVar, 1024),
+        stale_views = arena_make($LocalVar, 1024),
+        stale_scratch = arena_make($LocalVar, 1024),
+        run_replacements = 0,
+        run_chain_open = 0,
+        run_chain_start = 0,
+        moves_quiet = 0,
+        moves_answers = 0,
+        moves_params = -1,
+        moves_fn = -1,
+        move_faults = arena_make($LocalVar, 256),
+        move_locals = arena_make($LocalVar, 8192),
+        gbindings = arena_make($GBinding, 4096),
+        gfn_templates = arena_make($GfnTemplate, 64),
+        gfn_templates_built = 0,
+        type_param_off = 0,
+        type_param_len = 0,
+        xparam_start = 0,
+        xparam_count = 0,
+        call_xarg_start = 0,
+        call_xarg_count = 0,
+        call_pack_primary = 0,
+        pending_gt = 0,
+        type_binding = 0,
+        binding_active = 0,
+        expected_type = 0,
+        expected_alt = -1,
+        ok_ty = -1,
+        variant_fixups = arena_make($VariantFixup, 4096),
+        saw_type_param = 0,
+        tparam_is_slot = 0,
+        tparam_called = 0,
+        bound_token = -1,
+        decl_pack_off = 0,
+        decl_pack_len = 0,
+        decl_pack_fixed = 0,
+        decl_pack_format = -1,
+        unbound_pack_for = 0,
+        decl_format_off = 0,
+        decl_format_len = 0,
+        tparam_is_value = 0,
+        tparam_fallback = -1,
+        last_return_type = 0,
+        no_struct_lit = false,
+        stmt_at = 0,
+        last_type_was_generic = 0,
+        last_type_was_param = 0,
+        unsafe_spans = arena_make($UnsafeSpan, 4096),
+        unsafe_depth = 0,
+        defers = arena_make($LocalVar, 256),
+        defer_base = 0,
+        defer_count = 0,
+        block_depth = 0,
+        defer_depth = -1,
+        tparam_through = 0,
+        gparam_settled = 0,
+        gparam_settler_off = 0,
+        gparam_settler_len = 0,
+        gparam_name_off = 0,
+        gparam_name_len = 0,
+        pending_tuples = arena_make($PendingTuple, 4096),
+        pending_types = arena_make($GArg, 16384),
+        mono_depth = 0,
+        mono_on_demand = 1,
+        alias_floor = 0,
+        moved = arena_make($LocalVar, 4096),
+        move_views = arena_make($LocalVar, 1024),
+        label_id = 0,
+        asm_slots = 0,
+        type_arg_table = arena_make($InstanceSlot, 4096),
+        wanted_monos = arena_make($WantedMono, 4096),
+        wanted_table = arena_make($InstanceSlot, 4096),
+        mono_plan = arena_make($MonoPlan, 4096),
+        mono_plan_upto = -1,
+        abi_windows = 0,
+        args_unbound_map = 0,
+        loop_top = -1,
+        loop_end = -1,
+        frame_id = 0,
+        asm_ret = 0,
+        sret_slot = 0,
+        mono_rets = arena_make($MonoRet, 4096),
+        mono_nodes = arena_make($MonoNode, 4096),
+        synth_fns = arena_make($NodeRef, 64),
+        unemitted_calls = arena_make($NodeRef, 64),
+        current_ret = 0,
+        current_fn_off = 0,
+        current_fn_len = 0,
+        tainted = arena_make($LocalVar, 4096),
+        inner = arena_make($LocalVar, 4096),
+        region_off = 0,
+        region_len = 0,
+        region_returns = 0,
+        frame_storage = arena_make($LocalVar, 4096),
+        frame_outlives = arena_make($LocalVar, 4096),
+        frame_locals = arena_make($LocalVar, 4096),
+        answer_masks = arena_make($AnswerMask, 4096),
+        // One mask per parameter of every function, which is what says
+        // who holds a pointer handed to a call for as long as it lives.
+        kept_masks = arena_make($AnswerMask, 131072),
+        mask_views_copy = 0,
+        fn_names = arena_make($InstanceSlot, 4096),
+        fn_names_upto = 0,
+        fn_name_hits = arena_make($InstanceSlot, 64),
+        answer_locals = arena_make($LocalVar, 4096),
+        settle_funcs = arena_make($InstanceSlot, 4096),
+        settle_edges = arena_make($InstanceSlot, 16384),
+        settle_owner = -1,
+        settle_grew = arena_make($InstanceSlot, 4096),
+        settle_queued = arena_make($InstanceSlot, 4096),
+        frame_places = arena_make($LocalVar, 4096),
+        frame_reported = arena_make($LocalVar, 4096),
+        indirect_reported = arena_make($LocalVar, 4096),
+        indirect_calls = arena_make($IndirectCall, 256),
+        halt_at = -1,
+        walk_types = arena_make($LocalVar, 4096),
+        region_via_pointer = arena_make($LocalVar, 4096),
+        frame_ret = -1,
+        frame_answers_view = 0,
+        frame_answers_place = 0,
+        arith_site = 0,
+        mut_params = arena_make($LocalVar, 8192),
+        template_params = arena_make($LocalVar, 8192),
+        value_params = arena_make($LocalVar, 4096),
+        move_scratch = arena_make($LocalVar, 4096),
+        modules = modules,
+        exports = exports,
+        declared = arena_make($Export, 16384),
+        import_edges = import_edges,
+        renames = renames,
+        shared_exports = 0,
+        export_names = export_names,
+        result_ty = -1,
+        failure_ty = -1,
+        multi_ty = -1,
+        multi_count = 0,
+        multi_calls = arena_make($LocalVar, 1024),
+        multi_discards = arena_make($LocalVar, 1024),
+        variants = arena_make($Variant, 4096),
+        match_count = 0,
+        case_variant = -1,
+        case_bindings = -1,
+        type_args = arena_make($TypeArg, 4096),
+        pending = arena_make($LocalVar, 4096),
+        try_count = 0,
+        name_tag = 0,
+        name_value = 0,
+        name_error = 0,
+        name_ok = 0,
+        name_err = 0,
+        name_ok_value = 0,
+        name_err_error = 0,
+        synth_next = 0,
+        synth_start = 0,
+        prov_kind = 0,
+        prov_off = 0,
+        prov_len = 0,
+        type_aliases = arena_make($ConstDef, 4096),
+        flag_bits = arena_make($FlagBit, 4096),
+        type_values = arena_make($TypeValue, 4096),
+        dot_noted = 0,
+        current_fn_index = -1,
+        reading_instance = 0,
+        arrays = arena_make($ArrayDef, 4096),
+        indirects = arena_make($Indirect, 4096),
+        tests = arena_make($TestCase, 4096),
+        testing = options.testing,
+        runtime_names = compiling_the_runtime(input_path),
+        audit_unsafe = options.audit_unsafe,
+        linting = options.linting,
+        debug_lines = options.debug_lines,
+        asm_debug_names = asm_debug_names_wanted(),
+        type_cache = arena_make($TypeCacheEntry, 262144),
+        type_cache_on = 0,
+        type_check_names = 0,
+        pending_type_names = arena_make($Cap, 256),
+        name_report_at = -1,
+        bracket_depth = 0,
+        loop_depth = 0,
+    }
+    // Names the compiler synthesizes go past the source's terminator, so the
+    // first free byte is one past the text.
+    parser.synth_next = source_end(source) + 1
+    parser.synth_start = parser.synth_next
+    // The two names of each rename move into the source, so every lookup
+    // compares bytes in one buffer the way it always has.
+    place_renames(parser, export_names)
+    // The host convention by default. FROST_ABI overrides it so the other
+    // target's output can be inspected from either host.
+    parser.abi_windows = frost_rt_is_windows()
+    abi := unsafe { frost_rt_getenv("FROST_ABI") }
+    if (cstr_eq(abi, "sysv")) {
+        parser.abi_windows = 0
+    }
+    if (cstr_eq(abi, "win")) {
+        parser.abi_windows = 1
+    }
+    tokenize(source, source_end(source), parser.tokens)
+    // What `include_str` names arrives as a string literal before anything
+    // reads the tokens, so no pass after this one knows the feature exists.
+    expand_includes(parser)
+    // Whether two modules here export the same name, which decides how careful
+    // a name lookup has to be. Known from the export lines alone, so it is
+    // answered before anything is parsed.
+    check_export_collisions(parser)
+    // What a file wrote that belongs to a module it did not import, said for
+    // the whole program before any of it is parsed. One missing import usually
+    // accounts for several names, and a check that runs during the parse hands
+    // the reader whichever one it reached first.
+    check_unimported_names(parser)
+    mut program := parse_program(parser)
+    // The parser kept reading past its faults so every one of them is on
+    // stderr, and a program that faulted at all is still refused, here, once
+    // the whole file has had its say.
+    if (frost_rt_recover_failures() > 0) {
+        frost_rt_die()
+    }
+    // Everything the parse still owes, now that every signature is known: the
+    // `.Variant` an argument left unresolved. A generic's body is parsed again
+    // per instance and owes the same, so this is called from there too.
+    resolve_variant_fixups(parser)
+    // The resources a `_` would drop, once every declaration has said whether
+    // it holds one.
+    check_discarded_resources(parser)
+    // Which generics to emit is a fixpoint rather than one pass. Parsing an
+    // instance creates the calls its body makes, and one of those may name an
+    // argument tuple nothing had asked for: a sort taking a comparison calls a
+    // swap that takes only the element type. Keep going until a round finds no
+    // new tuple.
+    // The tuples of calls written before what they name was declared. Their
+    // arguments were taken down where they stand, so this needs no names in
+    // scope and runs before the instances settle.
+    settle_pending_tuples(parser)
+    mut known: i64 = -1
+    while (known != parser.type_args.count) {
+        known = parser.type_args.count
+        collect_type_args(parser)
+        record_mono_rets(parser)
+        // A list element whose type is what a call to a generic answers with
+        // was written down before that answer was worked out. Reading it here
+        // names a tuple nothing has been instantiated for, which is a round
+        // that found something new whatever the count says.
+        if (settle_pack_args(parser)) {
+            known = -1
+        }
+    }
+    // What every format call was given, now that the fixpoint has settled what
+    // each list holds. It waits for that: an element whose type is what a call
+    // to a generic answers with reads as the default until every instance has
+    // been walked.
+    // Every instance the program asks for has been parsed, so nothing below is
+    // entitled to add one: a walk over the program reading a template into it
+    // would be reading a body nobody wrote where it stands.
+    parser.mono_on_demand = 0
+    // Every function written where it was used, joined to the program now that
+    // no instance is left to parse. One of them may have been made inside a
+    // body the fixpoint above re-read.
+    program = join_synth_fns(parser, program)
+    check_recursive_structs(parser)
+    check_calls(parser)
+    check_entry_point(parser, program)
+    check_pooled_resources(parser)
+    check_regions(parser)
+    check_frame_escapes(parser)
+    check_reference_fields(parser)
+    check_borrow_exclusivity(parser)
+    // Every call that goes to a value rather than to a name, found here and
+    // said after the types. A walk over the arena, so it needs nothing the
+    // checks around it build, and it runs ahead of the two that read a whole
+    // program because it must see the nodes a reader wrote rather than the
+    // instance bodies the type walk adds to them.
+    find_indirect_calls(parser)
+    check_moves(parser)
+    // Last of the checks, because it is the one that walks functions the way
+    // the emitters do, and the passes before it read whatever local table the
+    // parse left behind. It also reads what `check_moves` settles about runs
+    // and summaries, so the two are in this order and not the other.
+    check_types(parser, program)
+    // Whatever the type walk read no function around, said now that every
+    // function it did read has answered for the calls written in it.
+    flush_indirect_calls(parser)
+    // After the types. What a format call was given is worked out from the
+    // types around it, so a value whose type came out of something else that
+    // is wrong is the second thing to say, not the first: `for held in a` over
+    // a number was reported where `held` was printed.
+    if (frost_rt_recover_failures() == 0) {
+        check_format_types(parser)
+    }
+    // After the types, because whether an index or a field read goes through a
+    // raw pointer is a question about a local's type, and check_types is where
+    // the locals are known. It writes the answer onto the node and this reads
+    // it.
+    //
+    // Run even where the walks above faulted, so a program holding a wrong type
+    // and an ungated operation is told about both rather than about the first
+    // of them. A declaration that faulted may carry fewer of those answers than
+    // it would have, so what this can miss is a second report on a declaration
+    // already being refused.
+    // What the unsafety gate finds, counted apart: an operation that belongs in
+    // an `unsafe` block says nothing about what a program does with its values,
+    // so it is not a reason to hold back what a value is left over for. Every
+    // other fault is, which is what is worked out here rather than inside the
+    // flush: the two marks are a line apart, so a check put between them is a
+    // check whose faults are counted.
+    before_gate := frost_rt_recover_failures()
+    check_unsafety(parser)
+    gated := frost_rt_recover_failures() - before_gate
+    report_bad_derefs(parser)
+    held := parser.deferred_unconsumed.count + gated
+    others := frost_rt_recover_failures() - held
+    // Last, so every check that reads what the program says has said it.
+    flush_unconsumed(parser, others)
+    // Every fault reported so far, refused here, before any backend writes a
+    // word.
+    if (frost_rt_recover_failures() > 0) {
+        frost_rt_die()
+    }
+    parser.program = program
+    parser
+}
