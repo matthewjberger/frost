@@ -65,6 +65,7 @@ Server :: struct {
     other: Arena<u8>,
     named: Arena<u8>,
     reports: Arena<u8>,
+    modules: Arena<u8>,
     read_back: Arena<u8>,
     body: Arena<u8>,
     going: i64,
@@ -85,6 +86,7 @@ lsp_command :: fn() -> i64 {
         other = arena_make($u8, 65536),
         named = arena_make($u8, 4096),
         reports = arena_make($u8, 262144),
+        modules = arena_make($u8, 65536),
         read_back = arena_make($u8, DOC_ROOM),
         body = arena_make($u8, DOC_ROOM),
         going = 1,
@@ -1123,13 +1125,24 @@ publish_findings :: fn(mut s: Server, doc: i64) {
     mut parser := new_parser(lsp_options(s, doc))
     run_check(s, doc, parser, 1)
     records := unsafe { frost_rt_report_take() }
+    hold_modules(s, parser)
+    frost_rt_take_close()
     records_as_array(s.reports, records)
     mut found := json_parse(bytes_view(s.reports))
-    // Written before the scope closes: a record names a file the way a report
-    // does, and where that file is is in the module table the check filled.
-    publish_each(s, parser, doc, found)
+    publish_each(s, doc, found)
     json_free(found)
-    frost_rt_take_close()
+    // A file with nothing wrong is told so, or what it was last told about
+    // stays under text that no longer says it.
+    ref about := arena_at(s.docs, doc)
+    if (already_published(s, bytes_view(about.path)) == false) {
+        note_published(s, bytes_view(about.path))
+        uri_of_path(s.other, bytes_view(about.path))
+        say_open()
+        emit_text("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":")
+        say_string(bytes_view(s.other))
+        emit_text(",\"diagnostics\":[]}}")
+        say_send()
+    }
     // A file that had reports last time and has none now is told so, or the
     // editor keeps underlining what is no longer there.
     mut index: i64 = 0
@@ -1146,6 +1159,68 @@ publish_findings :: fn(mut s: Server, doc: i64) {
         }
         index = index + 1
     }
+}
+
+// Whether this round has already told the editor about a file.
+already_published :: fn(mut s: Server, path: str) -> bool {
+    mut at: i64 = 0
+    while (at < s.published.count) {
+        ref held := arena_at(s.published, at)
+        if (held.live == 1 && held.path.count > 0
+            && same_path(bytes_view(held.path), path)) {
+            return true
+        }
+        at = at + 1
+    }
+    false
+}
+
+// The files the check read: the name each is reported under, then where it
+// is, each ending in a terminator.
+//
+// Copied out while the check is alive. Everything it took goes back in one
+// call, and what an answer needs after that has to sit where the call does
+// not reach.
+hold_modules :: fn(mut s: Server, mut parser: Parser) {
+    bytes_reset(s.modules)
+    mut at: i64 = 0
+    while (at < parser.modules.count) {
+        entry := arena_at(parser.modules, at)
+        bytes_cstr_in(s.modules, entry.name)
+        bytes_byte(s.modules, 0)
+        bytes_cstr_in(s.modules, entry.path)
+        bytes_byte(s.modules, 0)
+        at = at + 1
+    }
+}
+
+// Where the file a report names is on this machine, read out of what was
+// held. Answers nothing where no file was read under that name.
+held_path_of :: fn(mut s: Server, named: str) -> str {
+    text := bytes_view(s.modules)
+    length := str_len(text)
+    mut at: i64 = 0
+    while (at < length) {
+        name_ends := run_end(text, at)
+        value := name_ends + 1
+        value_ends := run_end(text, value)
+        if (same_path(source_text(text, at, name_ends - at), named)) {
+            return source_text(text, value, value_ends - value)
+        }
+        at = value_ends + 1
+    }
+    ""
+}
+
+// Where the run of bytes starting here stops, which is the terminator after
+// it.
+run_end :: fn(text: str, at: i64) -> i64 {
+    length := str_len(text)
+    mut walk := at
+    while (walk < length && cast($i64, text[walk]) != 0) {
+        walk = walk + 1
+    }
+    walk
 }
 
 // Everything the run wrote, as one array. The report machinery writes one
@@ -1238,7 +1313,7 @@ text_of_path :: fn(mut s: Server, path: str) -> str {
 // One notification per file the run had something to say about, each carrying
 // every record for that file. A record with no place belongs to the file that
 // was asked about.
-publish_each :: fn(mut s: Server, mut parser: Parser, doc: i64, mut found: Json) {
+publish_each :: fn(mut s: Server, doc: i64, mut found: Json) {
     root := json_root(found)
     count := json_count(found, root)
     mut index: i64 = 0
@@ -1246,7 +1321,7 @@ publish_each :: fn(mut s: Server, mut parser: Parser, doc: i64, mut found: Json)
         record := json_at(found, root, index)
         file := json_member(found, record, "file")
         if (first_for_file(found, root, index, file)) {
-            publish_file(s, parser, doc, found, root, file)
+            publish_file(s, doc, found, root, file)
         }
         index = index + 1
     }
@@ -1270,24 +1345,17 @@ first_for_file :: fn(mut found: Json, root: i64, index: i64, file: i64) -> bool 
 
 publish_file :: fn(
     mut s: Server,
-    mut parser: Parser,
     doc: i64,
     mut found: Json,
     root: i64,
     file: i64
 ) {
-    // A record with no place is about the file that was asked about, and its
-    // own path is what the editor knows it by.
+    // A record with no place is about the file that was asked about, and
+    // its own path is what the editor knows it by.
     bytes_reset(s.other)
     if (file >= 0 && json_kind(found, file) == JsonKind::String) {
         bytes_json(s.other, found, file)
-        // A report names a file the way it is written in a build's output,
-        // which is not where the file is. An editor knows it by where it is.
-        held := path_for_name(parser, bytes_view(s.other))
-        if (cstr_len(held) > 0) {
-            bytes_reset(s.other)
-            bytes_cstr_in(s.other, held)
-        }
+        name_as_path(s)
     } else {
         ref held := arena_at(s.docs, doc)
         bytes_str(s.other, bytes_view(held.path))
@@ -1317,18 +1385,18 @@ publish_file :: fn(
     say_send()
 }
 
-// Where the file a report names is on this machine. A report calls a file what
-// the build was told to call it; the table beside that name says where it is.
-path_for_name :: fn(mut parser: Parser, named: str) -> ^i8 {
-    mut at: i64 = 0
-    while (at < parser.modules.count) {
-        entry := arena_at(parser.modules, at)
-        if (same_path(cstr_slice(entry.name), named)) {
-            return entry.path
-        }
-        at = at + 1
+// The name a report calls a file, turned into where that file is. A report
+// names a file the way a build writes it in its output, which is not where
+// the file is; an editor knows it by where it is.
+name_as_path :: fn(mut s: Server) {
+    held := held_path_of(s, bytes_view(s.other))
+    if (str_len(held) == 0) {
+        return
     }
-    ""
+    // What was held is a buffer of its own, so emptying this one leaves
+    // what is being copied where it is.
+    bytes_reset(s.other)
+    bytes_str(s.other, held)
 }
 
 // This file is one the editor has been told about, so it can be told there is
@@ -2502,6 +2570,7 @@ answer_code_actions :: fn(mut s: Server, mut document: Json, request: i64) {
     mut parser := new_parser(lsp_options(s, doc))
     run_check(s, doc, parser, 0)
     records := unsafe { frost_rt_report_take() }
+    hold_modules(s, parser)
     frost_rt_take_close()
     records_as_array(s.reports, records)
     mut found := json_parse(bytes_view(s.reports))
@@ -2557,13 +2626,23 @@ say_one_fix :: fn(
     file := json_member(found, fix, "file")
     if (file >= 0 && json_kind(found, file) == JsonKind::String) {
         bytes_json(s.other, found, file)
+        name_as_path(s)
     } else {
         ref held := arena_at(s.docs, doc)
         bytes_str(s.other, bytes_view(held.path))
     }
     uri_of_path(s.scratch, bytes_view(s.other))
+    // What the edit does rather than what is wrong with the line. The message
+    // is already under the caret; the title is read off a menu.
+    replacement := json_member(found, fix, "replacement")
     emit_text("{\"title\":\"")
-    say_raw_string(found, json_member(found, record, "message"))
+    if (json_text_len(found, replacement) == 0) {
+        emit_text("Take this out")
+    } else {
+        emit_text("Write ")
+        say_raw_string(found, replacement)
+        emit_text(" here")
+    }
     emit_text("\",\"kind\":\"quickfix\"")
     if (json_kind(found, certain) == JsonKind::True) {
         emit_text(",\"isPreferred\":true")
@@ -2578,7 +2657,7 @@ say_one_fix :: fn(
         place_character(text, to)
     )
     emit_text(",\"newText\":")
-    say_string_of_node(found, json_member(found, fix, "replacement"))
+    say_string_of_node(found, replacement)
     emit_text("}]}}}")
 }
 
@@ -2599,8 +2678,11 @@ declaration_extent :: fn(
     length: i64
 ) -> i64 {
     head := head_end(text, length, at, ends)
-    mut walk := at
-    while (walk < head) {
+    // A head stops in front of the brace a body opens, since what a reader
+    // reads is the signature. What a declaration covers is the body with it,
+    // so the brace is looked for past the head rather than inside it.
+    mut walk := head
+    while (walk < length && cast($i64, text[walk]) != CH_LF) {
         if (cast($i64, text[walk]) == CH_LBRACE) {
             return matching_brace(text, walk) + 1
         }
