@@ -524,6 +524,100 @@ const onTypeFormattingProvider = {
   },
 };
 
+// One item of a hierarchy, as VS Code holds one. What the server wrote is
+// kept beside it, since the request that walks the hierarchy carries the item
+// back as it was given.
+function hierarchyItem(held, made) {
+  const item = new made(
+    held.kind - 1,
+    held.name,
+    held.detail || "",
+    vscode.Uri.parse(held.uri),
+    rangeOf(held.range),
+    rangeOf(held.selectionRange)
+  );
+  item.frostItem = held;
+  return item;
+}
+
+const callHierarchyProvider = {
+  async prepareCallHierarchy(document, position) {
+    const held = await server.request("textDocument/prepareCallHierarchy", {
+      ...named(document),
+      position: at(position),
+    });
+    if (!Array.isArray(held)) {
+      return undefined;
+    }
+    return held.map((one) => hierarchyItem(one, vscode.CallHierarchyItem));
+  },
+
+  async provideCallHierarchyIncomingCalls(item) {
+    const held = await server.request("callHierarchy/incomingCalls", {
+      item: item.frostItem,
+    });
+    if (!Array.isArray(held)) {
+      return [];
+    }
+    return held.map(
+      (one) =>
+        new vscode.CallHierarchyIncomingCall(
+          hierarchyItem(one.from, vscode.CallHierarchyItem),
+          one.fromRanges.map(rangeOf)
+        )
+    );
+  },
+
+  async provideCallHierarchyOutgoingCalls(item) {
+    const held = await server.request("callHierarchy/outgoingCalls", {
+      item: item.frostItem,
+    });
+    if (!Array.isArray(held)) {
+      return [];
+    }
+    return held.map(
+      (one) =>
+        new vscode.CallHierarchyOutgoingCall(
+          hierarchyItem(one.to, vscode.CallHierarchyItem),
+          one.fromRanges.map(rangeOf)
+        )
+    );
+  },
+};
+
+const typeHierarchyProvider = {
+  async prepareTypeHierarchy(document, position) {
+    const held = await server.request("textDocument/prepareTypeHierarchy", {
+      ...named(document),
+      position: at(position),
+    });
+    if (!Array.isArray(held)) {
+      return undefined;
+    }
+    return held.map((one) => hierarchyItem(one, vscode.TypeHierarchyItem));
+  },
+
+  async provideTypeHierarchySupertypes(item) {
+    const held = await server.request("typeHierarchy/supertypes", {
+      item: item.frostItem,
+    });
+    if (!Array.isArray(held)) {
+      return [];
+    }
+    return held.map((one) => hierarchyItem(one, vscode.TypeHierarchyItem));
+  },
+
+  async provideTypeHierarchySubtypes(item) {
+    const held = await server.request("typeHierarchy/subtypes", {
+      item: item.frostItem,
+    });
+    if (!Array.isArray(held)) {
+      return [];
+    }
+    return held.map((one) => hierarchyItem(one, vscode.TypeHierarchyItem));
+  },
+};
+
 const inlayHintProvider = {
   async provideInlayHints(document, range) {
     const held = await server.request("textDocument/inlayHint", {
@@ -847,6 +941,14 @@ function activate(context) {
       semanticLegend
     ),
     vscode.languages.registerInlayHintsProvider(selector, inlayHintProvider),
+    vscode.languages.registerCallHierarchyProvider(
+      selector,
+      callHierarchyProvider
+    ),
+    vscode.languages.registerTypeHierarchyProvider(
+      selector,
+      typeHierarchyProvider
+    ),
     vscode.languages.registerCodeLensProvider(selector, codeLensProvider),
     vscode.languages.registerRenameProvider(selector, renameProvider),
     vscode.languages.registerCompletionItemProvider(

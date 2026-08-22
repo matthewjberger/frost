@@ -121,7 +121,7 @@ async function main() {
   want(
     "registered",
     names,
-    (found) => found.length >= 24,
+    (found) => found.length >= 26,
     (found) => found.join(" ")
   );
 
@@ -226,6 +226,39 @@ async function main() {
     "formatting",
     await provider("formatting").provideDocumentFormattingEdits(document),
     some,
+    count
+  );
+  const rung = await provider("callHierarchy").prepareCallHierarchy(
+    document,
+    caret
+  );
+  want(
+    "prepare call hierarchy",
+    rung,
+    (found) => Array.isArray(found) && found[0].name === "greeting_cost",
+    (found) => (Array.isArray(found) && found[0] ? found[0].name : "none")
+  );
+  want(
+    "incoming calls",
+    await provider("callHierarchy").provideCallHierarchyIncomingCalls(rung[0]),
+    (found) => Array.isArray(found) && found.length === 1,
+    (found) =>
+      Array.isArray(found) ? found.map((one) => one.from.name).join(" ") : "none"
+  );
+  const typed = await provider("typeHierarchy").prepareTypeHierarchy(
+    document,
+    at("Point :: struct", 2)
+  );
+  want(
+    "prepare type hierarchy",
+    typed,
+    (found) => Array.isArray(found) && found[0].name === "Point",
+    (found) => (Array.isArray(found) && found[0] ? found[0].name : "none")
+  );
+  want(
+    "supertypes",
+    await provider("typeHierarchy").provideTypeHierarchySupertypes(typed[0]),
+    (found) => Array.isArray(found),
     count
   );
   want(

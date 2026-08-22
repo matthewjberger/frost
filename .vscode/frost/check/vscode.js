@@ -158,6 +158,32 @@ class ParameterInformation {
   }
 }
 
+class CallHierarchyItem {
+  constructor(kind, name, detail, uri, range, selectionRange) {
+    Object.assign(this, { kind, name, detail, uri, range, selectionRange });
+  }
+}
+
+class TypeHierarchyItem {
+  constructor(kind, name, detail, uri, range, selectionRange) {
+    Object.assign(this, { kind, name, detail, uri, range, selectionRange });
+  }
+}
+
+class CallHierarchyIncomingCall {
+  constructor(from, fromRanges) {
+    this.from = from;
+    this.fromRanges = fromRanges;
+  }
+}
+
+class CallHierarchyOutgoingCall {
+  constructor(to, fromRanges) {
+    this.to = to;
+    this.fromRanges = fromRanges;
+  }
+}
+
 class InlayHint {
   constructor(position, label, kind) {
     Object.assign(this, { position, label, kind });
@@ -254,6 +280,10 @@ module.exports = {
   SelectionRange,
   SemanticTokensLegend,
   InlayHint,
+  CallHierarchyItem,
+  TypeHierarchyItem,
+  CallHierarchyIncomingCall,
+  CallHierarchyOutgoingCall,
   CodeLens,
   SemanticTokens,
   DocumentLink,
@@ -291,6 +321,8 @@ module.exports = {
     registerFoldingRangeProvider: keep("folding"),
     registerDocumentSemanticTokensProvider: keep("semanticTokens"),
     registerInlayHintsProvider: keep("inlayHint"),
+    registerCallHierarchyProvider: keep("callHierarchy"),
+    registerTypeHierarchyProvider: keep("typeHierarchy"),
     registerCodeLensProvider: keep("codeLens"),
     registerRenameProvider: keep("rename"),
     registerCompletionItemProvider: keep("completion"),

@@ -86,6 +86,8 @@ fs.writeFileSync(
     "",
     "Weight :: struct { grams: i64 }",
     "",
+    "Crate :: struct { load: Weight, count: i64 }",
+    "",
     "heavier :: fn(w: Weight) -> i64 { w.grams + 1 }",
     "",
   ].join("\n"),
@@ -971,6 +973,93 @@ async function main() {
       held.length === 1 &&
       held[0].uri === shared_uri,
     many
+  );
+  const hierarchy = await talk.ask(
+    49,
+    "textDocument/prepareCallHierarchy",
+    {
+      textDocument: { uri: reader_uri },
+      position: at(READER, "    tally(1)", 5),
+    }
+  );
+  want(
+    "prepare call hierarchy",
+    hierarchy,
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 1 &&
+      held[0].name === "tally" &&
+      held[0].uri === shared_uri,
+    (held) => (Array.isArray(held) && held[0] ? held[0].name : "none")
+  );
+  want(
+    "incoming calls",
+    await talk.ask(50, "callHierarchy/incomingCalls", { item: hierarchy[0] }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 1 &&
+      held[0].from.name === "start" &&
+      held[0].fromRanges.length === 2,
+    (held) =>
+      Array.isArray(held)
+        ? held
+            .map((one) => one.from.name + ":" + one.fromRanges.length)
+            .join(" ")
+        : "none"
+  );
+  const caller = await talk.ask(51, "textDocument/prepareCallHierarchy", {
+    textDocument: { uri: reader_uri },
+    position: at(READER, "start :: fn", 2),
+  });
+  want(
+    "outgoing calls",
+    await talk.ask(52, "callHierarchy/outgoingCalls", { item: caller[0] }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 2 &&
+      held.some((one) => one.to.name === "tally") &&
+      held.some((one) => one.to.name === "heavier"),
+    (held) =>
+      Array.isArray(held) ? held.map((one) => one.to.name).join(" ") : "none"
+  );
+  const held_type = await talk.ask(53, "textDocument/prepareTypeHierarchy", {
+    textDocument: { uri: reader_uri },
+    position: at(READER, "    w := Weight", 9),
+  });
+  want(
+    "prepare type hierarchy",
+    held_type,
+    (held) =>
+      Array.isArray(held) && held.length === 1 && held[0].name === "Weight",
+    (held) => (Array.isArray(held) && held[0] ? held[0].name : "none")
+  );
+  want(
+    "subtypes",
+    await talk.ask(54, "typeHierarchy/subtypes", { item: held_type[0] }),
+    (held) => Array.isArray(held) && held.length === 0,
+    many
+  );
+  want(
+    "supertypes",
+    await talk.ask(55, "typeHierarchy/supertypes", { item: held_type[0] }),
+    (held) =>
+      Array.isArray(held) && held.length === 1 && held[0].name === "Crate",
+    (held) =>
+      Array.isArray(held) ? held.map((one) => one.name).join(" ") : "none"
+  );
+  const crate = await talk.ask(56, "textDocument/prepareTypeHierarchy", {
+    textDocument: { uri: reader_uri },
+    position: at(READER, "    w := Weight", 9),
+  });
+  want(
+    "subtypes of a holder",
+    await talk.ask(57, "typeHierarchy/subtypes", {
+      item: Object.assign({}, crate[0], { name: "Crate" }),
+    }),
+    (held) =>
+      Array.isArray(held) && held.length === 1 && held[0].name === "Weight",
+    (held) =>
+      Array.isArray(held) ? held.map((one) => one.name).join(" ") : "none"
   );
   want(
     "implementation of a function",

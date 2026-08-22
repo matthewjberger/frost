@@ -1049,6 +1049,32 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
         answer_inlay_hints(s, document, request)
         return
     }
+    if (json_text_eq(document, method,
+        "textDocument/prepareCallHierarchy")) {
+        answer_prepare_hierarchy(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "callHierarchy/incomingCalls")) {
+        answer_incoming_calls(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "callHierarchy/outgoingCalls")) {
+        answer_outgoing_calls(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method,
+        "textDocument/prepareTypeHierarchy")) {
+        answer_prepare_type_hierarchy(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "typeHierarchy/supertypes")) {
+        answer_supertypes(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "typeHierarchy/subtypes")) {
+        answer_subtypes(s, document, request)
+        return
+    }
     if (json_text_eq(document, method, "textDocument/codeLens")) {
         answer_code_lenses(s, document, request)
         return
@@ -1109,6 +1135,8 @@ answer_initialize :: fn(mut s: Server, mut document: Json, request: i64) {
     emit_text("\"renameProvider\":{\"prepareProvider\":true},")
     emit_text("\"codeActionProvider\":true,")
     emit_text("\"inlayHintProvider\":true,")
+    emit_text("\"callHierarchyProvider\":true,")
+    emit_text("\"typeHierarchyProvider\":true,")
     emit_text("\"codeLensProvider\":{\"resolveProvider\":true},")
     emit_text("\"completionProvider\":{\"resolveProvider\":true},")
     emit_text("\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]}")
@@ -3562,7 +3590,10 @@ say_workers_on :: fn(text: str, uri: str, wanted: str, already: i64) -> i64 {
         named := declaration_head(text, at, ends)
         if (!commented && named > 0) {
             head := head_end(text, length, at, ends)
-            if (head_takes(text, at + named, head, wanted)) {
+            // A function only. A type that holds a field of this one is what
+            // the hierarchy above it is for, not what works on it.
+            if (symbol_kind(text, at, named, ends) == 12 &&
+                head_takes(text, at + named, head, wanted)) {
                 if (already + written > 0) {
                     emit_text(",")
                 }
@@ -4994,4 +5025,538 @@ written_in :: fn(text: str, wanted: str) -> i64 {
         }
     }
     seen
+}
+
+// ---------------------------------------------------------------------------
+// What calls a name, and what it calls
+// ---------------------------------------------------------------------------
+
+// One item of a hierarchy: the declaration a name was written under, named,
+// with the whole declaration as its range and the name as what to select.
+say_hierarchy_item :: fn(text: str, uri: str, at: i64, named: i64) {
+    length := str_len(text)
+    ends := line_end(text, length, at)
+    stops := declaration_extent(text, at, ends, length)
+    emit_text("{\"name\":")
+    say_string_range(text, at, at + named)
+    emit_text(",\"kind\":")
+    frost_rt_emit_int(symbol_kind(text, at, named, ends))
+    emit_text(",\"uri\":")
+    say_string(uri)
+    emit_text(",\"range\":")
+    say_range(
+        place_line(text, at),
+        0,
+        place_line(text, stops),
+        place_character(text, stops)
+    )
+    emit_text(",\"selectionRange\":")
+    say_range(
+        place_line(text, at),
+        place_character(text, at),
+        place_line(text, at + named),
+        place_character(text, at + named)
+    )
+    emit_text("}")
+}
+
+// The declaration the caret is on or inside, as the one item a hierarchy
+// starts from.
+answer_prepare_hierarchy :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    walk_sources(s)
+    if (name_at_position(s, document, request, doc) < 0) {
+        say_null_result(document, request)
+        return
+    }
+    if (find_declaration(s) == false) {
+        say_null_result(document, request)
+        return
+    }
+    text := text_of_path(s, bytes_view(s.found))
+    uri_of_path(s.scratch, bytes_view(s.found))
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    say_hierarchy_item(text, bytes_view(s.scratch), s.found_off, s.found_len)
+    emit_text("]}")
+    say_send()
+}
+
+// The name a hierarchy request carries back, put in `s.other`.
+//
+// Answers false where the request names nothing, which is a request built by
+// something other than the item this server wrote.
+hierarchy_name :: fn(mut s: Server, mut document: Json, request: i64) -> bool {
+    params := json_member(document, request, "params")
+    item := json_member(document, params, "item")
+    if (item < 0) {
+        return false
+    }
+    named := json_member(document, item, "name")
+    if (named < 0 || json_kind(document, named) != JsonKind::String) {
+        return false
+    }
+    walk_sources(s)
+    bytes_reset(s.other)
+    bytes_json(s.other, document, named)
+    true
+}
+
+// Every declaration whose body writes this name, each with the places it does.
+answer_incoming_calls :: fn(mut s: Server, mut document: Json, request: i64) {
+    if (hierarchy_name(s, document, request) == false) {
+        say_null_result(document, request)
+        return
+    }
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    mut written: i64 = 0
+    count := source_count(s)
+    mut index: i64 = 0
+    while (index < count) {
+        if (source_into(s, index)) {
+            text := text_of_path(s, bytes_view(s.each))
+            uri_of_path(s.scratch, bytes_view(s.each))
+            written = written + say_callers_in(
+                text,
+                bytes_view(s.scratch),
+                bytes_view(s.other),
+                written
+            )
+        }
+        index = index + 1
+    }
+    emit_text("]}")
+    say_send()
+}
+
+// Each declaration of one file that writes a name inside its body.
+say_callers_in :: fn(text: str, uri: str, wanted: str, already: i64) -> i64 {
+    length := str_len(text)
+    width := str_len(wanted)
+    mut written: i64 = 0
+    mut at: i64 = 0
+    mut commented: bool = false
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (!commented && named > 0) {
+            stops := declaration_extent(text, at, ends, length)
+            // Past the name it declares, so a function is not a caller of
+            // itself for being written at its own head.
+            calls := writes_between(text, at + named, stops, wanted)
+            if (calls > 0) {
+                if (already + written > 0) {
+                    emit_text(",")
+                }
+                emit_text("{\"from\":")
+                say_hierarchy_item(text, uri, at, named)
+                emit_text(",\"fromRanges\":[")
+                say_ranges_between(text, at + named, stops, wanted, width)
+                emit_text("]}")
+                written = written + 1
+            }
+            at = line_end(text, length, stops) + 1
+        } else {
+            commented = comment_runs_past(text, at, ends, commented)
+            at = ends + 1
+        }
+    }
+    written
+}
+
+// How many times a name is written between two offsets.
+writes_between :: fn(text: str, from: i64, to: i64, wanted: str) -> i64 {
+    width := str_len(wanted)
+    mut seen: i64 = 0
+    mut at := from
+    while (at < to) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+        } else {
+            found := name_written_at(text, at, wanted)
+            if (found >= 0 && found < to) {
+                seen = seen + 1
+                at = found + width
+            } else {
+                at = at + 1
+            }
+        }
+    }
+    seen
+}
+
+// Each of those places, as a range.
+say_ranges_between :: fn(
+    text: str,
+    from: i64,
+    to: i64,
+    wanted: str,
+    width: i64
+) {
+    mut written: i64 = 0
+    mut at := from
+    while (at < to) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+        } else {
+            found := name_written_at(text, at, wanted)
+            if (found >= 0 && found < to) {
+                if (written > 0) {
+                    emit_text(",")
+                }
+                say_range(
+                    place_line(text, found),
+                    place_character(text, found),
+                    place_line(text, found + width),
+                    place_character(text, found + width)
+                )
+                written = written + 1
+                at = found + width
+            } else {
+                at = at + 1
+            }
+        }
+    }
+}
+
+// Every name this declaration calls, each with the places it calls it.
+answer_outgoing_calls :: fn(mut s: Server, mut document: Json, request: i64) {
+    if (hierarchy_name(s, document, request) == false) {
+        say_null_result(document, request)
+        return
+    }
+    if (find_declaration(s) == false) {
+        say_null_result(document, request)
+        return
+    }
+    // The body, copied out: the walk names each call while reading it, and
+    // naming one reads the file it is declared in.
+    text := text_of_path(s, bytes_view(s.found))
+    length := str_len(text)
+    ends := line_end(text, length, s.found_off)
+    stops := declaration_extent(text, s.found_off, ends, length)
+    bytes_reset(s.walking)
+    mut copy := s.found_off + s.found_len
+    while (copy < stops) {
+        bytes_byte(s.walking, cast($i64, text[copy]))
+        copy = copy + 1
+    }
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    say_called_by(s)
+    emit_text("]}")
+    say_send()
+}
+
+// Each distinct name called inside the body held in `s.walking`.
+say_called_by :: fn(mut s: Server) {
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < str_len(bytes_view(s.walking))) {
+        held := bytes_view(s.walking)
+        length := str_len(held)
+        past := past_non_code(held, at)
+        if (past > at) {
+            at = past
+        } else {
+            starts := name_start(held, at)
+            names := name_end(held, starts)
+            if (names > starts && starts == at && names < length &&
+                cast($i64, held[names]) == CH_LPAREN &&
+                first_call_of(held, at, starts, names)) {
+                written = written + say_one_called(s, starts, names, written)
+                at = names
+            } else {
+                at = at + 1
+            }
+        }
+    }
+}
+
+// Whether this is the first place the body calls this name, which is what
+// decides where the list of its ranges is written.
+first_call_of :: fn(held: str, upto: i64, starts: i64, names: i64) -> bool {
+    wanted := source_text(held, starts, names - starts)
+    mut at: i64 = 0
+    while (at < upto) {
+        past := past_non_code(held, at)
+        if (past > at) {
+            at = past
+        } else {
+            found := name_written_at(held, at, wanted)
+            if (found >= 0 && found + str_len(wanted) < str_len(held) &&
+                cast($i64, held[found + str_len(wanted)]) == CH_LPAREN) {
+                return false
+            }
+            at = at + 1
+        }
+    }
+    true
+}
+
+// One name the body calls, with where it is declared and every place this
+// body calls it.
+say_one_called :: fn(
+    mut s: Server,
+    starts: i64,
+    names: i64,
+    already: i64
+) -> i64 {
+    held := bytes_view(s.walking)
+    bytes_reset(s.named)
+    mut at := starts
+    while (at < names) {
+        bytes_byte(s.named, cast($i64, held[at]))
+        at = at + 1
+    }
+    bytes_reset(s.other)
+    bytes_str(s.other, bytes_view(s.named))
+    if (find_declaration(s) == false) {
+        return 0
+    }
+    text := text_of_path(s, bytes_view(s.found))
+    uri_of_path(s.scratch, bytes_view(s.found))
+    if (already > 0) {
+        emit_text(",")
+    }
+    emit_text("{\"to\":")
+    say_hierarchy_item(text, bytes_view(s.scratch), s.found_off, s.found_len)
+    emit_text(",\"fromRanges\":[")
+    body := bytes_view(s.walking)
+    say_ranges_between(
+        body,
+        0,
+        str_len(body),
+        bytes_view(s.named),
+        str_len(bytes_view(s.named))
+    )
+    emit_text("]}")
+    1
+}
+
+// ---------------------------------------------------------------------------
+// What a type holds, and what holds it
+// ---------------------------------------------------------------------------
+
+// The type the caret is on, as the one item a hierarchy starts from.
+answer_prepare_type_hierarchy :: fn(
+    mut s: Server,
+    mut document: Json,
+    request: i64
+) {
+    answer_prepare_hierarchy(s, document, request)
+}
+
+// The types that hold this one.
+//
+// Frost declares no hierarchy: a bundle is answered by the shape of what is
+// given to it rather than by a word written on a type. What is written down is
+// what holds what, so that is the hierarchy a reader is shown: above a type
+// are the types with a field of it.
+answer_supertypes :: fn(mut s: Server, mut document: Json, request: i64) {
+    if (hierarchy_name(s, document, request) == false) {
+        say_null_result(document, request)
+        return
+    }
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    mut written: i64 = 0
+    count := source_count(s)
+    mut index: i64 = 0
+    while (index < count) {
+        if (source_into(s, index)) {
+            text := text_of_path(s, bytes_view(s.each))
+            uri_of_path(s.scratch, bytes_view(s.each))
+            written = written + say_holders_of(
+                text,
+                bytes_view(s.scratch),
+                bytes_view(s.other),
+                written
+            )
+        }
+        index = index + 1
+    }
+    emit_text("]}")
+    say_send()
+}
+
+// Each type of one file with a field written as this type.
+say_holders_of :: fn(text: str, uri: str, wanted: str, already: i64) -> i64 {
+    length := str_len(text)
+    mut written: i64 = 0
+    mut at: i64 = 0
+    mut commented: bool = false
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (!commented && named > 0) {
+            stops := declaration_extent(text, at, ends, length)
+            if (head_declares_a_type(text, at, named) &&
+                field_typed(text, at + named, stops, wanted)) {
+                if (already + written > 0) {
+                    emit_text(",")
+                }
+                say_hierarchy_item(text, uri, at, named)
+                written = written + 1
+            }
+            at = line_end(text, length, stops) + 1
+        } else {
+            commented = comment_runs_past(text, at, ends, commented)
+            at = ends + 1
+        }
+    }
+    written
+}
+
+// Whether a field written between two offsets carries this type: a colon, then
+// the name, whatever view or pointer is written between them.
+field_typed :: fn(text: str, from: i64, to: i64, wanted: str) -> bool {
+    mut at := from
+    while (at < to) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+        } else {
+            if (cast($i64, text[at]) == CH_COLON && at + 1 < to &&
+                cast($i64, text[at + 1]) != CH_COLON) {
+                mut walk := at + 1
+                while (walk < to && (cast($i64, text[walk]) == CH_SPACE ||
+                    cast($i64, text[walk]) == CH_LBRACKET ||
+                    cast($i64, text[walk]) == CH_RBRACKET ||
+                    cast($i64, text[walk]) == CH_CARET)) {
+                    walk = walk + 1
+                }
+                if (name_written_at(text, walk, wanted) == walk) {
+                    return true
+                }
+            }
+            at = at + 1
+        }
+    }
+    false
+}
+
+// The types this one holds: the type of each of its fields that the workspace
+// declares.
+answer_subtypes :: fn(mut s: Server, mut document: Json, request: i64) {
+    if (hierarchy_name(s, document, request) == false) {
+        say_null_result(document, request)
+        return
+    }
+    if (find_declaration(s) == false) {
+        say_null_result(document, request)
+        return
+    }
+    text := text_of_path(s, bytes_view(s.found))
+    length := str_len(text)
+    ends := line_end(text, length, s.found_off)
+    stops := declaration_extent(text, s.found_off, ends, length)
+    bytes_reset(s.walking)
+    mut copy := s.found_off + s.found_len
+    while (copy < stops) {
+        bytes_byte(s.walking, cast($i64, text[copy]))
+        copy = copy + 1
+    }
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    say_field_types(s)
+    emit_text("]}")
+    say_send()
+}
+
+// Each field type of the body held in `s.walking`, once each.
+say_field_types :: fn(mut s: Server) {
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < str_len(bytes_view(s.walking))) {
+        held := bytes_view(s.walking)
+        length := str_len(held)
+        past := past_non_code(held, at)
+        if (past > at) {
+            at = past
+        } else {
+            if (cast($i64, held[at]) == CH_COLON && at + 1 < length &&
+                cast($i64, held[at + 1]) != CH_COLON) {
+                mut walk := at + 1
+                while (walk < length && (cast($i64, held[walk]) == CH_SPACE ||
+                    cast($i64, held[walk]) == CH_LBRACKET ||
+                    cast($i64, held[walk]) == CH_RBRACKET ||
+                    cast($i64, held[walk]) == CH_CARET)) {
+                    walk = walk + 1
+                }
+                names := name_end(held, walk)
+                if (names > walk && first_type_at(held, at, walk, names)) {
+                    written = written + say_one_field_type(s, walk, names,
+                        written)
+                }
+            }
+            at = at + 1
+        }
+    }
+}
+
+// Whether this is the first field written with this type.
+first_type_at :: fn(held: str, upto: i64, walk: i64, names: i64) -> bool {
+    wanted := source_text(held, walk, names - walk)
+    mut at: i64 = 0
+    while (at < upto) {
+        if (cast($i64, held[at]) == CH_COLON && at + 1 < str_len(held) &&
+            cast($i64, held[at + 1]) != CH_COLON) {
+            mut inner := at + 1
+            while (inner < str_len(held) &&
+                (cast($i64, held[inner]) == CH_SPACE ||
+                cast($i64, held[inner]) == CH_LBRACKET ||
+                cast($i64, held[inner]) == CH_RBRACKET ||
+                cast($i64, held[inner]) == CH_CARET)) {
+                inner = inner + 1
+            }
+            if (name_written_at(held, inner, wanted) == inner) {
+                return false
+            }
+        }
+        at = at + 1
+    }
+    true
+}
+
+// One field type, where the workspace declares it. A builtin is a type the
+// reader cannot be taken to, so it is left out.
+say_one_field_type :: fn(
+    mut s: Server,
+    walk: i64,
+    names: i64,
+    already: i64
+) -> i64 {
+    held := bytes_view(s.walking)
+    bytes_reset(s.other)
+    mut at := walk
+    while (at < names) {
+        bytes_byte(s.other, cast($i64, held[at]))
+        at = at + 1
+    }
+    if (find_declaration(s) == false) {
+        return 0
+    }
+    text := text_of_path(s, bytes_view(s.found))
+    if (head_declares_a_type(text, s.found_off, s.found_len) == false) {
+        return 0
+    }
+    uri_of_path(s.scratch, bytes_view(s.found))
+    if (already > 0) {
+        emit_text(",")
+    }
+    say_hierarchy_item(text, bytes_view(s.scratch), s.found_off, s.found_len)
+    1
 }
