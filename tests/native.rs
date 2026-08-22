@@ -20539,7 +20539,14 @@ fn both_compilers_lint_a_directory() {
     )
     .unwrap();
 
-    let said = |output: std::process::Output| -> Vec<String> {
+    let ran = |program: &std::ffi::OsStr,
+               path: &std::path::Path|
+     -> (Vec<String>, bool) {
+        let output = Command::new(program)
+            .arg("lint")
+            .arg(path)
+            .output()
+            .unwrap();
         let text = String::from_utf8_lossy(&output.stdout).to_string()
             + &String::from_utf8_lossy(&output.stderr);
         let mut found: Vec<String> = text
@@ -20548,22 +20555,18 @@ fn both_compilers_lint_a_directory() {
             .map(|(_, message)| message.trim().to_string())
             .collect();
         found.sort();
-        found
+        (found, output.status.success())
     };
 
-    let mine = said(
-        Command::new(env!("CARGO_BIN_EXE_frost"))
-            .arg("lint")
-            .arg(&directory)
-            .output()
-            .unwrap(),
-    );
-    let theirs = said(
-        Command::new(&compiler)
-            .arg("lint")
-            .arg(&directory)
-            .output()
-            .unwrap(),
+    let (mine, mine_ok) =
+        ran(env!("CARGO_BIN_EXE_frost").as_ref(), &directory);
+    let (theirs, theirs_ok) = ran(compiler.as_os_str(), &directory);
+    // A run that found something ends non-zero, so a project can hold a tree to
+    // none of them. Both say so the same way.
+    assert!(!mine_ok, "findings, so the run does not end well");
+    assert_eq!(
+        mine_ok, theirs_ok,
+        "the two compilers end a run with findings differently"
     );
     // `main` is where a program starts, so nothing has to name it. The other
     // three do.

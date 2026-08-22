@@ -994,17 +994,19 @@ same_text :: fn(src: str, length: i64, written: str) -> bool {
 LintTurn :: struct {
     options: ^u8,
     path: ^i8,
+    // How many findings this file had, read back after the mark.
+    found: i64,
 }
 
 lint_guarded :: fn(raw: ^u8) {
     unsafe {
         turn := ptr_cast($LintTurn, raw)
         held := ptr_cast($Options, turn^.options)
-        lint_file(held^, turn^.path)
+        turn^.found = lint_file(held^, turn^.path)
     }
 }
 
-lint_file :: fn(mut options: Options, path: ^i8) {
+lint_file :: fn(mut options: Options, path: ^i8) -> i64 {
     options.input = path
     mut parser := new_parser(options)
     read_and_check(parser, options)
@@ -1048,27 +1050,36 @@ lint_paths :: fn(mut options: Options) -> i64 {
     // any size fills both arenas partway through.
     named_roots := options.roots.count
     named_layers := options.layers.count
+    mut found: i64 = 0
     mut at: i64 = 0
     while (at < files.count) {
         options.roots.count = named_roots
         options.layers.count = named_layers
-        lint_one(options, arena_at(files, at).at)
+        found = found + lint_one(options, arena_at(files, at).at)
         at = at + 1
+    }
+    // A run that found something ends non-zero, so a project can hold a tree
+    // to none of them.
+    if (found > 0) {
+        return 1
     }
     0
 }
 
-lint_one :: fn(mut options: Options, path: ^i8) {
+lint_one :: fn(mut options: Options, path: ^i8) -> i64 {
     frost_rt_recover_clear()
     frost_rt_take_open()
     mut turn := LintTurn {
         options = unsafe { ptr_cast($u8, ptr_to(options)) },
         path = path,
+        found = 0,
     }
     unsafe {
         frost_rt_recover_run(lint_guarded, ptr_cast($u8, ptr_to(turn)))
     }
+    held := turn.found
     frost_rt_take_close()
+    held
 }
 
 // Whether an argument is an option rather than a path.
