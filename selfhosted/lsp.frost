@@ -938,6 +938,10 @@ answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
         answer_highlights(s, document, request)
         return
     }
+    if (json_text_eq(document, method, "textDocument/signatureHelp")) {
+        answer_signature(s, document, request)
+        return
+    }
     if (json_text_eq(document, method, "textDocument/completion")) {
         answer_completion(s, document, request)
         return
@@ -997,7 +1001,8 @@ answer_initialize :: fn(mut s: Server, mut document: Json, request: i64) {
     emit_text("\"foldingRangeProvider\":true,")
     emit_text("\"renameProvider\":{\"prepareProvider\":true},")
     emit_text("\"codeActionProvider\":true,")
-    emit_text("\"completionProvider\":{\"resolveProvider\":false}")
+    emit_text("\"completionProvider\":{\"resolveProvider\":false},")
+    emit_text("\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]}")
     emit_text("},\"serverInfo\":{\"name\":\"frost\",\"version\":\"1\"}}}")
     say_send()
 }
@@ -2938,4 +2943,231 @@ source_into :: fn(mut s: Server, index: i64) -> bool {
         k = k + 1
     }
     true
+}
+
+// ---------------------------------------------------------------------------
+// The call being written
+// ---------------------------------------------------------------------------
+
+// The head of the function whose arguments are being written, and which of
+// its parameters the caret is in.
+//
+// Read back from the caret rather than out of the parse: a call with its
+// arguments half written is a call the parser refuses, and that is exactly
+// when a reader wants to be told what goes there.
+answer_signature :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    params := json_member(document, request, "params")
+    position := json_member(document, params, "position")
+    line := json_number(document, json_member(document, position, "line"))
+    character := json_number(
+        document,
+        json_member(document, position, "character")
+    )
+    mut caret: i64 = 0
+    ref about := arena_at(s.docs, doc)
+    caret = place_offset(bytes_view(about.text), line, character)
+    opens := call_opens(bytes_view(about.text), caret)
+    if (opens < 0) {
+        say_null_result(document, request)
+        return
+    }
+    filling := argument_at(bytes_view(about.text), opens, caret)
+    // The name in front of the bracket, which is what the call names.
+    text := bytes_view(about.text)
+    ends := name_end(text, name_start(text, opens - 1))
+    starts := name_start(text, opens - 1)
+    if (ends <= starts) {
+        say_null_result(document, request)
+        return
+    }
+    walk_sources(s)
+    bytes_reset(s.other)
+    mut k := starts
+    while (k < ends) {
+        bytes_byte(s.other, cast($i64, text[k]))
+        k = k + 1
+    }
+    if (find_head(s) == false) {
+        say_null_result(document, request)
+        return
+    }
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"signatures\":[{\"label\":")
+    say_string(bytes_view(s.reports))
+    emit_text(",\"parameters\":[")
+    say_parameters(bytes_view(s.reports))
+    emit_text("]}],\"activeSignature\":0,\"activeParameter\":")
+    frost_rt_emit_int(filling)
+    emit_text("}}")
+    say_send()
+}
+
+// Where the bracket the caret is inside opens, or -1 where it is inside none.
+// Text and comments are stepped over, so a bracket written in either counts
+// for nothing.
+call_opens :: fn(text: str, caret: i64) -> i64 {
+    mut opens: Arena<i64> = arena_make($i64, 64)
+    mut at: i64 = 0
+    while (at < caret) {
+        byte := cast($i64, text[at])
+        if (byte == CH_DQUOTE) {
+            at = past_string(text, at)
+            continue
+        }
+        if (byte == CH_SLASH && at + 1 < caret
+            && cast($i64, text[at + 1]) == CH_SLASH) {
+            at = line_end(text, caret, at)
+            continue
+        }
+        if (byte == CH_LPAREN) {
+            arena_push(opens, at)
+        }
+        if (byte == CH_RPAREN && opens.count > 0) {
+            opens.count = opens.count - 1
+        }
+        at = at + 1
+    }
+    if (opens.count == 0) {
+        return -1
+    }
+    arena_at(opens, opens.count - 1)
+}
+
+// Which argument the caret is in, counting the commas written at the depth
+// the bracket opened.
+argument_at :: fn(text: str, opens: i64, caret: i64) -> i64 {
+    mut depth: i64 = 0
+    mut seen: i64 = 0
+    mut at := opens + 1
+    while (at < caret) {
+        byte := cast($i64, text[at])
+        if (byte == CH_DQUOTE) {
+            at = past_string(text, at)
+            continue
+        }
+        if (byte == CH_LPAREN || byte == CH_LBRACKET || byte == CH_LBRACE) {
+            depth = depth + 1
+        }
+        if (byte == CH_RPAREN || byte == CH_RBRACKET || byte == CH_RBRACE) {
+            depth = depth - 1
+        }
+        if (byte == CH_COMMA && depth == 0) {
+            seen = seen + 1
+        }
+        at = at + 1
+    }
+    seen
+}
+
+// The declaration head of the name held, put where the answer reads it from.
+find_head :: fn(mut s: Server) -> bool {
+    count := source_count(s)
+    mut index: i64 = 0
+    while (index < count) {
+        if (source_into(s, index)) {
+            text := text_of_path(s, bytes_view(s.each))
+            if (head_of_name(s, text)) {
+                return true
+            }
+        }
+        index = index + 1
+    }
+    false
+}
+
+head_of_name :: fn(mut s: Server, text: str) -> bool {
+    wanted := bytes_view(s.other)
+    length := str_len(text)
+    mut at: i64 = 0
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (named == str_len(wanted) && name_written_at(text, at, wanted) == at) {
+            head := head_end(text, length, at, ends)
+            bytes_reset(s.reports)
+            mut k := at
+            while (k < head) {
+                byte := cast($i64, text[k])
+                if (byte == CH_LF) {
+                    bytes_byte(s.reports, CH_SPACE)
+                } else {
+                    bytes_byte(s.reports, byte)
+                }
+                k = k + 1
+            }
+            return true
+        }
+        at = ends + 1
+    }
+    false
+}
+
+// Each parameter of a head, as the text of it, so an editor can underline the
+// one the caret is in. The list is what is between the brackets the parameters
+// are written in, split on the commas written at that depth.
+say_parameters :: fn(head: str) {
+    length := str_len(head)
+    mut opens: i64 = -1
+    mut at: i64 = 0
+    while (at < length && opens < 0) {
+        if (cast($i64, head[at]) == CH_LPAREN) {
+            opens = at
+        }
+        at = at + 1
+    }
+    if (opens < 0) {
+        return
+    }
+    mut depth: i64 = 0
+    mut from := opens + 1
+    mut written: i64 = 0
+    mut walk := opens + 1
+    while (walk < length) {
+        byte := cast($i64, head[walk])
+        if (byte == CH_LPAREN || byte == CH_LBRACKET || byte == CH_LT) {
+            depth = depth + 1
+        }
+        if (byte == CH_RBRACKET || byte == CH_GT) {
+            depth = depth - 1
+        }
+        if (byte == CH_RPAREN && depth == 0) {
+            written = written + say_one_parameter(head, from, walk, written)
+            return
+        }
+        if (byte == CH_RPAREN) {
+            depth = depth - 1
+        }
+        if (byte == CH_COMMA && depth == 0) {
+            written = written + say_one_parameter(head, from, walk, written)
+            from = walk + 1
+        }
+        walk = walk + 1
+    }
+}
+
+say_one_parameter :: fn(head: str, from: i64, to: i64, already: i64) -> i64 {
+    mut starts := from
+    while (starts < to && cast($i64, head[starts]) == CH_SPACE) {
+        starts = starts + 1
+    }
+    mut ends := to
+    while (ends > starts && cast($i64, head[ends - 1]) == CH_SPACE) {
+        ends = ends - 1
+    }
+    if (ends <= starts) {
+        return 0
+    }
+    if (already > 0) {
+        emit_text(",")
+    }
+    emit_text("{\"label\":")
+    say_string_range(head, starts, ends)
+    emit_text("}")
+    1
 }

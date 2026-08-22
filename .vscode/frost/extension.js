@@ -450,6 +450,33 @@ const completionItemProvider = {
 
 // The edits the reports carry, offered where the reports are. The compiler
 // worked each of them out; without this they were written and read by nothing.
+// The head of the call being written, and which parameter the caret is in. The
+// server reads it back from the caret rather than out of a parse, since a call
+// with its arguments half written is one the parser refuses and that is exactly
+// when a reader wants to be told what goes there.
+const signatureHelpProvider = {
+  async provideSignatureHelp(document, position) {
+    const held = await server.request("textDocument/signatureHelp", {
+      ...named(document),
+      position: at(position),
+    });
+    if (!held || !held.signatures || held.signatures.length === 0) {
+      return undefined;
+    }
+    const answer = new vscode.SignatureHelp();
+    answer.signatures = held.signatures.map((one) => {
+      const signature = new vscode.SignatureInformation(one.label);
+      signature.parameters = (one.parameters || []).map(
+        (each) => new vscode.ParameterInformation(each.label)
+      );
+      return signature;
+    });
+    answer.activeSignature = held.activeSignature || 0;
+    answer.activeParameter = held.activeParameter || 0;
+    return answer;
+  },
+};
+
 const codeActionProvider = {
   async provideCodeActions(document, range, context) {
     const held = await server.request("textDocument/codeAction", {
@@ -561,6 +588,12 @@ function activate(context) {
     vscode.languages.registerCompletionItemProvider(
       selector,
       completionItemProvider
+    ),
+    vscode.languages.registerSignatureHelpProvider(
+      selector,
+      signatureHelpProvider,
+      "(",
+      ","
     ),
     vscode.languages.registerCodeActionsProvider(selector, codeActionProvider, {
       providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
