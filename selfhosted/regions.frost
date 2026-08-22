@@ -6405,7 +6405,7 @@ places_overlap :: fn(mut p: Parser, a: i64, b: i64) -> bool {
 // otherwise, since a scalar read is a copy and a raw pointer is a value.
 arg_borrows :: fn(mut p: Parser, args: i64, params: i64, index: i64) -> i64 {
     arg := nth_value_arg(p, args, index)
-    if (is_place_expr(p, arg) == false) {
+    if (is_place_expr(p, arg) == false || names_call_answer(p, arg)) {
         return -1
     }
     param := nth_param_node(p, params, index)
@@ -6417,6 +6417,30 @@ arg_borrows :: fn(mut p: Parser, args: i64, params: i64, index: i64) -> i64 {
         return -1
     }
     arg
+}
+
+// Whether a name is one the compiler made to hold what a call answered with.
+//
+// An aggregate has to be passed by its address, so an argument written as a
+// call is bound to a name of its own first and the name is what the address is
+// taken of. The reader never wrote that name and nothing else can reach the
+// storage it stands for, so no other argument of the same call is the same
+// place. Weighed like a name a reader wrote, it read as aliasing whatever it
+// was passed beside, and a raw dereference beside it refused the call.
+names_call_answer :: fn(mut p: Parser, id: i64) -> bool {
+    node := arena_at(p.arena, id)
+    if (node.kind != NodeKind::Var || node.c < 5) {
+        return false
+    }
+    made := "__arg"
+    mut k: i64 = 0
+    while (k < 5) {
+        if (p.src[node.val + k] != made[k]) {
+            return false
+        }
+        k = k + 1
+    }
+    true
 }
 
 check_call_exclusivity :: fn(

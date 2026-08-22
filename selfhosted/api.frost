@@ -13,7 +13,8 @@
 import "core.frost"
 import "imports.frost"
 
-export api_command
+export api_command, declaration_head, head_end, line_end,
+    HEAD_LINES_MAX
 
 // One exported name as it was declared. The file's text is held rather than
 // copied out of, since the answers are sorted across every file before any of

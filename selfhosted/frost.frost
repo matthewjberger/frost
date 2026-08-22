@@ -45,6 +45,7 @@ import "assemble.frost"
 import "coff.frost"
 import "elf.frost"
 import "build.frost"
+import "lsp.frost"
 
 // One assembler run waiting to happen: the command line, and what it answered,
 // read after the thread running it is joined.
@@ -714,6 +715,13 @@ main :: fn() -> i64 {
     // every source under the directory the command was run in.
     if (frost_rt_arg_count() > 1 && cstr_eq(frost_rt_arg_at(1), "api")) {
         return api_command()
+    }
+
+    // The same for `lsp`, which names nothing at all: an editor starts it once
+    // and asks it about a file over and over, and every question and answer
+    // travels on the streams rather than on the command line.
+    if (frost_rt_arg_count() > 1 && cstr_eq(frost_rt_arg_at(1), "lsp")) {
+        return lsp_command()
     }
     // The same for `generate`, which names no file at all: what it writes comes
     // out of the project's manifest rather than off the command line.

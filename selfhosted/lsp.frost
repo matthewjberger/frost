@@ -17,6 +17,7 @@
 import "core.frost"
 import "json.frost"
 import "cli.frost"
+import "api.frost"
 import "imports.frost"
 import "names.frost"
 import "build.frost"
@@ -46,12 +47,25 @@ Doc :: struct {
     live: i64,
 }
 
+// A file the last round of findings was published for. An editor keeps what it
+// was last told about a file until it is told something else, so a file whose
+// last report is gone has to be told there are none rather than left as it was.
+Published :: struct {
+    path: Arena<u8>,
+    live: i64,
+}
+
 // What the server knows between one question and the next. Threaded rather than
 // held in a global, which the language does not have.
 Server :: struct {
     docs: Arena<Doc>,
+    published: Arena<Published>,
     root: Arena<u8>,
     scratch: Arena<u8>,
+    other: Arena<u8>,
+    named: Arena<u8>,
+    reports: Arena<u8>,
+    read_back: Arena<u8>,
     body: Arena<u8>,
     going: i64,
     ready: i64,
@@ -65,8 +79,13 @@ lsp_command :: fn() -> i64 {
     frost_rt_json_reports()
     mut server := Server {
         docs = arena_make($Doc, DOC_MAX),
+        published = arena_make($Published, 256),
         root = arena_make($u8, 4096),
         scratch = arena_make($u8, 65536),
+        other = arena_make($u8, 65536),
+        named = arena_make($u8, 4096),
+        reports = arena_make($u8, 262144),
+        read_back = arena_make($u8, DOC_ROOM),
         body = arena_make($u8, DOC_ROOM),
         going = 1,
         ready = 0,
@@ -144,8 +163,9 @@ bytes_same :: fn(mut a: Arena<u8>, text: str) -> bool {
     if (a.count != str_len(text)) {
         return false
     }
+    held := bytes_view(a)
     for index, byte in text {
-        if (cast($i64, arena_at(a, index)) != cast($i64, byte)) {
+        if (cast($i64, held[index]) != cast($i64, byte)) {
             return false
         }
     }
@@ -162,7 +182,7 @@ read_body :: fn(mut body: Arena<u8>) -> bool {
     mut length: i64 = -1
     mut reading: bool = true
     while (reading) {
-        line := frost_rt_stdin_line()
+        line := unsafe { frost_rt_stdin_line() }
         if (frost_rt_stdin_ended() == 1) {
             return false
         }
@@ -178,7 +198,7 @@ read_body :: fn(mut body: Arena<u8>) -> bool {
     if (length < 0) {
         return false
     }
-    raw := frost_rt_stdin_bytes(length)
+    raw := unsafe { frost_rt_stdin_bytes(length) }
     if (frost_rt_stdin_ended() == 1) {
         return false
     }
@@ -239,13 +259,13 @@ say_open :: fn() {
 }
 
 say_send :: fn() {
-    length := frost_rt_emit_memory_length()
-    at := frost_rt_emit_memory_at()
-    frost_rt_emit_memory_done()
+    held := emit_memory_text()
     emit_text("Content-Length: ")
-    frost_rt_emit_int(length)
+    frost_rt_emit_int(str_len(held))
     emit_text("\r\n\r\n")
-    unsafe { frost_rt_emit_bytes(at, length) }
+    emit_text(held)
+    // A build lets the close write what it emitted; a server writes an answer
+    // and then waits to be read, so what it wrote has to have left first.
     frost_rt_emit_flush()
 }
 
@@ -361,4 +381,2230 @@ say_range :: fn(
     emit_text(",\"end\":")
     say_position(to_line, to_character)
     emit_text("}")
+}
+
+// ---------------------------------------------------------------------------
+// Text
+// ---------------------------------------------------------------------------
+
+// How many bytes the character starting with this one takes. A byte that is
+// neither a lead nor an ASCII one is a stray continuation, and stepping over it
+// one at a time is what keeps a walk moving through text that is not valid.
+utf8_width :: fn(byte: i64) -> i64 {
+    if (byte < 192) {
+        return 1
+    }
+    if (byte < 224) {
+        return 2
+    }
+    if (byte < 240) {
+        return 3
+    }
+    4
+}
+
+// How many units the protocol counts this character as. It measures positions
+// in UTF-16, where everything below the first supplementary plane is one unit
+// and everything above it is a pair.
+utf16_units :: fn(byte: i64) -> i64 {
+    if (byte < 240) {
+        return 1
+    }
+    2
+}
+
+// The byte a protocol position names, counting lines from zero and characters
+// in UTF-16 units.
+place_offset :: fn(text: str, line: i64, character: i64) -> i64 {
+    length := str_len(text)
+    mut at: i64 = 0
+    mut seen: i64 = 0
+    while (seen < line && at < length) {
+        if (cast($i64, text[at]) == CH_LF) {
+            seen = seen + 1
+        }
+        at = at + 1
+    }
+    mut units: i64 = 0
+    while (units < character && at < length) {
+        byte := cast($i64, text[at])
+        if (byte == CH_LF) {
+            return at
+        }
+        units = units + utf16_units(byte)
+        at = at + utf8_width(byte)
+    }
+    at
+}
+
+// The line a byte is on, counted from zero.
+place_line :: fn(text: str, offset: i64) -> i64 {
+    length := str_len(text)
+    mut at: i64 = 0
+    mut line: i64 = 0
+    while (at < offset && at < length) {
+        if (cast($i64, text[at]) == CH_LF) {
+            line = line + 1
+        }
+        at = at + 1
+    }
+    line
+}
+
+// The character a byte is at, in the units the protocol counts.
+place_character :: fn(text: str, offset: i64) -> i64 {
+    length := str_len(text)
+    mut start: i64 = 0
+    mut at: i64 = 0
+    while (at < offset && at < length) {
+        if (cast($i64, text[at]) == CH_LF) {
+            start = at + 1
+        }
+        at = at + 1
+    }
+    mut units: i64 = 0
+    mut walk := start
+    while (walk < offset && walk < length) {
+        byte := cast($i64, text[walk])
+        units = units + utf16_units(byte)
+        walk = walk + utf8_width(byte)
+    }
+    units
+}
+
+// Whether a byte may be part of a name.
+name_byte :: fn(byte: i64) -> bool {
+    (byte >= CH_LOWER_A && byte <= CH_LOWER_Z) ||
+        (byte >= CH_UPPER_A && byte <= CH_UPPER_Z) ||
+        (byte >= 48 && byte <= 57) ||
+        byte == CH_UNDERSCORE
+}
+
+// Where the name under a byte starts. A byte that is not part of one starts
+// nothing, and the offset comes back unchanged.
+name_start :: fn(text: str, offset: i64) -> i64 {
+    mut at := offset
+    if (at >= str_len(text)) {
+        return offset
+    }
+    while (at > 0 && name_byte(cast($i64, text[at - 1]))) {
+        at = at - 1
+    }
+    at
+}
+
+// Where the name under a byte ends.
+name_end :: fn(text: str, offset: i64) -> i64 {
+    length := str_len(text)
+    mut at := offset
+    while (at < length && name_byte(cast($i64, text[at]))) {
+        at = at + 1
+    }
+    at
+}
+
+// ---------------------------------------------------------------------------
+// Names for files
+// ---------------------------------------------------------------------------
+
+hex_value :: fn(byte: i64) -> i64 {
+    if (byte >= 48 && byte <= 57) {
+        return byte - 48
+    }
+    if (byte >= 97 && byte <= 102) {
+        return byte - 87
+    }
+    if (byte >= 65 && byte <= 70) {
+        return byte - 55
+    }
+    -1
+}
+
+// Whether a byte stands for itself in a URI. Everything else is written as the
+// per cent sign and two digits, which is what an editor sends and what it
+// compares against when a diagnostic comes back.
+uri_plain :: fn(byte: i64) -> bool {
+    (byte >= CH_LOWER_A && byte <= CH_LOWER_Z) ||
+        (byte >= CH_UPPER_A && byte <= CH_UPPER_Z) ||
+        (byte >= 48 && byte <= 57) ||
+        byte == CH_MINUS || byte == CH_DOT ||
+        byte == CH_UNDERSCORE || byte == 126 ||
+        byte == CH_SLASH
+}
+
+// The file a URI names, written out as a path. `file:///c%3A/x/y.frost` names
+// `c:/x/y.frost`: the slash before a drive letter belongs to the URI rather
+// than to the path.
+path_of_uri :: fn(mut out: Arena<u8>, text: str) {
+    bytes_reset(out)
+    length := str_len(text)
+    mut at: i64 = 0
+    if (length >= 7 && text_is(text, 0, "file://")) {
+        at = 7
+    }
+    if (drive_follows(text, at)) {
+        at = at + 1
+    }
+    while (at < length) {
+        byte := cast($i64, text[at])
+        if (byte == 37 && at + 2 < length) {
+            high := hex_value(cast($i64, text[at + 1]))
+            low := hex_value(cast($i64, text[at + 2]))
+            if (high >= 0 && low >= 0) {
+                bytes_byte(out, high * 16 + low)
+                at = at + 3
+                continue
+            }
+        }
+        bytes_byte(out, byte)
+        at = at + 1
+    }
+}
+
+// Whether a slash here is the one a drive letter is written behind.
+drive_follows :: fn(text: str, at: i64) -> bool {
+    length := str_len(text)
+    if (at >= length || cast($i64, text[at]) != CH_SLASH) {
+        return false
+    }
+    if (at + 2 >= length) {
+        return false
+    }
+    letter := cast($i64, text[at + 1])
+    upper := (letter >= CH_UPPER_A && letter <= CH_UPPER_Z)
+    lower := (letter >= CH_LOWER_A && letter <= CH_LOWER_Z)
+    if (upper == false && lower == false) {
+        return false
+    }
+    after := cast($i64, text[at + 2])
+    if (after == CH_COLON) {
+        return true
+    }
+    (after == 37 && at + 4 < length
+        && hex_value(cast($i64, text[at + 3])) == 3
+        && hex_value(cast($i64, text[at + 4])) == 10)
+}
+
+// The URI for a path, written the way an editor writes one, so a diagnostic
+// published for a file lands on the buffer the editor already has open.
+uri_of_path :: fn(mut out: Arena<u8>, path: str) {
+    bytes_reset(out)
+    bytes_str(out, "file://")
+    length := str_len(path)
+    if (length > 0 && cast($i64, path[0]) != CH_SLASH) {
+        bytes_byte(out, CH_SLASH)
+    }
+    mut at: i64 = 0
+    while (at < length) {
+        mut byte := cast($i64, path[at])
+        if (byte == CH_BACKSLASH) {
+            byte = CH_SLASH
+        }
+        if (uri_plain(byte)) {
+            bytes_byte(out, byte)
+        } else {
+            bytes_byte(out, 37)
+            bytes_byte(out, hex_upper(byte / 16))
+            bytes_byte(out, hex_upper(byte % 16))
+        }
+        at = at + 1
+    }
+}
+
+hex_upper :: fn(value: i64) -> i64 {
+    if (value < 10) {
+        return 48 + value
+    }
+    55 + value
+}
+
+// Whether the text at an offset is this word.
+text_is :: fn(text: str, at: i64, word: str) -> bool {
+    wanted := str_len(word)
+    if (at + wanted > str_len(text)) {
+        return false
+    }
+    mut k: i64 = 0
+    while (k < wanted) {
+        if (cast($i64, text[at + k]) != cast($i64, word[k])) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// Whether two paths name the same file. A separator is either slash and, on the
+// host where the system says so, a letter is either case.
+same_path :: fn(one: str, other: str) -> bool {
+    if (str_len(one) != str_len(other)) {
+        return false
+    }
+    folding := frost_rt_is_windows() == 1
+    mut at: i64 = 0
+    while (at < str_len(one)) {
+        mut left := cast($i64, one[at])
+        mut right := cast($i64, other[at])
+        if (left == CH_BACKSLASH) {
+            left = CH_SLASH
+        }
+        if (right == CH_BACKSLASH) {
+            right = CH_SLASH
+        }
+        if (folding) {
+            if (left >= CH_UPPER_A && left <= CH_UPPER_Z) {
+                left = left + 32
+            }
+            if (right >= CH_UPPER_A && right <= CH_UPPER_Z) {
+                right = right + 32
+            }
+        }
+        if (left != right) {
+            return false
+        }
+        at = at + 1
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+// The document a URI names, or -1. A closed one keeps its buffers, so a match
+// only counts while it is open.
+doc_of_uri :: fn(mut s: Server, wanted: str) -> i64 {
+    mut at: i64 = 0
+    while (at < s.docs.count) {
+        ref held := arena_at(s.docs, at)
+        if (held.live == 1 && same_path(bytes_view(held.uri), wanted)) {
+            return at
+        }
+        at = at + 1
+    }
+    -1
+}
+
+// A slot for this URI: the one it already has, a closed one to take over, or a
+// new one.
+doc_take :: fn(mut s: Server, wanted: str) -> i64 {
+    held := doc_of_uri(s, wanted)
+    if (held >= 0) {
+        return held
+    }
+    mut at: i64 = 0
+    while (at < s.docs.count) {
+        ref slot := arena_at(s.docs, at)
+        if (slot.live == 0) {
+            slot.live = 1
+            slot.version = 0
+            bytes_reset(slot.uri)
+            bytes_str(slot.uri, wanted)
+            path_of_uri(slot.path, wanted)
+            bytes_reset(slot.text)
+            return at
+        }
+        at = at + 1
+    }
+    if (s.docs.count >= DOC_MAX) {
+        return -1
+    }
+    made := arena_push(
+        s.docs,
+        Doc {
+            uri = arena_make($u8, 1024),
+            path = arena_make($u8, 1024),
+            text = arena_make($u8, DOC_ROOM),
+            version = 0,
+            live = 1,
+        }
+    )
+    ref slot := arena_at(s.docs, made)
+    bytes_reset(slot.uri)
+    bytes_str(slot.uri, wanted)
+    path_of_uri(slot.path, wanted)
+    bytes_reset(slot.text)
+    made
+}
+
+// The document a request is about, or -1 where it names none.
+doc_of_request :: fn(mut s: Server, mut document: Json, request: i64) -> i64 {
+    params := json_member(document, request, "params")
+    named := json_member(document, params, "textDocument")
+    uri := json_member(document, named, "uri")
+    if (uri < 0) {
+        return -1
+    }
+    bytes_reset(s.scratch)
+    bytes_json(s.scratch, document, uri)
+    doc_of_uri(s, bytes_view(s.scratch))
+}
+
+// A string node's text, with the escapes the format writes read back into the
+// bytes they stand for.
+bytes_json :: fn(mut a: Arena<u8>, mut document: Json, node: i64) {
+    source := document.source
+    off := json_text_off(document, node)
+    len := json_text_len(document, node)
+    mut at: i64 = 0
+    while (at < len) {
+        byte := cast($i64, source[off + at])
+        if (byte != CH_BACKSLASH || at + 1 >= len) {
+            bytes_byte(a, byte)
+            at = at + 1
+            continue
+        }
+        next := cast($i64, source[off + at + 1])
+        at = at + 2
+        if (next == CH_LOWER_N) {
+            bytes_byte(a, CH_LF)
+            continue
+        }
+        if (next == 114) {
+            bytes_byte(a, CH_CR)
+            continue
+        }
+        if (next == CH_LOWER_T) {
+            bytes_byte(a, CH_TAB)
+            continue
+        }
+        if (next == CH_LOWER_B) {
+            bytes_byte(a, 8)
+            continue
+        }
+        if (next == CH_LOWER_F) {
+            bytes_byte(a, 12)
+            continue
+        }
+        if (next == 117 && at + 4 <= len) {
+            mut point := hex_four(source, off + at)
+            at = at + 4
+            // A character above the first plane arrives as the two halves of a
+            // surrogate pair, which are one character rather than two.
+            if (point >= 55296 && point <= 56319 && at + 6 <= len
+                && cast($i64, source[off + at]) == CH_BACKSLASH
+                && cast($i64, source[off + at + 1]) == 117) {
+                low := hex_four(source, off + at + 2)
+                if (low >= 56320 && low <= 57343) {
+                    point = 65536 + (point - 55296) * 1024 + (low - 56320)
+                    at = at + 6
+                }
+            }
+            bytes_utf8(a, point)
+            continue
+        }
+        bytes_byte(a, next)
+    }
+}
+
+hex_four :: fn(text: str, at: i64) -> i64 {
+    mut value: i64 = 0
+    mut k: i64 = 0
+    while (k < 4) {
+        digit := hex_value(cast($i64, text[at + k]))
+        if (digit < 0) {
+            return 0
+        }
+        value = value * 16 + digit
+        k = k + 1
+    }
+    value
+}
+
+// A character written as the bytes that stand for it.
+bytes_utf8 :: fn(mut a: Arena<u8>, point: i64) {
+    if (point < 128) {
+        bytes_byte(a, point)
+        return
+    }
+    if (point < 2048) {
+        bytes_byte(a, 192 + point / 64)
+        bytes_byte(a, 128 + point % 64)
+        return
+    }
+    if (point < 65536) {
+        bytes_byte(a, 224 + point / 4096)
+        bytes_byte(a, 128 + (point / 64) % 64)
+        bytes_byte(a, 128 + point % 64)
+        return
+    }
+    bytes_byte(a, 240 + point / 262144)
+    bytes_byte(a, 128 + (point / 4096) % 64)
+    bytes_byte(a, 128 + (point / 64) % 64)
+    bytes_byte(a, 128 + point % 64)
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch
+// ---------------------------------------------------------------------------
+
+answer_one :: fn(mut s: Server) {
+    mut document := json_parse(bytes_view(s.body))
+    request := json_root(document)
+    if (request >= 0) {
+        answer_request(s, document, request)
+    }
+    json_free(document)
+}
+
+answer_request :: fn(mut s: Server, mut document: Json, request: i64) {
+    method := json_member(document, request, "method")
+    if (method < 0) {
+        return
+    }
+    if (json_text_eq(document, method, "initialize")) {
+        answer_initialize(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "initialized")) {
+        s.ready = 1
+        return
+    }
+    if (json_text_eq(document, method, "shutdown")) {
+        say_open()
+        say_result_head(document, request)
+        emit_text("null}")
+        say_send()
+        return
+    }
+    if (json_text_eq(document, method, "exit")) {
+        s.going = 0
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/didOpen")) {
+        answer_opened(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/didChange")) {
+        answer_changed(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/didSave")) {
+        doc := doc_of_request(s, document, request)
+        if (doc >= 0) {
+            publish_findings(s, doc)
+        }
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/didClose")) {
+        doc := doc_of_request(s, document, request)
+        if (doc >= 0) {
+            ref held := arena_at(s.docs, doc)
+            held.live = 0
+        }
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/formatting")) {
+        answer_formatting(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/definition")) {
+        answer_definition(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/hover")) {
+        answer_hover(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/documentSymbol")) {
+        answer_document_symbols(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/references")) {
+        answer_references(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/documentHighlight")) {
+        answer_highlights(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/completion")) {
+        answer_completion(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/rename")) {
+        answer_rename(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/prepareRename")) {
+        answer_prepare_rename(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/foldingRange")) {
+        answer_folding(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "textDocument/codeAction")) {
+        answer_code_actions(s, document, request)
+        return
+    }
+    if (json_text_eq(document, method, "workspace/symbol")) {
+        answer_workspace_symbols(s, document, request)
+        return
+    }
+    // A request the server does not serve still gets an answer, since whoever
+    // asked is waiting for one. A notification, which has no id, gets nothing.
+    if (json_member(document, request, "id") >= 0) {
+        say_open()
+        say_result_head(document, request)
+        emit_text("null}")
+        say_send()
+    }
+}
+
+answer_initialize :: fn(mut s: Server, mut document: Json, request: i64) {
+    params := json_member(document, request, "params")
+    root := json_member(document, params, "rootUri")
+    if (root >= 0 && json_kind(document, root) == JsonKind::String) {
+        bytes_reset(s.scratch)
+        bytes_json(s.scratch, document, root)
+        path_of_uri(s.root, bytes_view(s.scratch))
+    }
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"capabilities\":{")
+    // The whole document arrives on every change. A Frost source is read end to
+    // end by every pass anyway, so keeping a copy up to date by ranges would
+    // save nothing the check does not spend.
+    emit_text("\"textDocumentSync\":{\"openClose\":true,\"change\":1,\"save\":true},")
+    emit_text("\"hoverProvider\":true,")
+    emit_text("\"definitionProvider\":true,")
+    emit_text("\"referencesProvider\":true,")
+    emit_text("\"documentHighlightProvider\":true,")
+    emit_text("\"documentSymbolProvider\":true,")
+    emit_text("\"workspaceSymbolProvider\":true,")
+    emit_text("\"documentFormattingProvider\":true,")
+    emit_text("\"foldingRangeProvider\":true,")
+    emit_text("\"renameProvider\":{\"prepareProvider\":true},")
+    emit_text("\"codeActionProvider\":true,")
+    emit_text("\"completionProvider\":{\"resolveProvider\":false}")
+    emit_text("},\"serverInfo\":{\"name\":\"frost\",\"version\":\"1\"}}}")
+    say_send()
+}
+
+answer_opened :: fn(mut s: Server, mut document: Json, request: i64) {
+    params := json_member(document, request, "params")
+    named := json_member(document, params, "textDocument")
+    uri := json_member(document, named, "uri")
+    if (uri < 0) {
+        return
+    }
+    bytes_reset(s.scratch)
+    bytes_json(s.scratch, document, uri)
+    doc := doc_take(s, bytes_view(s.scratch))
+    if (doc < 0) {
+        return
+    }
+    text := json_member(document, named, "text")
+    version := json_member(document, named, "version")
+    ref held := arena_at(s.docs, doc)
+    bytes_reset(held.text)
+    bytes_json(held.text, document, text)
+    held.version = json_number(document, version)
+    publish_findings(s, doc)
+}
+
+answer_changed :: fn(mut s: Server, mut document: Json, request: i64) {
+    params := json_member(document, request, "params")
+    named := json_member(document, params, "textDocument")
+    uri := json_member(document, named, "uri")
+    if (uri < 0) {
+        return
+    }
+    bytes_reset(s.scratch)
+    bytes_json(s.scratch, document, uri)
+    doc := doc_take(s, bytes_view(s.scratch))
+    if (doc < 0) {
+        return
+    }
+    changes := json_member(document, params, "contentChanges")
+    last := json_count(document, changes) - 1
+    if (last < 0) {
+        return
+    }
+    change := json_at(document, changes, last)
+    text := json_member(document, change, "text")
+    version := json_member(document, named, "version")
+    ref held := arena_at(s.docs, doc)
+    bytes_reset(held.text)
+    bytes_json(held.text, document, text)
+    held.version = json_number(document, version)
+    publish_findings(s, doc)
+}
+
+// ---------------------------------------------------------------------------
+// Running the passes
+// ---------------------------------------------------------------------------
+
+// What a check needs to reach past the recovery mark. The call that arms one
+// takes a function and a pointer rather than a body that closes over what is in
+// scope, so what the body needs travels in this.
+CheckTurn :: struct {
+    server: ^u8,
+    parser: ^u8,
+    doc: i64,
+    linting: i64,
+}
+
+// What a build of this document would be told to do. The roots and the layers
+// are read out of the project's manifest by the check itself, so they start
+// empty the way a command line leaves them.
+lsp_options :: fn(mut s: Server, doc: i64) -> Options {
+    ref held := arena_at(s.docs, doc)
+    Options {
+        input = bytes_cstr(held.path),
+        output = "",
+        backend = Backend::Unset,
+        link = 0,
+        object = 0,
+        assemble = 0,
+        testing = 0,
+        running = 0,
+        run_args = "",
+        audit_unsafe = 0,
+        linting = 0,
+        debug_lines = 0,
+        libs = "",
+        roots = arena_make($SearchRoot, 64),
+        layers = arena_make($Layer, 16),
+        incremental = 0,
+        build_dir = ".frost-build",
+        help = 0,
+        ok = 1,
+    }
+}
+
+check_guarded :: fn(raw: ^u8) {
+    unsafe {
+        turn := ptr_cast($CheckTurn, raw)
+        server := ptr_cast($Server, turn^.server)
+        parser := ptr_cast($Parser, turn^.parser)
+        read_and_check(parser^, lsp_options(server^, turn^.doc))
+        if (turn^.linting == 1) {
+            lint_program(parser^)
+        }
+    }
+}
+
+// The passes run over the buffer on screen, with everything they take recorded
+// so it can go back in one call, and with a mark armed so a refusal comes back
+// here rather than ending the process.
+//
+// What is read out of the parser has to be read before the close: every table
+// it names is inside the scope.
+run_check :: fn(mut s: Server, doc: i64, mut parser: Parser, linting: i64) {
+    ref held := arena_at(s.docs, doc)
+    path := bytes_cstr(held.path)
+    text := bytes_cstr(held.text)
+    unsafe { frost_rt_hold_file(path, text) }
+    mut turn := CheckTurn {
+        server = unsafe { ptr_cast($u8, ptr_to(s)) },
+        parser = unsafe { ptr_cast($u8, ptr_to(parser)) },
+        doc = doc,
+        linting = linting,
+    }
+    unsafe {
+        frost_rt_recover_run(check_guarded, ptr_cast($u8, ptr_to(turn)))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Findings
+// ---------------------------------------------------------------------------
+
+publish_findings :: fn(mut s: Server, doc: i64) {
+    mut at: i64 = 0
+    while (at < s.published.count) {
+        ref seen := arena_at(s.published, at)
+        seen.live = 0
+        at = at + 1
+    }
+    frost_rt_take_open()
+    mut parser := new_parser(lsp_options(s, doc))
+    run_check(s, doc, parser, 1)
+    records := unsafe { frost_rt_report_take() }
+    records_as_array(s.reports, records)
+    mut found := json_parse(bytes_view(s.reports))
+    // Written before the scope closes: a record names a file the way a report
+    // does, and where that file is is in the module table the check filled.
+    publish_each(s, parser, doc, found)
+    json_free(found)
+    frost_rt_take_close()
+    // A file that had reports last time and has none now is told so, or the
+    // editor keeps underlining what is no longer there.
+    mut index: i64 = 0
+    while (index < s.published.count) {
+        ref seen := arena_at(s.published, index)
+        if (seen.live == 0 && seen.path.count > 0) {
+            uri_of_path(s.other, bytes_view(seen.path))
+            say_open()
+            emit_text("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":")
+            say_string(bytes_view(s.other))
+            emit_text(",\"diagnostics\":[]}}")
+            say_send()
+            bytes_reset(seen.path)
+        }
+        index = index + 1
+    }
+}
+
+// Everything the run wrote, as one array. The report machinery writes one
+// record on each line, since that is what a build's error stream is read as; a
+// reader that takes the whole run at once wants them together.
+records_as_array :: fn(mut out: Arena<u8>, records: ^i8) {
+    bytes_reset(out)
+    bytes_byte(out, CH_LBRACKET)
+    length := cstr_len(records)
+    mut at: i64 = 0
+    while (at < length) {
+        byte := byte_at(records, at)
+        if (byte == CH_LF) {
+            // The newline after the last record ends it rather than separating
+            // it from another.
+            if (at + 1 < length) {
+                bytes_byte(out, CH_COMMA)
+            }
+        } else {
+            bytes_byte(out, byte)
+        }
+        at = at + 1
+    }
+    bytes_byte(out, CH_RBRACKET)
+}
+
+// Whether two string nodes hold the same text.
+json_same_text :: fn(mut document: Json, one: i64, other: i64) -> bool {
+    if (one < 0 || other < 0) {
+        return one < 0 && other < 0
+    }
+    len := json_text_len(document, one)
+    if (len != json_text_len(document, other)) {
+        return false
+    }
+    source := document.source
+    a := json_text_off(document, one)
+    b := json_text_off(document, other)
+    mut k: i64 = 0
+    while (k < len) {
+        if (cast($i64, source[a + k]) != cast($i64, source[b + k])) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// The byte a report's line and column name. Both count from one, and the column
+// counts bytes, which is what the compiler's own header does.
+report_offset :: fn(text: str, line: i64, column: i64) -> i64 {
+    length := str_len(text)
+    mut at: i64 = 0
+    mut seen: i64 = 1
+    while (seen < line && at < length) {
+        if (cast($i64, text[at]) == CH_LF) {
+            seen = seen + 1
+        }
+        at = at + 1
+    }
+    mut held: i64 = 1
+    while (held < column && at < length && cast($i64, text[at]) != CH_LF) {
+        at = at + 1
+        held = held + 1
+    }
+    at
+}
+
+// The text of a file: the buffer on screen where the editor has it open, and
+// what is on disk otherwise.
+text_of_path :: fn(mut s: Server, path: str) -> str {
+    mut at: i64 = 0
+    while (at < s.docs.count) {
+        ref held := arena_at(s.docs, at)
+        if (held.live == 1 && same_path(bytes_view(held.path), path)) {
+            return bytes_view(held.text)
+        }
+        at = at + 1
+    }
+    // The name goes into a buffer of its own, since `path` may be a view into
+    // the one the text lands in.
+    bytes_reset(s.named)
+    bytes_str(s.named, path)
+    raw := unsafe { frost_rt_read_file(bytes_cstr(s.named)) }
+    bytes_reset(s.read_back)
+    bytes_cstr_in(s.read_back, raw)
+    bytes_view(s.read_back)
+}
+
+// One notification per file the run had something to say about, each carrying
+// every record for that file. A record with no place belongs to the file that
+// was asked about.
+publish_each :: fn(mut s: Server, mut parser: Parser, doc: i64, mut found: Json) {
+    root := json_root(found)
+    count := json_count(found, root)
+    mut index: i64 = 0
+    while (index < count) {
+        record := json_at(found, root, index)
+        file := json_member(found, record, "file")
+        if (first_for_file(found, root, index, file)) {
+            publish_file(s, parser, doc, found, root, file)
+        }
+        index = index + 1
+    }
+}
+
+// Whether this record is the first one about its file, which is what decides
+// where a notification is written.
+// Whether this record is the first one about its file, which is what decides
+// where a notification is written.
+first_for_file :: fn(mut found: Json, root: i64, index: i64, file: i64) -> bool {
+    mut earlier: i64 = 0
+    while (earlier < index) {
+        held := json_at(found, root, earlier)
+        if (json_same_text(found, json_member(found, held, "file"), file)) {
+            return false
+        }
+        earlier = earlier + 1
+    }
+    true
+}
+
+publish_file :: fn(
+    mut s: Server,
+    mut parser: Parser,
+    doc: i64,
+    mut found: Json,
+    root: i64,
+    file: i64
+) {
+    // A record with no place is about the file that was asked about, and its
+    // own path is what the editor knows it by.
+    bytes_reset(s.other)
+    if (file >= 0 && json_kind(found, file) == JsonKind::String) {
+        bytes_json(s.other, found, file)
+        // A report names a file the way it is written in a build's output,
+        // which is not where the file is. An editor knows it by where it is.
+        held := path_for_name(parser, bytes_view(s.other))
+        if (cstr_len(held) > 0) {
+            bytes_reset(s.other)
+            bytes_cstr_in(s.other, held)
+        }
+    } else {
+        ref held := arena_at(s.docs, doc)
+        bytes_str(s.other, bytes_view(held.path))
+    }
+    note_published(s, bytes_view(s.other))
+    text := text_of_path(s, bytes_view(s.other))
+    uri_of_path(s.scratch, bytes_view(s.other))
+    say_open()
+    emit_text("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":")
+    say_string(bytes_view(s.scratch))
+    emit_text(",\"diagnostics\":[")
+    count := json_count(found, root)
+    mut written: i64 = 0
+    mut index: i64 = 0
+    while (index < count) {
+        record := json_at(found, root, index)
+        if (json_same_text(found, json_member(found, record, "file"), file)) {
+            if (written > 0) {
+                emit_text(",")
+            }
+            say_diagnostic(found, record, text)
+            written = written + 1
+        }
+        index = index + 1
+    }
+    emit_text("]}}")
+    say_send()
+}
+
+// Where the file a report names is on this machine. A report calls a file what
+// the build was told to call it; the table beside that name says where it is.
+path_for_name :: fn(mut parser: Parser, named: str) -> ^i8 {
+    mut at: i64 = 0
+    while (at < parser.modules.count) {
+        entry := arena_at(parser.modules, at)
+        if (same_path(cstr_slice(entry.name), named)) {
+            return entry.path
+        }
+        at = at + 1
+    }
+    ""
+}
+
+// This file is one the editor has been told about, so it can be told there is
+// nothing left when the last report about it goes.
+note_published :: fn(mut s: Server, path: str) {
+    mut at: i64 = 0
+    while (at < s.published.count) {
+        ref held := arena_at(s.published, at)
+        if (held.path.count > 0 && same_path(bytes_view(held.path), path)) {
+            held.live = 1
+            return
+        }
+        at = at + 1
+    }
+    mut index: i64 = 0
+    while (index < s.published.count) {
+        ref held := arena_at(s.published, index)
+        if (held.path.count == 0) {
+            bytes_reset(held.path)
+            bytes_str(held.path, path)
+            held.live = 1
+            return
+        }
+        index = index + 1
+    }
+    made := arena_push(
+        s.published,
+        Published { path = arena_make($u8, 1024), live = 1 }
+    )
+    ref held := arena_at(s.published, made)
+    bytes_reset(held.path)
+    bytes_str(held.path, path)
+}
+
+say_diagnostic :: fn(mut found: Json, record: i64, text: str) {
+    line := json_number(found, json_member(found, record, "line"))
+    column := json_number(found, json_member(found, record, "column"))
+    offset := report_offset(text, line, column)
+    // The caret sits on one byte, and what a reader wants underlined is the
+    // name it points into. A place that is not a name stays one byte wide.
+    mut ends := name_end(text, offset)
+    if (ends == offset && offset < str_len(text)) {
+        ends = offset + 1
+    }
+    emit_text("{\"range\":")
+    say_range(
+        place_line(text, offset),
+        place_character(text, offset),
+        place_line(text, ends),
+        place_character(text, ends)
+    )
+    emit_text(",\"severity\":")
+    severity := json_member(found, record, "severity")
+    if (json_text_eq(found, severity, "warning")) {
+        emit_text("2")
+    } else {
+        emit_text("1")
+    }
+    emit_text(",\"source\":\"frost\",\"message\":\"")
+    say_raw_string(found, json_member(found, record, "message"))
+    emit_text("\"}")
+}
+
+// ---------------------------------------------------------------------------
+// Formatting
+// ---------------------------------------------------------------------------
+
+// The whole document, laid out. One edit covering everything, since the
+// formatter reads a file and writes a file rather than telling anyone which
+// lines it moved.
+answer_formatting :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    laid_out := lay_out(s, doc)
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    say_open()
+    say_result_head(document, request)
+    if (str_len(laid_out) == 0) {
+        emit_text("null}")
+        say_send()
+        return
+    }
+    emit_text("[{\"range\":")
+    // From the first byte to the last, which is all of it however the text
+    // ends.
+    say_range(
+        0,
+        0,
+        place_line(text, str_len(text)),
+        place_character(text, str_len(text))
+    )
+    emit_text(",\"newText\":")
+    say_string(laid_out)
+    emit_text("}]}")
+    say_send()
+}
+
+// The document as the formatter writes it. The formatter emits, so the text is
+// taken out of the emit buffer and put where a reply can be written around it.
+lay_out :: fn(mut s: Server, doc: i64) -> str {
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    emit_to_memory()
+    format_source(text, str_len(text))
+    written := emit_memory_text()
+    bytes_reset(s.read_back)
+    bytes_str(s.read_back, written)
+    bytes_view(s.read_back)
+}
+// ---------------------------------------------------------------------------
+// Where a name is written
+// ---------------------------------------------------------------------------
+
+// The name under a request's position, put where every answer reads it from,
+// and where it starts. Answers -1 where the position is not in one.
+//
+// The buffer is the server's own rather than one handed in: a call weighing the
+// server against a buffer inside it is the aliasing the exclusivity rule
+// refuses, and it is right to.
+name_at_position :: fn(
+    mut s: Server,
+    mut document: Json,
+    request: i64,
+    doc: i64
+) -> i64 {
+    params := json_member(document, request, "params")
+    position := json_member(document, params, "position")
+    line := json_number(document, json_member(document, position, "line"))
+    character := json_number(
+        document,
+        json_member(document, position, "character")
+    )
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    offset := place_offset(text, line, character)
+    starts := name_start(text, offset)
+    ends := name_end(text, starts)
+    if (ends == starts) {
+        return -1
+    }
+    bytes_reset(s.other)
+    mut at := starts
+    while (at < ends) {
+        bytes_byte(s.other, cast($i64, text[at]))
+        at = at + 1
+    }
+    starts
+}
+
+answer_definition :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    if (name_at_position(s, document, request, doc) < 0) {
+        say_null_result(document, request)
+        return
+    }
+    frost_rt_take_open()
+    mut parser := new_parser(lsp_options(s, doc))
+    run_check(s, doc, parser, 0)
+    site := declaration_of(parser, bytes_view(s.other))
+    mut said: i64 = 0
+    if (site >= 0) {
+        say_open()
+        say_result_head(document, request)
+        say_location(s, parser, site, site + s.other.count)
+        emit_text("}")
+        said = 1
+    }
+    frost_rt_take_close()
+    if (said == 1) {
+        say_send()
+        return
+    }
+    say_null_result(document, request)
+}
+
+say_null_result :: fn(mut document: Json, request: i64) {
+    say_open()
+    say_result_head(document, request)
+    emit_text("null}")
+    say_send()
+}
+
+// Where a name is declared, as an offset into the one buffer every module's
+// text was laid into, or -1. The namespace is flat, so at most one table holds
+// it.
+declaration_of :: fn(mut parser: Parser, wanted: str) -> i64 {
+    length := str_len(wanted)
+    mut si: i64 = 0
+    while (si < parser.structs.count) {
+        def := arena_at(parser.structs, si)
+        if (def.declared == 1 && def.instance_id < 0 && def.name_len == length
+            && same_bytes(parser.src, def.name_off, wanted)) {
+            return def.name_off
+        }
+        si = si + 1
+    }
+    mut fi: i64 = 0
+    while (fi < parser.fns.count) {
+        sym := arena_at(parser.fns, fi)
+        if (sym.len == length && same_bytes(parser.src, sym.off, wanted)) {
+            return sym.off
+        }
+        fi = fi + 1
+    }
+    mut ci: i64 = 0
+    while (ci < parser.consts.count) {
+        held := arena_at(parser.consts, ci)
+        if (held.name_len == length
+            && same_bytes(parser.src, held.name_off, wanted)) {
+            return held.name_off
+        }
+        ci = ci + 1
+    }
+    mut vi: i64 = 0
+    while (vi < parser.value_consts.count) {
+        held := arena_at(parser.value_consts, vi)
+        if (held.name_len == length
+            && same_bytes(parser.src, held.name_off, wanted)) {
+            return held.name_off
+        }
+        vi = vi + 1
+    }
+    -1
+}
+
+// Whether the text at an offset in the one buffer is this name.
+same_bytes :: fn(src: str, off: i64, wanted: str) -> bool {
+    length := str_len(wanted)
+    if (off < 0 || off + length > str_len(src)) {
+        return false
+    }
+    mut k: i64 = 0
+    while (k < length) {
+        if (cast($i64, src[off + k]) != cast($i64, wanted[k])) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// A range in the one buffer, written as a place in the file it came out of.
+// Every module's text is laid end to end, so the file and the line are asked of
+// the module table the way a diagnostic's header asks.
+say_location :: fn(mut s: Server, mut parser: Parser, off: i64, ends: i64) {
+    bytes_reset(s.named)
+    bytes_cstr_in(s.named, path_at(parser.modules, off))
+    uri_of_path(s.scratch, bytes_view(s.named))
+    emit_text("{\"uri\":")
+    say_string(bytes_view(s.scratch))
+    emit_text(",\"range\":")
+    line := line_of(parser.modules, parser.src, off) - 1
+    from := column_of(parser.modules, parser.src, off) - 1
+    say_range(line, from, line, from + ends - off)
+    emit_text("}")
+}
+
+// Where the file holding an offset is on this machine. The name beside it in
+// the table is what a report calls the file, which is not always where it is.
+path_at :: fn(mut modules: Arena<Module>, off: i64) -> ^i8 {
+    index := module_at(modules, off)
+    if (index < 0) {
+        return ""
+    }
+    entry := arena_at(modules, index)
+    entry.path
+}
+
+// ---------------------------------------------------------------------------
+// What a name is
+// ---------------------------------------------------------------------------
+
+// The declaration head a name was written under, and the comment block above
+// it, which is what a reader hovering over a call wants to see.
+answer_hover :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    if (name_at_position(s, document, request, doc) < 0) {
+        say_null_result(document, request)
+        return
+    }
+    frost_rt_take_open()
+    mut parser := new_parser(lsp_options(s, doc))
+    run_check(s, doc, parser, 0)
+    site := declaration_of(parser, bytes_view(s.other))
+    mut said: i64 = 0
+    if (site >= 0) {
+        say_open()
+        say_result_head(document, request)
+        emit_text("{\"contents\":{\"kind\":\"markdown\",\"value\":")
+        say_hover_text(parser, site)
+        emit_text("}}}")
+        said = 1
+    }
+    frost_rt_take_close()
+    if (said == 1) {
+        say_send()
+        return
+    }
+    say_null_result(document, request)
+}
+
+// A fenced block holding the declaration, with whatever the author wrote above
+// it under the fence.
+say_hover_text :: fn(mut parser: Parser, off: i64) {
+    src := parser.src
+    length := source_end(src)
+    starts := line_start_of(src, off)
+    first := line_end(src, length, starts)
+    ends := head_end(src, length, starts, first)
+    emit_text("\"```frost\\n")
+    say_escaped_range(src, starts, ends)
+    emit_text("\\n```")
+    notes := comment_above(src, starts)
+    if (notes < starts) {
+        emit_text("\\n\\n")
+        say_comment_range(src, notes, starts)
+    }
+    emit_text("\"")
+}
+
+say_escaped_range :: fn(text: str, from: i64, to: i64) {
+    mut at := from
+    while (at < to) {
+        say_escaped(cast($i64, text[at]))
+        at = at + 1
+    }
+}
+
+// A comment block written out as prose: the two slashes and the space after
+// them are what marks it as a comment rather than part of what it says.
+say_comment_range :: fn(text: str, from: i64, to: i64) {
+    mut at := from
+    while (at < to) {
+        ends := line_end(text, to, at)
+        mut start := at
+        while (start < ends && cast($i64, text[start]) == CH_SPACE) {
+            start = start + 1
+        }
+        if (start + 1 < ends && cast($i64, text[start]) == CH_SLASH
+            && cast($i64, text[start + 1]) == CH_SLASH) {
+            start = start + 2
+            if (start < ends && cast($i64, text[start]) == CH_SPACE) {
+                start = start + 1
+            }
+        }
+        say_escaped_range(text, start, ends)
+        emit_text("\\n")
+        at = ends + 1
+    }
+}
+
+// The start of the line an offset is on.
+line_start_of :: fn(text: str, off: i64) -> i64 {
+    mut at := off
+    while (at > 0 && cast($i64, text[at - 1]) != CH_LF) {
+        at = at - 1
+    }
+    at
+}
+
+// Where the comment block written directly above a line begins, or the line
+// itself where nothing is written above it.
+comment_above :: fn(text: str, starts: i64) -> i64 {
+    mut at := starts
+    mut lines: i64 = 0
+    while (at > 0 && lines < HEAD_LINES_MAX) {
+        above := line_start_of(text, at - 1)
+        mut walk := above
+        while (walk < at && cast($i64, text[walk]) == CH_SPACE) {
+            walk = walk + 1
+        }
+        if (walk + 1 >= at || cast($i64, text[walk]) != CH_SLASH ||
+            cast($i64, text[walk + 1]) != CH_SLASH) {
+            return at
+        }
+        at = above
+        lines = lines + 1
+    }
+    at
+}
+
+// ---------------------------------------------------------------------------
+// What a file declares
+// ---------------------------------------------------------------------------
+
+// Every top-level declaration in the document, in the order they are written.
+// Read off the tables the passes filled, so a name is what the compiler
+// resolved rather than what a pattern matched.
+answer_document_symbols :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    say_symbols_of(text, "")
+    emit_text("]}")
+    say_send()
+}
+
+// Every name written anywhere under the workspace, narrowed by what was asked
+// for. A walk over the sources rather than a check, since the question is about
+// every file rather than about one.
+answer_workspace_symbols :: fn(mut s: Server, mut document: Json, request: i64) {
+    params := json_member(document, request, "params")
+    query := json_member(document, params, "query")
+    bytes_reset(s.other)
+    if (query >= 0) {
+        bytes_json(s.other, document, query)
+    }
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < s.docs.count) {
+        ref held := arena_at(s.docs, at)
+        if (held.live == 1) {
+            uri_of_path(s.scratch, bytes_view(held.path))
+            written = written + say_workspace_symbols_of(
+                bytes_view(held.text),
+                bytes_view(s.scratch),
+                bytes_view(s.other),
+                written
+            )
+        }
+        at = at + 1
+    }
+    emit_text("]}")
+    say_send()
+}
+
+// The declarations a text holds, as the protocol's own nested shape. Read off
+// the source rather than off a parse, so a file that does not compile still
+// answers, which is what an editor asking while a line is half-written needs.
+say_symbols_of :: fn(text: str, prefix: str) {
+    length := source_end_of(text)
+    mut at: i64 = 0
+    mut written: i64 = 0
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (named > 0) {
+            if (written > 0) {
+                emit_text(",")
+            }
+            say_one_symbol(text, at, named, ends, length)
+            written = written + 1
+        }
+        at = ends + 1
+    }
+}
+
+say_one_symbol :: fn(
+    text: str,
+    at: i64,
+    named: i64,
+    ends: i64,
+    length: i64
+) {
+    emit_text("{\"name\":")
+    say_string_range(text, at, at + named)
+    emit_text(",\"kind\":")
+    frost_rt_emit_int(symbol_kind(text, at, named, ends))
+    emit_text(",\"range\":")
+    // The whole declaration, body and all, which is what an outline highlights
+    // when a reader picks a name out of it.
+    ends_at := declaration_extent(text, at, ends, length)
+    say_range(
+        place_line(text, at),
+        0,
+        place_line(text, ends_at),
+        place_character(text, ends_at)
+    )
+    emit_text(",\"selectionRange\":")
+    say_range(
+        place_line(text, at),
+        place_character(text, at),
+        place_line(text, at + named),
+        place_character(text, at + named)
+    )
+    emit_text("}")
+}
+
+// One name, as the shape a workspace search answers with, which carries the
+// file it is in rather than sitting inside a document's list. Answers how many
+// were written.
+say_workspace_symbols_of :: fn(
+    text: str,
+    uri: str,
+    wanted: str,
+    already: i64
+) -> i64 {
+    length := source_end_of(text)
+    mut at: i64 = 0
+    mut written: i64 = 0
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (named > 0 && name_holds(text, at, named, wanted)) {
+            if (already + written > 0) {
+                emit_text(",")
+            }
+            emit_text("{\"name\":")
+            say_string_range(text, at, at + named)
+            emit_text(",\"kind\":")
+            frost_rt_emit_int(symbol_kind(text, at, named, ends))
+            emit_text(",\"location\":{\"uri\":")
+            say_string(uri)
+            emit_text(",\"range\":")
+            say_range(
+                place_line(text, at),
+                place_character(text, at),
+                place_line(text, at + named),
+                place_character(text, at + named)
+            )
+            emit_text("}}")
+            written = written + 1
+        }
+        at = ends + 1
+    }
+    written
+}
+
+// Whether a name holds what was searched for, without regard to case, which is
+// what a reader typing part of one expects.
+name_holds :: fn(text: str, at: i64, named: i64, wanted: str) -> bool {
+    length := str_len(wanted)
+    if (length == 0) {
+        return true
+    }
+    if (length > named) {
+        return false
+    }
+    mut start: i64 = 0
+    while (start + length <= named) {
+        mut k: i64 = 0
+        mut same: bool = true
+        while (k < length && same) {
+            if (folded(cast($i64, text[at + start + k]))
+                != folded(cast($i64, wanted[k]))) {
+                same = false
+            }
+            k = k + 1
+        }
+        if (same) {
+            return true
+        }
+        start = start + 1
+    }
+    false
+}
+
+folded :: fn(byte: i64) -> i64 {
+    if (byte >= CH_UPPER_A && byte <= CH_UPPER_Z) {
+        return byte + 32
+    }
+    byte
+}
+
+// Which of the protocol's kinds a declaration is. The numbers are the
+// protocol's own: 12 a function, 23 a struct, 10 an enum, 14 a constant.
+symbol_kind :: fn(text: str, at: i64, named: i64, ends: i64) -> i64 {
+    mut walk := at + named
+    while (walk < ends && cast($i64, text[walk]) == CH_SPACE) {
+        walk = walk + 1
+    }
+    // Past the `::` and the space after it, which is where the declaration
+    // says what kind it is.
+    if (walk + 2 < ends && cast($i64, text[walk]) == CH_COLON) {
+        walk = walk + 2
+    }
+    while (walk < ends && cast($i64, text[walk]) == CH_SPACE) {
+        walk = walk + 1
+    }
+    if (text_is(text, walk, "fn") || text_is(text, walk, "extern fn") ||
+        text_is(text, walk, "safe extern fn")) {
+        return 12
+    }
+    if (text_is(text, walk, "struct") || text_is(text, walk, "linear struct") ||
+        text_is(text, walk, "packed struct")) {
+        return 23
+    }
+    if (text_is(text, walk, "enum")) {
+        return 10
+    }
+    if (text_is(text, walk, "bundle")) {
+        return 11
+    }
+    14
+}
+
+say_string_range :: fn(text: str, from: i64, to: i64) {
+    emit_text("\"")
+    say_escaped_range(text, from, to)
+    emit_text("\"")
+}
+
+// Where the text of a buffer stops. A document is what an editor holds, so it
+// has no room for made-up names after it the way a compiled program does, and
+// the whole of it is text.
+source_end_of :: fn(text: str) -> i64 {
+    str_len(text)
+}
+
+// ---------------------------------------------------------------------------
+// Where a name is used
+// ---------------------------------------------------------------------------
+
+// Every place a name is written across the files on screen. Counted over the
+// source rather than over the parse: the namespace is flat, so a name written
+// anywhere is the same name, and a walk over the text finds it in a table of
+// function pointers and in an export line as well as in a call.
+answer_references :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    if (name_at_position(s, document, request, doc) < 0) {
+        say_null_result(document, request)
+        return
+    }
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < s.docs.count) {
+        ref held := arena_at(s.docs, at)
+        if (held.live == 1) {
+            uri_of_path(s.scratch, bytes_view(held.path))
+            written = written + say_uses_in(
+                bytes_view(held.text),
+                bytes_view(s.scratch),
+                bytes_view(s.other),
+                written
+            )
+        }
+        at = at + 1
+    }
+    emit_text("]}")
+    say_send()
+}
+
+// Every place a name is written in the file on screen, as the shape an editor
+// paints under the caret.
+answer_highlights :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    if (name_at_position(s, document, request, doc) < 0) {
+        say_null_result(document, request)
+        return
+    }
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    wanted := bytes_view(s.other)
+    width := str_len(wanted)
+    length := str_len(text)
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < length) {
+        found := name_written_at(text, at, wanted)
+        if (found >= 0) {
+            if (written > 0) {
+                emit_text(",")
+            }
+            emit_text("{\"range\":")
+            say_range(
+                place_line(text, found),
+                place_character(text, found),
+                place_line(text, found + width),
+                place_character(text, found + width)
+            )
+            emit_text("}")
+            written = written + 1
+            at = found + width
+        } else {
+            at = at + 1
+        }
+    }
+    emit_text("]}")
+    say_send()
+}
+
+// Whether the name starts exactly here, as a whole word rather than as part of
+// a longer one. Answers where it starts, so a walk may step past it.
+name_written_at :: fn(text: str, at: i64, wanted: str) -> i64 {
+    length := str_len(wanted)
+    if (at + length > str_len(text)) {
+        return -1
+    }
+    if (at > 0 && name_byte(cast($i64, text[at - 1]))) {
+        return -1
+    }
+    mut k: i64 = 0
+    while (k < length) {
+        if (cast($i64, text[at + k]) != cast($i64, wanted[k])) {
+            return -1
+        }
+        k = k + 1
+    }
+    if (at + length < str_len(text)
+        && name_byte(cast($i64, text[at + length]))) {
+        return -1
+    }
+    at
+}
+
+say_uses_in :: fn(text: str, uri: str, wanted: str, already: i64) -> i64 {
+    length := str_len(text)
+    width := str_len(wanted)
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < length) {
+        found := name_written_at(text, at, wanted)
+        if (found >= 0) {
+            if (already + written > 0) {
+                emit_text(",")
+            }
+            emit_text("{\"uri\":")
+            say_string(uri)
+            emit_text(",\"range\":")
+            say_range(
+                place_line(text, found),
+                place_character(text, found),
+                place_line(text, found + width),
+                place_character(text, found + width)
+            )
+            emit_text("}")
+            written = written + 1
+            at = found + width
+        } else {
+            at = at + 1
+        }
+    }
+    written
+}
+
+// ---------------------------------------------------------------------------
+// Renaming
+// ---------------------------------------------------------------------------
+
+// What the editor underlines while a new name is typed: the extent of the one
+// under the caret.
+answer_prepare_rename :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    starts := name_at_position(s, document, request, doc)
+    if (starts < 0) {
+        say_null_result(document, request)
+        return
+    }
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    ends := starts + s.other.count
+    say_open()
+    say_result_head(document, request)
+    say_range(
+        place_line(text, starts),
+        place_character(text, starts),
+        place_line(text, ends),
+        place_character(text, ends)
+    )
+    emit_text("}")
+    say_send()
+}
+
+// Every place the name is written, replaced. The namespace is flat, so a name
+// means one thing across the whole program, and every place it is written has
+// to change together.
+answer_rename :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    if (name_at_position(s, document, request, doc) < 0) {
+        say_null_result(document, request)
+        return
+    }
+    params := json_member(document, request, "params")
+    fresh := json_member(document, params, "newName")
+    if (fresh < 0) {
+        say_null_result(document, request)
+        return
+    }
+    bytes_reset(s.named)
+    bytes_json(s.named, document, fresh)
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"changes\":{")
+    mut files: i64 = 0
+    mut at: i64 = 0
+    while (at < s.docs.count) {
+        ref held := arena_at(s.docs, at)
+        if (held.live == 1) {
+            uri_of_path(s.scratch, bytes_view(held.path))
+            files = files + say_edits_in(
+                bytes_view(held.text),
+                bytes_view(s.scratch),
+                bytes_view(s.other),
+                bytes_view(s.named),
+                files
+            )
+        }
+        at = at + 1
+    }
+    emit_text("}}}")
+    say_send()
+}
+
+// The edits one file needs, under its own URI, or nothing where the name is not
+// written in it. Answers 1 where it wrote a file's entry.
+say_edits_in :: fn(
+    text: str,
+    uri: str,
+    wanted: str,
+    fresh: str,
+    already: i64
+) -> i64 {
+    length := str_len(text)
+    width := str_len(wanted)
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < length) {
+        found := name_written_at(text, at, wanted)
+        if (found >= 0) {
+            if (written == 0) {
+                if (already > 0) {
+                    emit_text(",")
+                }
+                say_string(uri)
+                emit_text(":[")
+            } else {
+                emit_text(",")
+            }
+            emit_text("{\"range\":")
+            say_range(
+                place_line(text, found),
+                place_character(text, found),
+                place_line(text, found + width),
+                place_character(text, found + width)
+            )
+            emit_text(",\"newText\":")
+            say_string(fresh)
+            emit_text("}")
+            written = written + 1
+            at = found + width
+        } else {
+            at = at + 1
+        }
+    }
+    if (written == 0) {
+        return 0
+    }
+    emit_text("]")
+    1
+}
+
+// ---------------------------------------------------------------------------
+// Folding
+// ---------------------------------------------------------------------------
+
+// Where a brace opens and where it closes, which is what an editor folds by.
+// Read off the text, since a file being edited is often one an editor cannot
+// parse and folding it is the moment a reader most wants it.
+answer_folding :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    length := str_len(text)
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < length) {
+        byte := cast($i64, text[at])
+        if (byte == CH_DQUOTE) {
+            at = past_string(text, at)
+            continue
+        }
+        if (byte == CH_SLASH && at + 1 < length
+            && cast($i64, text[at + 1]) == CH_SLASH) {
+            at = line_end(text, length, at)
+            continue
+        }
+        if (byte == CH_LBRACE) {
+            closes := matching_brace(text, at)
+            from := place_line(text, at)
+            to := place_line(text, closes)
+            if (to > from + 1) {
+                if (written > 0) {
+                    emit_text(",")
+                }
+                emit_text("{\"startLine\":")
+                frost_rt_emit_int(from)
+                emit_text(",\"endLine\":")
+                frost_rt_emit_int(to - 1)
+                emit_text("}")
+                written = written + 1
+            }
+        }
+        at = at + 1
+    }
+    emit_text("]}")
+    say_send()
+}
+
+// Where the brace opened here closes, or the end of the text where nothing
+// closes it. Text and comments are stepped over, so a brace written inside
+// either counts for nothing.
+matching_brace :: fn(text: str, opens: i64) -> i64 {
+    length := str_len(text)
+    mut depth: i64 = 0
+    mut at := opens
+    while (at < length) {
+        byte := cast($i64, text[at])
+        if (byte == CH_DQUOTE) {
+            at = past_string(text, at)
+            continue
+        }
+        if (byte == CH_SLASH && at + 1 < length
+            && cast($i64, text[at + 1]) == CH_SLASH) {
+            at = line_end(text, length, at)
+            continue
+        }
+        if (byte == CH_LBRACE) {
+            depth = depth + 1
+        }
+        if (byte == CH_RBRACE) {
+            depth = depth - 1
+            if (depth == 0) {
+                return at
+            }
+        }
+        at = at + 1
+    }
+    length
+}
+
+// Past the text that opens here, whose closing quote is the first one a
+// backslash does not stand in front of.
+past_string :: fn(text: str, opens: i64) -> i64 {
+    length := str_len(text)
+    mut at := opens + 1
+    while (at < length) {
+        byte := cast($i64, text[at])
+        if (byte == CH_BACKSLASH) {
+            at = at + 2
+            continue
+        }
+        if (byte == CH_DQUOTE) {
+            return at + 1
+        }
+        at = at + 1
+    }
+    length
+}
+
+// ---------------------------------------------------------------------------
+// Completion
+// ---------------------------------------------------------------------------
+
+// Every name the workspace declares, narrowed to what has been typed. A flat
+// namespace gives up the narrowing a `.` provides in a method language, so the
+// prefix a family shares is what a reader narrows by, and this is that list.
+answer_completion :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    // What is already typed, which is a name that has not been finished rather
+    // than one the caret is inside.
+    prefix_at_position(s, document, request, doc)
+    say_open()
+    say_result_head(document, request)
+    emit_text("{\"isIncomplete\":false,\"items\":[")
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < s.docs.count) {
+        ref held := arena_at(s.docs, at)
+        if (held.live == 1) {
+            written = written + say_completions_in(
+                bytes_view(held.text),
+                bytes_view(s.other),
+                written
+            )
+        }
+        at = at + 1
+    }
+    written = written + say_keyword_completions(bytes_view(s.other), written)
+    emit_text("]}}")
+    say_send()
+}
+
+// What has been typed up to the caret, which is what a list is narrowed by.
+prefix_at_position :: fn(
+    mut s: Server,
+    mut document: Json,
+    request: i64,
+    doc: i64
+) {
+    params := json_member(document, request, "params")
+    position := json_member(document, params, "position")
+    line := json_number(document, json_member(document, position, "line"))
+    character := json_number(
+        document,
+        json_member(document, position, "character")
+    )
+    ref held := arena_at(s.docs, doc)
+    text := bytes_view(held.text)
+    offset := place_offset(text, line, character)
+    starts := name_start(text, offset)
+    bytes_reset(s.other)
+    mut at := starts
+    while (at < offset) {
+        bytes_byte(s.other, cast($i64, text[at]))
+        at = at + 1
+    }
+}
+
+// The declarations one file holds whose names begin with what was typed. The
+// head each was written under travels with it, so a reader picking one out of
+// the list is reading the signature rather than guessing at it.
+say_completions_in :: fn(text: str, prefix: str, already: i64) -> i64 {
+    length := str_len(text)
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < length) {
+        ends := line_end(text, length, at)
+        named := declaration_head(text, at, ends)
+        if (named > 0 && begins_with_prefix(text, at, named, prefix)) {
+            if (already + written > 0) {
+                emit_text(",")
+            }
+            emit_text("{\"label\":")
+            say_string_range(text, at, at + named)
+            emit_text(",\"kind\":")
+            frost_rt_emit_int(completion_kind(text, at, named, ends))
+            emit_text(",\"detail\":")
+            head := head_end(text, length, at, ends)
+            say_string_range(text, at, head)
+            emit_text("}")
+            written = written + 1
+        }
+        at = ends + 1
+    }
+    written
+}
+
+// Whether a name begins with what was typed. Matched without regard to case,
+// which is what a reader typing a lowercase start of a type name expects.
+begins_with_prefix :: fn(
+    text: str,
+    at: i64,
+    named: i64,
+    prefix: str
+) -> bool {
+    length := str_len(prefix)
+    if (length == 0) {
+        return true
+    }
+    if (length > named) {
+        return false
+    }
+    mut k: i64 = 0
+    while (k < length) {
+        if (folded(cast($i64, text[at + k])) != folded(cast($i64, prefix[k]))) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// Which of the protocol's kinds a completion is: 3 a function, 22 a struct, 13
+// an enum, 21 a constant, 14 a keyword.
+completion_kind :: fn(text: str, at: i64, named: i64, ends: i64) -> i64 {
+    kind := symbol_kind(text, at, named, ends)
+    if (kind == 12) {
+        return 3
+    }
+    if (kind == 23) {
+        return 22
+    }
+    if (kind == 10) {
+        return 13
+    }
+    if (kind == 11) {
+        return 8
+    }
+    21
+}
+
+// The words the language itself spells, which a reader typing one wants
+// finished the same way a name is.
+say_keyword_completions :: fn(prefix: str, already: i64) -> i64 {
+    words := "fn struct enum bundle extern safe mut move value ref import export while for in if else match case return continue break defer unsafe when uses with distinct linear packed align where test true false and or not"
+    length := str_len(words)
+    mut written: i64 = 0
+    mut at: i64 = 0
+    while (at < length) {
+        mut ends := at
+        while (ends < length && cast($i64, words[ends]) != CH_SPACE) {
+            ends = ends + 1
+        }
+        if (begins_with_prefix(words, at, ends - at, prefix)) {
+            if (already + written > 0) {
+                emit_text(",")
+            }
+            emit_text("{\"label\":")
+            say_string_range(words, at, ends)
+            emit_text(",\"kind\":14}")
+            written = written + 1
+        }
+        at = ends + 1
+    }
+    written
+}
+
+// ---------------------------------------------------------------------------
+// The fixes the reports carry
+// ---------------------------------------------------------------------------
+
+// A report that knows the answer says so, and this hands that answer to the
+// editor as an edit it can apply. A reader told what is wrong and where the
+// answer goes has one keystroke left.
+answer_code_actions :: fn(mut s: Server, mut document: Json, request: i64) {
+    doc := doc_of_request(s, document, request)
+    if (doc < 0) {
+        say_null_result(document, request)
+        return
+    }
+    params := json_member(document, request, "params")
+    asked := json_member(document, params, "range")
+    from := json_member(document, asked, "start")
+    from_line := json_number(document, json_member(document, from, "line"))
+    frost_rt_take_open()
+    mut parser := new_parser(lsp_options(s, doc))
+    run_check(s, doc, parser, 0)
+    records := unsafe { frost_rt_report_take() }
+    frost_rt_take_close()
+    records_as_array(s.reports, records)
+    mut found := json_parse(bytes_view(s.reports))
+    ref held := arena_at(s.docs, doc)
+    say_open()
+    say_result_head(document, request)
+    emit_text("[")
+    say_fixes(s, found, doc, from_line, bytes_view(held.text))
+    emit_text("]}")
+    say_send()
+    json_free(found)
+}
+
+say_fixes :: fn(
+    mut s: Server,
+    mut found: Json,
+    doc: i64,
+    wanted_line: i64,
+    text: str
+) {
+    root := json_root(found)
+    count := json_count(found, root)
+    mut written: i64 = 0
+    mut index: i64 = 0
+    while (index < count) {
+        record := json_at(found, root, index)
+        fix := json_member(found, record, "fix")
+        line := json_number(found, json_member(found, record, "line")) - 1
+        if (fix >= 0 && line == wanted_line) {
+            if (written > 0) {
+                emit_text(",")
+            }
+            say_one_fix(s, found, record, fix, doc, text)
+            written = written + 1
+        }
+        index = index + 1
+    }
+}
+
+say_one_fix :: fn(
+    mut s: Server,
+    mut found: Json,
+    record: i64,
+    fix: i64,
+    doc: i64,
+    text: str
+) {
+    span := json_member(found, fix, "span")
+    from := json_number(found, json_at(found, span, 0))
+    to := json_number(found, json_at(found, span, 1))
+    certain := json_member(found, fix, "certain")
+    bytes_reset(s.other)
+    file := json_member(found, fix, "file")
+    if (file >= 0 && json_kind(found, file) == JsonKind::String) {
+        bytes_json(s.other, found, file)
+    } else {
+        ref held := arena_at(s.docs, doc)
+        bytes_str(s.other, bytes_view(held.path))
+    }
+    uri_of_path(s.scratch, bytes_view(s.other))
+    emit_text("{\"title\":\"")
+    say_raw_string(found, json_member(found, record, "message"))
+    emit_text("\",\"kind\":\"quickfix\"")
+    if (json_kind(found, certain) == JsonKind::True) {
+        emit_text(",\"isPreferred\":true")
+    }
+    emit_text(",\"edit\":{\"changes\":{")
+    say_string(bytes_view(s.scratch))
+    emit_text(":[{\"range\":")
+    say_range(
+        place_line(text, from),
+        place_character(text, from),
+        place_line(text, to),
+        place_character(text, to)
+    )
+    emit_text(",\"newText\":")
+    say_string_of_node(found, json_member(found, fix, "replacement"))
+    emit_text("}]}}}")
+}
+
+// A string node written back out with its own escapes kept, which is what goes
+// where nothing read them.
+say_string_of_node :: fn(mut found: Json, node: i64) {
+    emit_text("\"")
+    say_raw_string(found, node)
+    emit_text("\"")
+}
+
+// Where a declaration stops: the brace it opens, where it opens one, and the
+// end of what it was written across otherwise.
+declaration_extent :: fn(
+    text: str,
+    at: i64,
+    ends: i64,
+    length: i64
+) -> i64 {
+    head := head_end(text, length, at, ends)
+    mut walk := at
+    while (walk < head) {
+        if (cast($i64, text[walk]) == CH_LBRACE) {
+            return matching_brace(text, walk) + 1
+        }
+        walk = walk + 1
+    }
+    head
 }
