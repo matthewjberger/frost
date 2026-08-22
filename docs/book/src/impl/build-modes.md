@@ -67,6 +67,20 @@ and its own assembly emitter (`FROST_BACKEND=asm`), and both fixpoints are
 checked on every build by `self_hosting_is_a_fixpoint` and
 `native_self_hosting_is_a_fixpoint`.
 
+A fixpoint says the two generations agree about one program: the compiler's
+own source. It says nothing about the rest, and the two generations are built
+from different C, the first from the bootstrap's and the second from the
+first's. A divergence that does not reach the compiler's own source survives
+it untouched, and one did for months: a walk in the self-hosted compiler
+overwrote the syntax tree it was walking, so no program using `std/map`,
+`std/sort` or `std/ecs` could be built by it at all, and every gate was green.
+
+`both_compilers_read_the_corpus_the_same_way` is what closes that. It reads
+every file under `std`, `lib`, `examples` and `tools` through the bootstrap and
+through the **second** generation, and compares what each refuses. The second
+rather than the first, because what the bootstrap builds reads the way the
+bootstrap does: the bootstrap emitted its code.
+
 Both compilers are held to the same two promises. They accept the same
 language, goal 8 in [philosophy.md](../design/philosophy.md), and they are under
 the same compilation-speed promise, goal 9, which matters more for the Frost one
