@@ -77,10 +77,14 @@ fs.writeFileSync(
   ].join("\n"),
   "utf8"
 );
+// The name is written in a comment and inside a string here as well, and a
+// rename that reaches either of them writes over text that is not the name.
 const READER = [
   'import "shared.frost"',
   "",
+  "// tally is what this calls.",
   "start :: fn() -> i64 {",
+  '    label := "tally"',
   "    tally(1)",
   "}",
   "",
@@ -679,13 +683,27 @@ async function main() {
       held.changes[shared_uri] &&
       held.changes[shared_uri].length >= 1 &&
       held.changes[reader_uri] &&
-      held.changes[reader_uri].length >= 1,
+      held.changes[reader_uri].length === 1,
     (held) =>
       held && held.changes
         ? Object.keys(held.changes)
             .map((one) => one.split("/").pop() + ":" + held.changes[one].length)
             .join(" ")
         : "none"
+  );
+  want(
+    "references across files",
+    await talk.ask(28, "textDocument/references", {
+      textDocument: { uri: reader_uri },
+      position: at(READER, "    tally(1)", 5),
+      context: { includeDeclaration: true },
+    }),
+    (held) =>
+      Array.isArray(held) &&
+      held.length === 2 &&
+      held.some((one) => one.uri === shared_uri) &&
+      held.some((one) => one.uri === reader_uri),
+    many
   );
   want(
     "closing takes back the import",

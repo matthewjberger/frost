@@ -2075,27 +2075,82 @@ answer_highlights :: fn(mut s: Server, mut document: Json, request: i64) {
     mut written: i64 = 0
     mut at: i64 = 0
     while (at < length) {
-        found := name_written_at(text, at, wanted)
-        if (found >= 0) {
-            if (written > 0) {
-                emit_text(",")
-            }
-            emit_text("{\"range\":")
-            say_range(
-                place_line(text, found),
-                place_character(text, found),
-                place_line(text, found + width),
-                place_character(text, found + width)
-            )
-            emit_text("}")
-            written = written + 1
-            at = found + width
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
         } else {
-            at = at + 1
+            found := name_written_at(text, at, wanted)
+            if (found >= 0) {
+                if (written > 0) {
+                    emit_text(",")
+                }
+                emit_text("{\"range\":")
+                say_range(
+                    place_line(text, found),
+                    place_character(text, found),
+                    place_line(text, found + width),
+                    place_character(text, found + width)
+                )
+                emit_text("}")
+                written = written + 1
+                at = found + width
+            } else {
+                at = at + 1
+            }
         }
     }
     emit_text("]}")
     say_send()
+}
+
+// Where a run that is not code ends: a line comment at the line it is on, a
+// block comment at its close, a string at its closing quote. Answers the
+// offset it was given where code starts there.
+//
+// A name written in a comment or inside a string is text that reads like the
+// name and is something else. Renaming through one writes over what a reader
+// wrote, and pointing at one sends them where the name is not.
+past_non_code :: fn(text: str, at: i64) -> i64 {
+    length := str_len(text)
+    one := cast($i64, text[at])
+    if (one == CH_DQUOTE) {
+        mut past := at + 1
+        while (past < length && cast($i64, text[past]) != CH_DQUOTE) {
+            if (cast($i64, text[past]) == CH_BACKSLASH) {
+                past = past + 1
+            }
+            past = past + 1
+        }
+        if (past < length) {
+            return past + 1
+        }
+        return length
+    }
+    if (one != CH_SLASH || at + 1 >= length) {
+        return at
+    }
+    next := cast($i64, text[at + 1])
+    if (next == CH_SLASH) {
+        mut past := at + 2
+        while (past < length && cast($i64, text[past]) != CH_LF) {
+            past = past + 1
+        }
+        return past
+    }
+    if (next == CH_STAR) {
+        // The first close ends it, whatever sits between, which is how the
+        // lexer reads one. An unclosed one runs to the end of the file.
+        mut past := at + 2
+        while (past + 1 < length) {
+            if (cast($i64, text[past]) == CH_STAR
+                && cast($i64, text[past + 1]) == CH_SLASH) {
+                return past + 2
+            }
+            past = past + 1
+        }
+        return length
+    }
+    at
 }
 
 // Whether the name starts exactly here, as a whole word rather than as part of
@@ -2128,25 +2183,30 @@ say_uses_in :: fn(text: str, uri: str, wanted: str, already: i64) -> i64 {
     mut written: i64 = 0
     mut at: i64 = 0
     while (at < length) {
-        found := name_written_at(text, at, wanted)
-        if (found >= 0) {
-            if (already + written > 0) {
-                emit_text(",")
-            }
-            emit_text("{\"uri\":")
-            say_string(uri)
-            emit_text(",\"range\":")
-            say_range(
-                place_line(text, found),
-                place_character(text, found),
-                place_line(text, found + width),
-                place_character(text, found + width)
-            )
-            emit_text("}")
-            written = written + 1
-            at = found + width
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
         } else {
-            at = at + 1
+            found := name_written_at(text, at, wanted)
+            if (found >= 0) {
+                if (already + written > 0) {
+                    emit_text(",")
+                }
+                emit_text("{\"uri\":")
+                say_string(uri)
+                emit_text(",\"range\":")
+                say_range(
+                    place_line(text, found),
+                    place_character(text, found),
+                    place_line(text, found + width),
+                    place_character(text, found + width)
+                )
+                emit_text("}")
+                written = written + 1
+                at = found + width
+            } else {
+                at = at + 1
+            }
         }
     }
     written
@@ -2244,31 +2304,36 @@ say_edits_in :: fn(
     mut written: i64 = 0
     mut at: i64 = 0
     while (at < length) {
-        found := name_written_at(text, at, wanted)
-        if (found >= 0) {
-            if (written == 0) {
-                if (already > 0) {
+        past := past_non_code(text, at)
+        if (past > at) {
+            at = past
+        } else {
+            found := name_written_at(text, at, wanted)
+            if (found >= 0) {
+                if (written == 0) {
+                    if (already > 0) {
+                        emit_text(",")
+                    }
+                    say_string(uri)
+                    emit_text(":[")
+                } else {
                     emit_text(",")
                 }
-                say_string(uri)
-                emit_text(":[")
+                emit_text("{\"range\":")
+                say_range(
+                    place_line(text, found),
+                    place_character(text, found),
+                    place_line(text, found + width),
+                    place_character(text, found + width)
+                )
+                emit_text(",\"newText\":")
+                say_string(fresh)
+                emit_text("}")
+                written = written + 1
+                at = found + width
             } else {
-                emit_text(",")
+                at = at + 1
             }
-            emit_text("{\"range\":")
-            say_range(
-                place_line(text, found),
-                place_character(text, found),
-                place_line(text, found + width),
-                place_character(text, found + width)
-            )
-            emit_text(",\"newText\":")
-            say_string(fresh)
-            emit_text("}")
-            written = written + 1
-            at = found + width
-        } else {
-            at = at + 1
         }
     }
     if (written == 0) {
