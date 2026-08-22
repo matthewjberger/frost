@@ -75,6 +75,9 @@ Server :: struct {
     named: Arena<u8>,
     reports: Arena<u8>,
     modules: Arena<u8>,
+    sources: Arena<u8>,
+    walking: Arena<u8>,
+    each: Arena<u8>,
     read_back: Arena<u8>,
     body: Arena<u8>,
     going: i64,
@@ -96,6 +99,9 @@ lsp_command :: fn() -> i64 {
         named = arena_make($u8, 4096),
         reports = arena_make($u8, 262144),
         modules = arena_make($u8, 65536),
+        sources = arena_make($u8, 262144),
+        walking = arena_make($u8, 65536),
+        each = arena_make($u8, 4096),
         read_back = arena_make($u8, DOC_ROOM),
         body = arena_make($u8, DOC_ROOM),
         going = 1,
@@ -1862,6 +1868,7 @@ answer_document_symbols :: fn(mut s: Server, mut document: Json, request: i64) {
 answer_workspace_symbols :: fn(mut s: Server, mut document: Json, request: i64) {
     params := json_member(document, request, "params")
     query := json_member(document, params, "query")
+    walk_sources(s)
     bytes_reset(s.other)
     if (query >= 0) {
         bytes_json(s.other, document, query)
@@ -1870,19 +1877,20 @@ answer_workspace_symbols :: fn(mut s: Server, mut document: Json, request: i64) 
     say_result_head(document, request)
     emit_text("[")
     mut written: i64 = 0
-    mut at: i64 = 0
-    while (at < s.docs.count) {
-        ref held := arena_at(s.docs, at)
-        if (held.live == 1) {
-            uri_of_path(s.scratch, bytes_view(held.path))
+    count := source_count(s)
+    mut index: i64 = 0
+    while (index < count) {
+        if (source_into(s, index)) {
+            text := text_of_path(s, bytes_view(s.each))
+            uri_of_path(s.scratch, bytes_view(s.each))
             written = written + say_workspace_symbols_of(
-                bytes_view(held.text),
+                text,
                 bytes_view(s.scratch),
                 bytes_view(s.other),
                 written
             )
         }
-        at = at + 1
+        index = index + 1
     }
     emit_text("]}")
     say_send()
@@ -2075,6 +2083,8 @@ answer_references :: fn(mut s: Server, mut document: Json, request: i64) {
         say_null_result(document, request)
         return
     }
+    // The walk first: it writes into the buffer the name lands in.
+    walk_sources(s)
     if (name_at_position(s, document, request, doc) < 0) {
         say_null_result(document, request)
         return
@@ -2083,19 +2093,20 @@ answer_references :: fn(mut s: Server, mut document: Json, request: i64) {
     say_result_head(document, request)
     emit_text("[")
     mut written: i64 = 0
-    mut at: i64 = 0
-    while (at < s.docs.count) {
-        ref held := arena_at(s.docs, at)
-        if (held.live == 1) {
-            uri_of_path(s.scratch, bytes_view(held.path))
+    count := source_count(s)
+    mut index: i64 = 0
+    while (index < count) {
+        if (source_into(s, index)) {
+            text := text_of_path(s, bytes_view(s.each))
+            uri_of_path(s.scratch, bytes_view(s.each))
             written = written + say_uses_in(
-                bytes_view(held.text),
+                text,
                 bytes_view(s.scratch),
                 bytes_view(s.other),
                 written
             )
         }
-        at = at + 1
+        index = index + 1
     }
     emit_text("]}")
     say_send()
@@ -2242,6 +2253,7 @@ answer_rename :: fn(mut s: Server, mut document: Json, request: i64) {
         say_null_result(document, request)
         return
     }
+    walk_sources(s)
     if (name_at_position(s, document, request, doc) < 0) {
         say_null_result(document, request)
         return
@@ -2252,26 +2264,27 @@ answer_rename :: fn(mut s: Server, mut document: Json, request: i64) {
         say_null_result(document, request)
         return
     }
-    bytes_reset(s.named)
-    bytes_json(s.named, document, fresh)
+    bytes_reset(s.reports)
+    bytes_json(s.reports, document, fresh)
     say_open()
     say_result_head(document, request)
     emit_text("{\"changes\":{")
     mut files: i64 = 0
-    mut at: i64 = 0
-    while (at < s.docs.count) {
-        ref held := arena_at(s.docs, at)
-        if (held.live == 1) {
-            uri_of_path(s.scratch, bytes_view(held.path))
+    count := source_count(s)
+    mut index: i64 = 0
+    while (index < count) {
+        if (source_into(s, index)) {
+            text := text_of_path(s, bytes_view(s.each))
+            uri_of_path(s.scratch, bytes_view(s.each))
             files = files + say_edits_in(
-                bytes_view(held.text),
+                text,
                 bytes_view(s.scratch),
                 bytes_view(s.other),
-                bytes_view(s.named),
+                bytes_view(s.reports),
                 files
             )
         }
-        at = at + 1
+        index = index + 1
     }
     emit_text("}}}")
     say_send()
@@ -2443,24 +2456,26 @@ answer_completion :: fn(mut s: Server, mut document: Json, request: i64) {
         say_null_result(document, request)
         return
     }
-    // What is already typed, which is a name that has not been finished rather
-    // than one the caret is inside.
+    walk_sources(s)
+    // What is already typed, which is a name that has not been finished
+    // rather than one the caret is inside.
     prefix_at_position(s, document, request, doc)
     say_open()
     say_result_head(document, request)
     emit_text("{\"isIncomplete\":false,\"items\":[")
     mut written: i64 = 0
-    mut at: i64 = 0
-    while (at < s.docs.count) {
-        ref held := arena_at(s.docs, at)
-        if (held.live == 1) {
+    count := source_count(s)
+    mut index: i64 = 0
+    while (index < count) {
+        if (source_into(s, index)) {
+            text := text_of_path(s, bytes_view(s.each))
             written = written + say_completions_in(
-                bytes_view(held.text),
+                text,
                 bytes_view(s.other),
                 written
             )
         }
-        at = at + 1
+        index = index + 1
     }
     written = written + say_keyword_completions(bytes_view(s.other), written)
     emit_text("]}}")
@@ -2750,4 +2765,177 @@ spoken_for :: fn(mut s: Server, doc: i64, path: str) -> bool {
         at = at + 1
     }
     false
+}
+
+// ---------------------------------------------------------------------------
+// The files under the workspace
+// ---------------------------------------------------------------------------
+
+// How deep the walk goes. A project nests its sources a few directories down;
+// anything past this is a loop somebody made with a link.
+WALK_DEPTH :: 16
+
+// Every Frost source under the workspace, as paths, each ending in a
+// terminator.
+//
+// Read fresh for each question rather than held, since a file written outside
+// the editor is one a reader expects to find. What it costs is the directory
+// entries; the files themselves are read only where an answer needs them.
+walk_sources :: fn(mut s: Server) {
+    bytes_reset(s.sources)
+    if (s.root.count == 0) {
+        // With no workspace named, what is open is what there is.
+        mut at: i64 = 0
+        while (at < s.docs.count) {
+            ref held := arena_at(s.docs, at)
+            if (held.live == 1) {
+                bytes_str(s.sources, bytes_view(held.path))
+                bytes_byte(s.sources, 0)
+            }
+            at = at + 1
+        }
+        return
+    }
+    bytes_reset(s.named)
+    bytes_str(s.named, bytes_view(s.root))
+    walk_under(s, 0, s.named.count, 0)
+}
+
+// One directory, then the ones below it. The runtime holds one walk at a time,
+// so the names come out first and the walk into them follows: reading a
+// directory inside another would take the handle the outer one is standing on.
+//
+// The directory being walked is the run of bytes `from` through `to` in the
+// buffer of names, which is where each one below it is written in turn.
+walk_under :: fn(mut s: Server, from: i64, to: i64, depth: i64) {
+    if (depth > WALK_DEPTH) {
+        return
+    }
+    bytes_reset(s.other)
+    named := bytes_view(s.named)
+    mut at := from
+    while (at < to) {
+        bytes_byte(s.other, cast($i64, named[at]))
+        at = at + 1
+    }
+    if (unsafe { frost_rt_dir_open(bytes_cstr(s.other)) } == 0) {
+        return
+    }
+    // Where the names this directory holds start, so the walk into each of
+    // them can be written after the ones already held.
+    start := s.walking.count
+    mut entry := unsafe { frost_rt_dir_next() }
+    while (cstr_len(entry) != 0) {
+        if (walked_into(entry)) {
+            bytes_byte(s.walking, frost_rt_dir_entry_is_dir())
+            bytes_cstr_in(s.walking, entry)
+            bytes_byte(s.walking, 0)
+        }
+        entry = unsafe { frost_rt_dir_next() }
+    }
+    frost_rt_dir_close()
+    mut walk := start
+    while (walk < s.walking.count) {
+        held := bytes_view(s.walking)
+        is_dir := cast($i64, held[walk])
+        name_at := walk + 1
+        name_ends := run_end(held, name_at)
+        // The full path, written into the buffer of names past what is there.
+        was := s.named.count
+        bytes_byte(s.named, CH_SLASH)
+        mut k := name_at
+        while (k < name_ends) {
+            byte := cast($i64, held[k])
+            bytes_byte(s.named, byte)
+            k = k + 1
+        }
+        if (is_dir == 1) {
+            walk_under(s, from, s.named.count, depth + 1)
+        } else if (ends_in_frost(bytes_view(s.walking), name_at, name_ends)) {
+            whole := bytes_view(s.named)
+            mut index := from
+            while (index < s.named.count) {
+                bytes_byte(s.sources, cast($i64, whole[index]))
+                index = index + 1
+            }
+            bytes_byte(s.sources, 0)
+        }
+        s.named.count = was
+        walk = name_ends + 1
+    }
+    s.walking.count = start
+}
+
+// Whether a directory entry is one a project keeps sources under. A name
+// beginning with a dot is the tooling own, and `target` holds what a build
+// wrote.
+walked_into :: fn(name: ^i8) -> bool {
+    if (cstr_len(name) == 0 || byte_at(name, 0) == CH_DOT) {
+        return false
+    }
+    cstr_eq(name, "target") == false
+}
+
+ends_in_frost :: fn(text: str, from: i64, to: i64) -> bool {
+    if (to - from < 7) {
+        return false
+    }
+    named := ".frost"
+    mut k: i64 = 0
+    while (k < 6) {
+        if (cast($i64, text[to - 6 + k]) != cast($i64, named[k])) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// How many sources the walk found, and where each one is, so a caller reads
+// them one after the other without holding a view into the buffer while it
+// writes into another.
+source_at :: fn(mut s: Server, index: i64) -> i64 {
+    text := bytes_view(s.sources)
+    length := str_len(text)
+    mut at: i64 = 0
+    mut seen: i64 = 0
+    while (at < length) {
+        if (seen == index) {
+            return at
+        }
+        at = run_end(text, at) + 1
+        seen = seen + 1
+    }
+    -1
+}
+
+source_count :: fn(mut s: Server) -> i64 {
+    text := bytes_view(s.sources)
+    length := str_len(text)
+    mut at: i64 = 0
+    mut seen: i64 = 0
+    while (at < length) {
+        at = run_end(text, at) + 1
+        seen = seen + 1
+    }
+    seen
+}
+
+
+// One of the sources the walk found, in a buffer of its own, since reading
+// the file it names writes into the others.
+source_into :: fn(mut s: Server, index: i64) -> bool {
+    at := source_at(s, index)
+    if (at < 0) {
+        return false
+    }
+    text := bytes_view(s.sources)
+    ends := run_end(text, at)
+    bytes_reset(s.each)
+    mut k := at
+    while (k < ends) {
+        bytes_byte(s.each, cast($i64, text[k]))
+        k = k + 1
+    }
+    true
 }
