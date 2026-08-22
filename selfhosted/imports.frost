@@ -1011,6 +1011,22 @@ prefix_of :: fn(path: ^i8, length: i64) -> ^i8 {
 // beside the compiler and one checkout layout up from it, then the working
 // directory. The two beside the compiler are what let it run from anywhere
 // rather than only from a checkout root.
+// The library beside a compiler at `program`, and beside the one and two
+// directories above it: an installed layout puts `std` next to the binary, and
+// a checkout puts it two above `target/release` and one above `selfhosted`.
+roots_beside :: fn(mut roots: Arena<SearchRoot>, program: ^i8) {
+    length := cstr_len(program)
+    if (length == 0) {
+        return
+    }
+    directory := directory_part(program, length)
+    add_root(roots, joined_path(program, directory, "std"))
+    up_one := directory_part(program, directory)
+    add_root(roots, joined_path(program, up_one, "std"))
+    up_two := directory_part(program, up_one)
+    add_root(roots, joined_path(program, up_two, "std"))
+}
+
 search_roots_from :: fn(mut roots: Arena<SearchRoot>) {
     named := unsafe { frost_rt_getenv("FROST_PATH") }
     if (cstr_len(named) != 0) {
@@ -1021,20 +1037,13 @@ search_roots_from :: fn(mut roots: Arena<SearchRoot>) {
     if (cstr_len(standard) != 0) {
         add_root(roots, standard)
     }
-    program := frost_rt_arg_at(0)
-    length := cstr_len(program)
-    if (length > 0) {
-        directory := directory_part(program, length)
-        // `std` beside the compiler, which is what an installed layout is.
-        add_root(roots, joined_path(program, directory, "std"))
-        // Then one up, which is where this compiler sits in a checkout, and two
-        // up, which is where the bootstrap sits: `target/release` and
-        // `selfhosted` are both under the root the library is at.
-        up_one := directory_part(program, directory)
-        add_root(roots, joined_path(program, up_one, "std"))
-        up_two := directory_part(program, up_one)
-        add_root(roots, joined_path(program, up_two, "std"))
-    }
+    // Where this program is, as the system says and as the caller wrote it.
+    // The two differ: a spawn naming the compiler by itself hands over a bare
+    // name, and the directory read off that one is the caller's rather than the
+    // compiler's. Both are read, since the system answers nothing on a platform
+    // that will not say.
+    roots_beside(roots, unsafe { frost_rt_program_path() })
+    roots_beside(roots, frost_rt_arg_at(0))
     add_root(roots, "std")
     add_root(roots, ".")
 }

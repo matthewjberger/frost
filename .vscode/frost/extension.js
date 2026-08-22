@@ -636,9 +636,14 @@ async function publishFindings(document) {
   // The check writes its reports on the error stream and `lint` writes its own
   // on the output stream. Neither writes a file: a build that is refused stops
   // before it emits, and one that is not was asked for no output.
+  // Run where the project is. The last two roots a compiler searches are named
+  // relative to the directory it was started in, so a project that keeps its own
+  // libraries beside its manifest is only reachable from there.
+  const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+  const at = folder ? { cwd: folder.uri.fsPath } : {};
   const [check, lint] = await Promise.all([
-    runCompiler([path, "--diagnostics=json"]),
-    runCompiler(["lint", "--diagnostics=json", path]),
+    runCompiler([path, "--diagnostics=json"], at),
+    runCompiler(["lint", "--diagnostics=json", path], at),
   ]);
   const checked = check.err;
   const linted = lint.out;

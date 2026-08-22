@@ -24,8 +24,18 @@ lint_program :: fn(mut p: Parser) -> i64 {
     mut index: i64 = 0
     while (index < p.fns.count) {
         sym := arena_at(p.fns, index)
-        if (sym.defined == 1 && sym.len > 0) {
+        // The file the command named, which is module 0. Everything below it is
+        // a module it imports, and what is unreached there is a finding about
+        // that file rather than about this one.
+        if (sym.defined == 1 && sym.len > 0
+            && module_at(p.modules, sym.off) == 0) {
+            // A name a module hands out is reached by whoever imports it, and
+            // this program is not the only one that will. Reported, an exported
+            // function nothing here calls sent a reader to delete what another
+            // program is written against.
             if (mentions_of(p, sym.off, sym.len) <= 1
+                && offered_to_importers(p, sym.off, sym.len) == false
+                && begins_with(p.src, sym.off, sym.len, "__test") == false
                 && str_range_eq(p.src, sym.off, sym.len, "main") == false) {
                 report_where(p.modules, p.src, sym.off)
                 report("'")
@@ -38,6 +48,58 @@ lint_program :: fn(mut p: Parser) -> i64 {
         index = index + 1
     }
     found
+}
+
+// Whether a module hands this name to whoever imports it.
+//
+// An export list is blanked out of the source once it has been read, so its
+// names are kept in a buffer of their own and the two are compared across the
+// pair rather than within one.
+offered_to_importers :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut at: i64 = 0
+    while (at < p.exports.count) {
+        held := arena_at(p.exports, at)
+        if (held.len == len
+            && same_across(p.export_names, held.off, p.src, off, len)) {
+            return true
+        }
+        at = at + 1
+    }
+    false
+}
+
+same_across :: fn(
+    one: str,
+    one_off: i64,
+    other: str,
+    other_off: i64,
+    length: i64
+) -> bool {
+    mut k: i64 = 0
+    while (k < length) {
+        if (one[one_off + k] != other[other_off + k]) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+// A body the compiler names for a `test` block. Nothing calls one; the runner
+// does.
+begins_with :: fn(src: str, off: i64, len: i64, prefix: str) -> bool {
+    wanted := str_len(prefix)
+    if (wanted > len) {
+        return false
+    }
+    mut k: i64 = 0
+    while (k < wanted) {
+        if (src[off + k] != prefix[k]) {
+            return false
+        }
+        k = k + 1
+    }
+    true
 }
 
 // How many times a name is written as an identifier.

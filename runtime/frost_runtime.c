@@ -50,6 +50,9 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #if defined(__has_include)
 #if __has_include(<execinfo.h>)
 #define FROST_HAS_EXECINFO 1
@@ -528,6 +531,46 @@ const char *frost_rt_read_file(const char *path) {
     buffer[read] = 0;
     fclose(file);
     return buffer;
+}
+
+/* Where this program is, asked of the system rather than read off argv[0].
+
+   argv[0] is whatever the caller wrote. A shell resolves a bare name against
+   PATH and hands over the whole path, and a spawn that names the program
+   directly hands over the bare name, so "the directory this program is in"
+   read off argv[0] is the caller's working directory instead. The standard
+   library sits beside the compiler, so an editor spawning `frostc` by name
+   found no library at all: every import fell back to the file beside the
+   importer, and a program importing `mem.frost` was told that
+   `<its own directory>/mem.frost` cannot be read.
+
+   Answers "" where the system will not say, and the caller keeps reading
+   argv[0] as well. */
+static char frost_rt_program[4096];
+
+const char *frost_rt_program_path(void) {
+#if defined(_WIN32)
+    DWORD held = GetModuleFileNameA(NULL, frost_rt_program,
+                                    (DWORD)sizeof frost_rt_program);
+    if (held == 0 || held >= sizeof frost_rt_program) {
+        return "";
+    }
+    return frost_rt_program;
+#elif defined(__APPLE__)
+    uint32_t room = (uint32_t)sizeof frost_rt_program;
+    if (_NSGetExecutablePath(frost_rt_program, &room) != 0) {
+        return "";
+    }
+    return frost_rt_program;
+#else
+    ssize_t held = readlink("/proc/self/exe", frost_rt_program,
+                            sizeof frost_rt_program - 1);
+    if (held <= 0) {
+        return "";
+    }
+    frost_rt_program[held] = 0;
+    return frost_rt_program;
+#endif
 }
 
 /* Walking a directory. A tool asked about a project reads every source under
